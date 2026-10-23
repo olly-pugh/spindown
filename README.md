@@ -28,6 +28,9 @@ sensor: a modern, open-source replacement for the discontinued Kinetic Fit app.
 
 ## Build and run
 
+Step-by-step iPhone install instructions: [docs/INSTALL.md](docs/INSTALL.md).
+
+
 ```sh
 brew install xcodegen               # once
 cp Config/Secrets.example.xcconfig Config/Secrets.xcconfig
