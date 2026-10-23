@@ -1,0 +1,44 @@
+# Builds Spindown on GitHub's macOS runners, so no local Xcode is needed.
+# Produces an unsigned Spindown.ipa artifact; sign and install it with Sideloadly or AltStore.
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Test InRideKit
+        working-directory: Packages/InRideKit
+        run: swift test
+
+      - name: Build app (unsigned)
+        run: |
+          xcodebuild -project Spindown.xcodeproj -scheme Spindown -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/Spindown.app Payload/
+          zip -qry Spindown.ipa Payload
+          ls -lh Spindown.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Spindown-ipa
+          path: Spindown.ipa
+          retention-days: 30
