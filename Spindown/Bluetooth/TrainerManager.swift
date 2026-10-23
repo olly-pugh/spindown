@@ -499,107 +499,93 @@ final class TrainerManager: NSObject {
 
 // MARK: - CBCentralManagerDelegate
 
-extension TrainerManager: CBCentralManagerDelegate {
-    nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        MainActor.assumeIsolated {
-            log.log("Bluetooth \(central.state.label)")
-            switch central.state {
-            case .poweredOn:
-                if state.isConnected == false, case .unavailable = state { state = .idle }
-                if let p = peripheral, p.state == .connected {
-                    // Restored by iOS with the link intact.
-                    p.discoverServices(nil)
-                } else if wantsConnection, let p = peripheral {
-                    requestConnect(p, initial: false)
-                } else if settings.simulatorEnabled {
-                    startSimulator()
-                } else {
-                    reconnectRemembered()
-                }
-            case .poweredOff:
-                state = .unavailable("Bluetooth is off")
-                clearLiveData()
-            case .unauthorized:
-                state = .unavailable("Bluetooth permission denied. Allow it in Settings › Spindown.")
-            case .unsupported:
-                state = .unavailable("This device does not support Bluetooth LE")
-            case .resetting:
-                state = .unavailable("Bluetooth is resetting")
-            default:
-                state = .unavailable("Bluetooth unavailable")
+extension TrainerManager: @preconcurrency CBCentralManagerDelegate {
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        log.log("Bluetooth \(central.state.label)")
+        switch central.state {
+        case .poweredOn:
+            if state.isConnected == false, case .unavailable = state { state = .idle }
+            if let p = peripheral, p.state == .connected {
+                // Restored by iOS with the link intact.
+                p.discoverServices(nil)
+            } else if wantsConnection, let p = peripheral {
+                requestConnect(p, initial: false)
+            } else if settings.simulatorEnabled {
+                startSimulator()
+            } else {
+                reconnectRemembered()
             }
+        case .poweredOff:
+            state = .unavailable("Bluetooth is off")
+            clearLiveData()
+        case .unauthorized:
+            state = .unavailable("Bluetooth permission denied. Allow it in Settings › Spindown.")
+        case .unsupported:
+            state = .unavailable("This device does not support Bluetooth LE")
+        case .resetting:
+            state = .unavailable("Bluetooth is resetting")
+        default:
+            state = .unavailable("Bluetooth unavailable")
         }
     }
 
     #if os(iOS)
-    nonisolated func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
-        MainActor.assumeIsolated {
-            let restored = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
-            log.log("iOS restored Bluetooth state with \(restored.count) peripheral(s)")
-            if let p = restored.first(where: { $0.identifier == settings.rememberedTrainerID }) ?? restored.first {
-                wantsConnection = true
-                attach(p)
-            }
+    func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        let restored = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
+        log.log("iOS restored Bluetooth state with \(restored.count) peripheral(s)")
+        if let p = restored.first(where: { $0.identifier == settings.rememberedTrainerID }) ?? restored.first {
+            wantsConnection = true
+            attach(p)
         }
     }
     #endif
 
-    nonisolated func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
+    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                                     advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        MainActor.assumeIsolated {
-            let services = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []).map(\.uuidString)
-            let isInRide = services.contains(InRideGATT.powerService) || (peripheral.name ?? "").localizedCaseInsensitiveContains("inride")
-            let connectable = (advertisementData[CBAdvertisementDataIsConnectable] as? NSNumber)?.boolValue
-            upsertDiscovered(peripheral, rssi: RSSI.intValue, advertisesInRide: isInRide, services: services, connectable: connectable)
-            // The remembered trainer turned up under scanning (e.g. iOS forgot its identifier mapping).
-            if connectWhenRememberedSeen, peripheral.identifier == settings.rememberedTrainerID {
-                connect(to: peripheral.identifier)
-            }
+        let services = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []).map(\.uuidString)
+        let isInRide = services.contains(InRideGATT.powerService) || (peripheral.name ?? "").localizedCaseInsensitiveContains("inride")
+        let connectable = (advertisementData[CBAdvertisementDataIsConnectable] as? NSNumber)?.boolValue
+        upsertDiscovered(peripheral, rssi: RSSI.intValue, advertisesInRide: isInRide, services: services, connectable: connectable)
+        // The remembered trainer turned up under scanning (e.g. iOS forgot its identifier mapping).
+        if connectWhenRememberedSeen, peripheral.identifier == settings.rememberedTrainerID {
+            connect(to: peripheral.identifier)
         }
     }
 
-    nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        MainActor.assumeIsolated {
-            guard peripheral.identifier == self.peripheral?.identifier else {
-                central.cancelPeripheralConnection(peripheral)
-                return
+    func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        guard peripheral.identifier == self.peripheral?.identifier else {
+            central.cancelPeripheralConnection(peripheral)
+            return
+        }
+        stats.connects += 1
+        stats.connectedSince = Date()
+        stats.maxWriteLength = peripheral.maximumWriteValueLength(for: .withResponse)
+        pendingUpdateRateCheck = true
+        characteristics.removeAll()
+        state = .discovering(peripheralName ?? "inRide")
+        log.log("Connected to \(peripheral.name ?? "inRide"); discovering services")
+        peripheral.discoverServices(nil)
+    }
+
+    func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        log.log("Failed to connect: \(error?.localizedDescription ?? "unknown")", level: .error)
+        if wantsConnection, peripheral.identifier == self.peripheral?.identifier {
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(2))
+                self?.resumePendingConnectIfNeeded()
             }
-            stats.connects += 1
-            stats.connectedSince = Date()
-            stats.maxWriteLength = peripheral.maximumWriteValueLength(for: .withResponse)
-            pendingUpdateRateCheck = true
-            characteristics.removeAll()
-            state = .discovering(peripheralName ?? "inRide")
-            log.log("Connected to \(peripheral.name ?? "inRide"); discovering services")
-            peripheral.discoverServices(nil)
+        } else {
+            state = .idle
         }
     }
 
-    nonisolated func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        MainActor.assumeIsolated {
-            log.log("Failed to connect: \(error?.localizedDescription ?? "unknown")", level: .error)
-            if wantsConnection, peripheral.identifier == self.peripheral?.identifier {
-                Task { [weak self] in
-                    try? await Task.sleep(for: .seconds(2))
-                    self?.resumePendingConnectIfNeeded()
-                }
-            } else {
-                state = .idle
-            }
-        }
-    }
-
-    nonisolated func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral,
+    func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral,
                                     timestamp: CFAbsoluteTime, isReconnecting: Bool, error: Error?) {
-        MainActor.assumeIsolated {
-            handleDisconnect(peripheral, error: error, systemReconnecting: isReconnecting)
-        }
+        handleDisconnect(peripheral, error: error, systemReconnecting: isReconnecting)
     }
 
-    nonisolated func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        MainActor.assumeIsolated {
-            handleDisconnect(peripheral, error: error, systemReconnecting: false)
-        }
+    func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        handleDisconnect(peripheral, error: error, systemReconnecting: false)
     }
 
     private func handleDisconnect(_ p: CBPeripheral, error: Error?, systemReconnecting: Bool) {
@@ -626,121 +612,107 @@ extension TrainerManager: CBCentralManagerDelegate {
 
 // MARK: - CBPeripheralDelegate
 
-extension TrainerManager: CBPeripheralDelegate {
-    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        MainActor.assumeIsolated {
-            if let error { log.log("Service discovery failed: \(error.localizedDescription)", level: .error) }
-            let services = peripheral.services ?? []
-            log.log("Services: \(services.map { InRideGATT.name(for: $0.uuid.uuidString) ?? $0.uuid.uuidString }.joined(separator: ", "))")
-            if !services.contains(where: { $0.uuid == Self.serviceUUID }) {
-                log.log("inRide Power Service not found on this device", level: .error)
-            }
-            for s in services { peripheral.discoverCharacteristics(nil, for: s) }
-            rebuildGATTSnapshot()
+extension TrainerManager: @preconcurrency CBPeripheralDelegate {
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        if let error { log.log("Service discovery failed: \(error.localizedDescription)", level: .error) }
+        let services = peripheral.services ?? []
+        log.log("Services: \(services.map { InRideGATT.name(for: $0.uuid.uuidString) ?? $0.uuid.uuidString }.joined(separator: ", "))")
+        if !services.contains(where: { $0.uuid == Self.serviceUUID }) {
+            log.log("inRide Power Service not found on this device", level: .error)
         }
+        for s in services { peripheral.discoverCharacteristics(nil, for: s) }
+        rebuildGATTSnapshot()
     }
 
-    nonisolated func peripheral(_ peripheral: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {
-        MainActor.assumeIsolated {
-            log.log("Peripheral changed its services; rediscovering", level: .warning)
-            peripheral.discoverServices(nil)
-        }
+    func peripheral(_ peripheral: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {
+        log.log("Peripheral changed its services; rediscovering", level: .warning)
+        peripheral.discoverServices(nil)
     }
 
-    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
-        MainActor.assumeIsolated {
-            if let error { log.log("Characteristic discovery failed for \(service.uuid): \(error.localizedDescription)", level: .error) }
-            for c in service.characteristics ?? [] {
-                characteristics[c.uuid] = c
-                switch c.uuid {
-                case Self.powerUUID:
-                    peripheral.setNotifyValue(true, for: c)
-                case Self.configUUID:
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        if let error { log.log("Characteristic discovery failed for \(service.uuid): \(error.localizedDescription)", level: .error) }
+        for c in service.characteristics ?? [] {
+            characteristics[c.uuid] = c
+            switch c.uuid {
+            case Self.powerUUID:
+                peripheral.setNotifyValue(true, for: c)
+            case Self.configUUID:
+                peripheral.readValue(for: c)
+                if c.properties.contains(.notify) { peripheral.setNotifyValue(true, for: c) }
+            case CBUUID(string: InRideGATT.batteryLevel):
+                peripheral.readValue(for: c)
+                if c.properties.contains(.notify) { peripheral.setNotifyValue(true, for: c) }
+            default:
+                if service.uuid == CBUUID(string: InRideGATT.deviceInformationService), c.properties.contains(.read) {
                     peripheral.readValue(for: c)
-                    if c.properties.contains(.notify) { peripheral.setNotifyValue(true, for: c) }
-                case CBUUID(string: InRideGATT.batteryLevel):
-                    peripheral.readValue(for: c)
-                    if c.properties.contains(.notify) { peripheral.setNotifyValue(true, for: c) }
-                default:
-                    if service.uuid == CBUUID(string: InRideGATT.deviceInformationService), c.properties.contains(.read) {
-                        peripheral.readValue(for: c)
-                    }
                 }
             }
-            rebuildGATTSnapshot()
+        }
+        rebuildGATTSnapshot()
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        let uuid = characteristic.uuid.uuidString
+        if let error {
+            log.log("Read of \(InRideGATT.name(for: uuid) ?? uuid) failed: \(error.localizedDescription)", level: .error)
+            return
+        }
+        guard let data = characteristic.value else { return }
+        if characteristic.uuid == Self.powerUUID {
+            handlePowerPacket(data, from: uuid)
+            return
+        }
+        let packet = DiagnosticsLog.Packet(date: Date(), direction: .rx, characteristic: uuid, bytes: data, plain: nil,
+                                           summary: InRideGATT.name(for: uuid) ?? "value")
+        log.record(packet)
+        onPacket?(packet)
+        let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .controlCharacters.union(.whitespaces))
+        switch uuid {
+        case InRideGATT.configCharacteristic: handleConfiguration(data)
+        case InRideGATT.manufacturerName: info.manufacturer = text
+        case InRideGATT.modelNumber: info.model = text
+        case InRideGATT.serialNumber: info.serial = text
+        case InRideGATT.firmwareRevision:
+            info.firmware = text
+            if info.firmwareIsOutdated {
+                log.log("Firmware \(text ?? "?") is older than Kinetic's last release (\(InRideGATT.latestPublishedFirmware))", level: .warning)
+            }
+        case InRideGATT.hardwareRevision: info.hardware = text
+        case InRideGATT.softwareRevision: info.software = text
+        case InRideGATT.systemID:
+            info.systemID = [UInt8](data)
+            log.log("System ID \(data.hexString)")
+            applyPreferredUpdateRateIfNeeded()
+        case InRideGATT.batteryLevel: info.battery = data.first.map(Int.init)
+        default: break
+        }
+        rebuildGATTSnapshot()
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        let name = InRideGATT.name(for: characteristic.uuid.uuidString) ?? characteristic.uuid.uuidString
+        if let error {
+            log.log("Subscribe to \(name) failed: \(error.localizedDescription)", level: .error)
+            return
+        }
+        log.log("\(characteristic.isNotifying ? "Subscribed to" : "Unsubscribed from") \(name)")
+        if characteristic.uuid == Self.powerUUID, characteristic.isNotifying {
+            state = .streaming(peripheralName ?? "inRide")
+        }
+        rebuildGATTSnapshot()
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        let name = InRideGATT.name(for: characteristic.uuid.uuidString) ?? characteristic.uuid.uuidString
+        if let error {
+            log.log("Write to \(name) failed: \(error.localizedDescription)", level: .error)
+        } else {
+            log.log("Write to \(name) acknowledged")
         }
     }
 
-    nonisolated func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        MainActor.assumeIsolated {
-            let uuid = characteristic.uuid.uuidString
-            if let error {
-                log.log("Read of \(InRideGATT.name(for: uuid) ?? uuid) failed: \(error.localizedDescription)", level: .error)
-                return
-            }
-            guard let data = characteristic.value else { return }
-            if characteristic.uuid == Self.powerUUID {
-                handlePowerPacket(data, from: uuid)
-                return
-            }
-            let packet = DiagnosticsLog.Packet(date: Date(), direction: .rx, characteristic: uuid, bytes: data, plain: nil,
-                                               summary: InRideGATT.name(for: uuid) ?? "value")
-            log.record(packet)
-            onPacket?(packet)
-            let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .controlCharacters.union(.whitespaces))
-            switch uuid {
-            case InRideGATT.configCharacteristic: handleConfiguration(data)
-            case InRideGATT.manufacturerName: info.manufacturer = text
-            case InRideGATT.modelNumber: info.model = text
-            case InRideGATT.serialNumber: info.serial = text
-            case InRideGATT.firmwareRevision:
-                info.firmware = text
-                if info.firmwareIsOutdated {
-                    log.log("Firmware \(text ?? "?") is older than Kinetic's last release (\(InRideGATT.latestPublishedFirmware))", level: .warning)
-                }
-            case InRideGATT.hardwareRevision: info.hardware = text
-            case InRideGATT.softwareRevision: info.software = text
-            case InRideGATT.systemID:
-                info.systemID = [UInt8](data)
-                log.log("System ID \(data.hexString)")
-                applyPreferredUpdateRateIfNeeded()
-            case InRideGATT.batteryLevel: info.battery = data.first.map(Int.init)
-            default: break
-            }
-            rebuildGATTSnapshot()
-        }
-    }
-
-    nonisolated func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
-        MainActor.assumeIsolated {
-            let name = InRideGATT.name(for: characteristic.uuid.uuidString) ?? characteristic.uuid.uuidString
-            if let error {
-                log.log("Subscribe to \(name) failed: \(error.localizedDescription)", level: .error)
-                return
-            }
-            log.log("\(characteristic.isNotifying ? "Subscribed to" : "Unsubscribed from") \(name)")
-            if characteristic.uuid == Self.powerUUID, characteristic.isNotifying {
-                state = .streaming(peripheralName ?? "inRide")
-            }
-            rebuildGATTSnapshot()
-        }
-    }
-
-    nonisolated func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
-        MainActor.assumeIsolated {
-            let name = InRideGATT.name(for: characteristic.uuid.uuidString) ?? characteristic.uuid.uuidString
-            if let error {
-                log.log("Write to \(name) failed: \(error.localizedDescription)", level: .error)
-            } else {
-                log.log("Write to \(name) acknowledged")
-            }
-        }
-    }
-
-    nonisolated func peripheral(_ peripheral: CBPeripheral, didReadRSSI RSSI: NSNumber, error: Error?) {
-        MainActor.assumeIsolated {
-            if error == nil { rssi = RSSI.intValue }
-        }
+    func peripheral(_ peripheral: CBPeripheral, didReadRSSI RSSI: NSNumber, error: Error?) {
+        if error == nil { rssi = RSSI.intValue }
     }
 }
 
