@@ -1,7 +1,43 @@
 # Installing Spindown on your iPhone
 
-Spindown isn't on the App Store, so you install it from your Mac with Xcode. Allow about an
-hour the first time, most of it downloading Xcode. Later installs take a minute.
+Spindown isn't on the App Store. There are two ways to install it:
+
+- **Option A, no Xcode (recommended if disk space is tight):** GitHub builds the app for you,
+  and a small free tool, Sideloadly (~150 MB), installs it from your Mac.
+- **Option B, Xcode:** build it yourself. This needs about 20 GB free while installing Xcode.
+
+Steps 5 onwards (first ride setup) apply to both.
+
+## Option A: Install without Xcode (Sideloadly)
+
+### Get the app file
+Every push to `main` builds the app on GitHub. Go to
+https://github.com/olly-pugh/spindown/actions, open the newest green **Build** run, and
+download **Spindown-ipa** under Artifacts (you must be signed in to GitHub). Unzip it to get
+`Spindown.ipa`.
+
+### Install it
+1. Download Sideloadly for macOS from https://sideloadly.io, open the .dmg, and drag it to Applications.
+2. Plug the iPhone into the Mac, unlock it, and tap **Trust**.
+3. Open Sideloadly. Drag `Spindown.ipa` onto it, select your iPhone, and enter your Apple ID
+   email. Click **Start**, then enter your Apple ID password and the 2FA code when asked.
+   Sideloadly sends these to Apple to create a free signing certificate. It's a third-party
+   tool, so if you prefer, use a spare Apple ID.
+4. On the iPhone, go to **Settings › Privacy & Security › Developer Mode**, switch it on and
+   restart. After the restart, tap **Turn On**. The option appears after the first install attempt.
+5. Go to **Settings › General › VPN & Device Management**, tap your Apple ID, and tap **Trust**.
+6. Open Spindown and allow Bluetooth. Continue at **5. First ride setup** below.
+
+### Every 7 days
+With a free Apple ID the app stops opening after 7 days. Plug in, open Sideloadly, and install
+the same .ipa again; your rides and logins are kept. Sideloadly's "Auto refresh" option can do
+this over Wi-Fi while the Mac is on. To update to a newer version, install a newer .ipa the
+same way. Don't delete the app first, because that deletes its rides.
+
+## Option B: Build with Xcode
+
+Allow about an hour the first time, most of it downloading Xcode. Later installs take a minute.
+To save space, skip the optional simulator downloads when Xcode offers them.
 
 ## 1. Prepare the Mac (once)
 
@@ -17,7 +53,7 @@ hour the first time, most of it downloading Xcode. Later installs take a minute.
 
 1. In Finder, open `Turbo Trainer App/Config`, duplicate `Secrets.example.xcconfig`, and
    rename the copy to `Secrets.xcconfig`.
-2. Open it in TextEdit. Change the bundle ID to something unique to you, for example
+2. Open it in TextEdit. Optionally change the bundle ID (the default is already unique to you), for example
    `SPINDOWN_BUNDLE_ID = com.oliverpugh.spindown`. Delete the `DEVELOPMENT_TEAM` line (you'll
    pick the team in Xcode instead), then save.
 3. Double-click `Spindown.xcodeproj` to open it in Xcode.

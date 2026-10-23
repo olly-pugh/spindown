@@ -2,7 +2,7 @@
 // copy Secrets.example.xcconfig to get started.
 
 // Must be unique to you for device builds, e.g. com.yourname.spindown
-SPINDOWN_BUNDLE_ID = com.spindown.app
+SPINDOWN_BUNDLE_ID = io.github.olly-pugh.spindown
 
 // Your Apple developer team ID (Xcode › Settings › Accounts). Leave empty to pick it in Xcode.
 DEVELOPMENT_TEAM =
