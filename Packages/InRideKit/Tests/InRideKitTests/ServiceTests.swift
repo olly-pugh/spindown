@@ -58,6 +58,25 @@ struct GarminTests {
         #expect(c.signInURL.absoluteString.contains("clientId=GCM_IOS_DARK"))
     }
 
+    @Test("Reads the ticket from the sign-in page's native bridge message")
+    func bridgeMessage() {
+        let success: [String: Any] = ["eventType": "USER_AUTHENTICATED", "flowName": "signIn", "logMessage": "",
+                                      "data": ["serviceTicket": "ST-123-abc", "serviceUrl": "https://mobile.integration.garmin.com/gcm/ios"]]
+        let e = GarminConnectConfig.bridgeEvent(from: success)
+        #expect(e?.type == "USER_AUTHENTICATED")
+        #expect(e?.ticket == "ST-123-abc")
+        #expect(e?.serviceURL == "https://mobile.integration.garmin.com/gcm/ios")
+
+        let json = #"{"eventType":"USER_AUTHENTICATED","data":{"serviceTicket":"ST-9"}}"#
+        #expect(GarminConnectConfig.bridgeEvent(from: json)?.ticket == "ST-9")
+
+        let pageLoad: [String: Any] = ["eventType": "PAGE_LOAD", "flowName": "signIn", "data": ["title": "Sign In"]]
+        #expect(GarminConnectConfig.bridgeEvent(from: pageLoad)?.ticket == nil)
+        #expect(GarminConnectConfig.bridgeEvent(from: pageLoad)?.title == "Sign In")
+        #expect(GarminConnectConfig.bridgeEvent(from: ["eventType": "USER_AUTHENTICATED", "data": ["serviceTicket": "bogus"]])?.ticket == nil)
+        #expect(GarminConnectConfig.bridgeEvent(from: 42) == nil)
+    }
+
     @Test("Exchanges the ticket, falling through client IDs")
     func exchange() async throws {
         let access = jwt(["client_id": "GARMIN_CONNECT_MOBILE_ANDROID_DI_2024Q4", "exp": 1_800_003_600])

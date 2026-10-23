@@ -50,12 +50,39 @@ public struct GarminConnectConfig: Sendable, Equatable {
         return c.url!
     }
 
-    /// Returns the service ticket if `url` is the post-login redirect.
+    /// Returns the service ticket if `url` is a post-login redirect carrying one.
     public func ticket(fromRedirect url: URL) -> String? {
         guard let service = URL(string: serviceURL), url.host == service.host,
               let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
               let ticket = items.first(where: { $0.name == "ticket" })?.value, ticket.hasPrefix("ST-") else { return nil }
         return ticket
+    }
+
+    /// Name of the native bridge Garmin's mobile sign-in page calls
+    /// (`window.webkit.messageHandlers.GMNEventHandler.postMessage(event)`).
+    public static let bridgeHandlerName = "GMNEventHandler"
+
+    public struct BridgeEvent: Sendable, Equatable {
+        public var type: String
+        public var flow: String?
+        public var title: String?
+        public var ticket: String?
+        public var serviceURL: String?
+    }
+
+    /// Parses a bridge message. The page sends `{eventType, flowName, logMessage, data}`; on success
+    /// `eventType` is `USER_AUTHENTICATED` and `data` holds `serviceTicket` and `serviceUrl`.
+    /// Older builds pass the event as a JSON string, so both forms are accepted.
+    public static func bridgeEvent(from body: Any) -> BridgeEvent? {
+        var object = body
+        if let s = body as? String, let data = s.data(using: .utf8), let parsed = try? JSONSerialization.jsonObject(with: data) {
+            object = parsed
+        }
+        guard let dict = object as? [String: Any], let type = dict["eventType"] as? String else { return nil }
+        let data = dict["data"] as? [String: Any]
+        let ticket = (data?["serviceTicket"] as? String).flatMap { $0.hasPrefix("ST-") ? $0 : nil }
+        return BridgeEvent(type: type, flow: dict["flowName"] as? String, title: data?["title"] as? String,
+                           ticket: ticket, serviceURL: data?["serviceUrl"] as? String)
     }
 }
 
