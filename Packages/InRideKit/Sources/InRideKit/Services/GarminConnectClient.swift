@@ -75,7 +75,7 @@ public struct GarminTokens: Codable, Sendable, Equatable {
 public actor GarminConnectClient {
     public static let tokenKey = "garmin.tokens"
 
-    public let config: GarminConnectConfig
+    public nonisolated let config: GarminConnectConfig
     private let transport: HTTPTransport
     private let store: SecretStore
     private let now: @Sendable () -> Date
@@ -209,6 +209,33 @@ public actor GarminConnectClient {
                 continue
             }
             return try Self.interpretUpload(status: response.statusCode, body: data)
+        }
+    }
+
+    /// Display name of the signed-in account. Doubles as a connection test.
+    public func profileName() async throws -> String {
+        var attempt = 0
+        while true {
+            attempt += 1
+            let token = try await validAccessToken()
+            var request = URLRequest(url: URL(string: config.apiHost + "/userprofile-service/socialProfile")!)
+            for (k, v) in config.nativeHeaders { request.setValue(v, forHTTPHeaderField: k) }
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await transport.send(request)
+            switch response.statusCode {
+            case 200..<300:
+                let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+                return (json?["fullName"] as? String) ?? (json?["displayName"] as? String) ?? "Garmin user"
+            case 401 where attempt == 1:
+                try await refresh()
+            case 401, 403:
+                throw ServiceError.reauthenticationRequired("Garmin refused the saved login (HTTP \(response.statusCode)).")
+            case 429:
+                throw ServiceError.rateLimited
+            default:
+                throw ServiceError.http(status: response.statusCode, message: bodySnippet(data))
+            }
         }
     }
 

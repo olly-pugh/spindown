@@ -1,0 +1,14 @@
+// Build settings for Spindown. Personal values go in Secrets.xcconfig (git-ignored);
+// copy Secrets.example.xcconfig to get started.
+
+// Must be unique to you for device builds, e.g. com.yourname.spindown
+SPINDOWN_BUNDLE_ID = com.spindown.app
+
+// Your Apple developer team ID (Xcode › Settings › Accounts). Leave empty to pick it in Xcode.
+DEVELOPMENT_TEAM =
+
+// Optional build-time Strava API credentials. They can also be entered in the app's Settings.
+STRAVA_CLIENT_ID =
+STRAVA_CLIENT_SECRET =
+
+#include? "Secrets.xcconfig"
