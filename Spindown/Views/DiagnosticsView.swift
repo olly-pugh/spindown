@@ -4,7 +4,6 @@ import InRideKit
 struct DiagnosticsView: View {
     @Environment(TrainerManager.self) private var trainer
     @Environment(HeartRateMonitor.self) private var heartRate
-    @Environment(SensorBroadcaster.self) private var broadcaster
     @Environment(AppSettings.self) private var settings
     @State private var exportURL: URL?
     @State private var exportError: String?
@@ -19,7 +18,6 @@ struct DiagnosticsView: View {
                     liveSection
                     rawSection
                     heartRateSection(now: context.date)
-                    broadcastSection
                     Section("Tools") {
                         NavigationLink("Packet Log (\(trainer.log.packets.count))") { PacketLogView() }
                         NavigationLink("Event Log (\(trainer.log.events.count))") { EventLogView() }
@@ -161,17 +159,6 @@ struct DiagnosticsView: View {
         }
     }
 
-    private var broadcastSection: some View {
-        Section("Watch Broadcast") {
-            LabeledValue("Enabled", settings.broadcastToWatch ? "Yes" : "No")
-            LabeledValue("State", String(describing: broadcaster.state))
-            LabeledValue("Power subscribers", "\(broadcaster.powerSubscribers)")
-            LabeledValue("Heart-rate subscribers", "\(broadcaster.heartRateSubscribers)")
-            LabeledValue("Packets sent", "\(broadcaster.packetsSent)")
-            LabeledValue("Last packet", broadcaster.lastSent?.hexString, monospaced: true)
-        }
-    }
-
     private func prepareExport() {
         let i = trainer.info
         var device: [String: String] = [:]
@@ -188,7 +175,6 @@ struct DiagnosticsView: View {
         device["state"] = trainer.state.title
         device["heartRateMonitor"] = heartRate.deviceName
         device["heartRateStatus"] = heartRate.statusLine()
-        device["watchBroadcast"] = String(describing: broadcaster.state)
         do {
             exportURL = try trainer.log.exportBundle(device: device, configuration: trainer.configuration, latest: trainer.latest)
             exportError = nil

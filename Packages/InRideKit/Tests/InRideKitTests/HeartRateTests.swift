@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import InRideKit
 
-@Suite("Heart rate and sensor broadcast")
+@Suite("Heart rate")
 struct HeartRateTests {
     @Test("Parses 8-bit heart rate with contact")
     func eightBit() throws {
@@ -28,7 +28,6 @@ struct HeartRateTests {
         #expect(try HeartRateMeasurement([0x00, 70]).sensorContact == nil)
         #expect(throws: HeartRateMeasurement.ParseError.tooShort) { try HeartRateMeasurement([0x01, 70]) }
         #expect(throws: HeartRateMeasurement.ParseError.tooShort) { try HeartRateMeasurement([0x00]) }
-        #expect(try HeartRateMeasurement(HeartRateMeasurement.encode(bpm: 141)).bpm == 141)
     }
 
     @Test("Heart rate is recorded, averaged and survives dropouts of the trainer")
@@ -79,35 +78,6 @@ struct HeartRateTests {
 
         let csv = String(decoding: ActivityExporter.csv(ride), as: UTF8.self)
         #expect(csv.hasPrefix("elapsed_s,timestamp_utc,power_w,speed_kph,cadence_rpm,distance_m,heart_rate_bpm\n"))
-    }
-
-    @Test("Cycling power broadcast synthesises crank and wheel counters")
-    func powerBroadcast() throws {
-        var e = CyclingPowerEmitter(wheelCircumference: 2.0)
-        _ = e.measurement(power: 250, cadenceRPM: 90, speedKPH: 36, at: 0)
-        var last: (power: Int, wheelRevs: UInt32, wheelTime: UInt16, crankRevs: UInt16, crankTime: UInt16)?
-        for i in 1...60 {
-            last = CyclingPowerEmitter.parse(e.measurement(power: 250, cadenceRPM: 90, speedKPH: 36, at: Double(i)))
-        }
-        let m = try #require(last)
-        #expect(m.power == 250)
-        #expect(m.crankRevs == 90) // 90 rpm for 60 s
-        #expect(m.wheelRevs == 300) // 10 m/s / 2 m for 60 s
-        // Event times are 16-bit counters that wrap (every 64 s for crank, 32 s for wheel);
-        // receivers use the wrapped difference between consecutive packets.
-        #expect(Int(m.crankTime) == (60 * 1024) % 65536)
-        #expect(Int(m.wheelTime) == (60 * 2048) % 65536)
-    }
-
-    @Test("Stopped pedalling leaves counters and event times unchanged")
-    func powerBroadcastStopped() throws {
-        var e = CyclingPowerEmitter()
-        _ = e.measurement(power: 200, cadenceRPM: 60, speedKPH: 30, at: 0)
-        let a = try #require(CyclingPowerEmitter.parse(e.measurement(power: 200, cadenceRPM: 60, speedKPH: 30, at: 10)))
-        let b = try #require(CyclingPowerEmitter.parse(e.measurement(power: 0, cadenceRPM: 0, speedKPH: 0, at: 11)))
-        #expect(a.crankRevs == b.crankRevs && a.crankTime == b.crankTime)
-        #expect(a.wheelRevs == b.wheelRevs)
-        #expect(b.power == 0)
     }
 }
 

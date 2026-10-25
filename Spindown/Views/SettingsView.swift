@@ -32,8 +32,6 @@ struct SettingsView: View {
                     Button("Manage Trainer & Heart-Rate Monitor…") { showSensors = true }
                 }
 
-                WatchBroadcastSection()
-
                 Section("Trainer") {
                     LabeledValue("Trainer", settings.rememberedTrainerName ?? "None")
                     Toggle("Reconnect automatically", isOn: $settings.autoConnect)

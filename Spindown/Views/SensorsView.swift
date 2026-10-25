@@ -6,7 +6,6 @@ import InRideKit
 struct SensorsView: View {
     @Environment(TrainerManager.self) private var trainer
     @Environment(HeartRateMonitor.self) private var heartRate
-    @Environment(SensorBroadcaster.self) private var broadcaster
     @Environment(AppSettings.self) private var settings
     @Environment(\.dismiss) private var dismiss
 
@@ -16,7 +15,6 @@ struct SensorsView: View {
                 List {
                     trainerSection(now: context.date)
                     heartRateSection(now: context.date)
-                    WatchBroadcastSection()
                     simulatorSection
                 }
                 .groupedList()
@@ -86,7 +84,7 @@ struct SensorsView: View {
         } header: {
             Text("Heart-rate monitor")
         } footer: {
-            Text("A Polar H9 accepts one Bluetooth connection at a time. If your Garmin watch should read it directly, pair the watch over ANT+ (most Garmin watches support it) so the iPhone can use Bluetooth.")
+            Text("A Polar H9 accepts one Bluetooth connection at a time, so disconnect it from other apps (Polar Flow, Zwift) first.")
         }
     }
 
@@ -165,55 +163,5 @@ struct SensorStatusRow: View {
             }
         }
         .accessibilityElement(children: .combine)
-    }
-}
-
-/// Settings and live status for re-broadcasting to a Garmin watch.
-struct WatchBroadcastSection: View {
-    @Environment(SensorBroadcaster.self) private var broadcaster
-    @Environment(AppSettings.self) private var settings
-
-    var body: some View {
-        @Bindable var settings = settings
-        Section {
-            Toggle("Broadcast to Garmin watch", isOn: Binding(get: { settings.broadcastToWatch },
-                                                              set: { broadcaster.setEnabled($0) }))
-            if settings.broadcastToWatch {
-                SensorStatusRow(icon: "applewatch.radiowaves.left.and.right", color: color, title: title,
-                                detail: detail, verified: broadcaster.state == .streaming && broadcaster.packetsSent > 0)
-                Toggle("Also send heart rate", isOn: $settings.relayHeartRate)
-                    .onChange(of: settings.relayHeartRate) { _, _ in broadcaster.restart() }
-            }
-        } header: {
-            Text("Garmin watch (for VO2 max)")
-        } footer: {
-            Text("Garmin only estimates cycling VO2 max for rides recorded on the watch with a power meter and heart rate. With this on, your iPhone appears as a power meter called \"Spindown\". On the watch: Sensors & Accessories › Add New › Power, choose Spindown, set wheel size to 2105 mm, then record an Indoor Bike activity on the watch while Spindown is open. Pair the Polar H9 to the watch over ANT+, or turn on \"Also send heart rate\" and pair \"Spindown\" as a heart-rate sensor too. To avoid duplicate rides in Garmin Connect, turn off Spindown's own Garmin upload when you record on the watch.")
-        }
-    }
-
-    private var title: String {
-        switch broadcaster.state {
-        case .off: return "Off"
-        case .unavailable(let why): return why
-        case .starting: return "Starting…"
-        case .advertising: return "Advertising as \"\(SensorBroadcaster.advertisedName)\" — pair it on your watch"
-        case .streaming: return "Watch connected"
-        }
-    }
-
-    private var detail: String? {
-        guard broadcaster.state == .streaming else { return nil }
-        var parts = ["sending \(broadcaster.lastSentPower.map { "\($0) W" } ?? "—")", "\(broadcaster.packetsSent) packets"]
-        if broadcaster.heartRateSubscribers > 0 { parts.append("heart rate relayed") }
-        return parts.joined(separator: " · ")
-    }
-
-    private var color: Color {
-        switch broadcaster.state {
-        case .streaming: return .green
-        case .advertising, .starting: return .orange
-        case .unavailable: return .red
-        case .off: return .gray
-        }
     }
 }

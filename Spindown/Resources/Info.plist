@@ -42,7 +42,7 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Spindown connects to your Kinetic inRide sensor and heart-rate strap, and can share power and heart rate with your Garmin watch.</string>
+	<string>Spindown connects to the Kinetic inRide sensor on your trainer and to your heart-rate strap.</string>
 	<key>StravaClientID</key>
 	<string>$(STRAVA_CLIENT_ID)</string>
 	<key>StravaClientSecret</key>
@@ -55,7 +55,6 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>
-		<string>bluetooth-peripheral</string>
 		<string>processing</string>
 	</array>
 	<key>UIFileSharingEnabled</key>

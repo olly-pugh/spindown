@@ -12,7 +12,6 @@ struct SpindownApp: App {
                 .environment(model.settings)
                 .environment(model.trainer)
                 .environment(model.heartRate)
-                .environment(model.broadcaster)
                 .environment(model.session)
                 .environment(model.store)
                 .environment(model.uploads)

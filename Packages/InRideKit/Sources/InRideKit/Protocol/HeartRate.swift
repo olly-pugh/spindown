@@ -43,9 +43,4 @@ public struct HeartRateMeasurement: Sendable, Equatable {
         }
         rrIntervals = rr
     }
-
-    /// Plain encoding (used when re-broadcasting): u8 heart rate with contact status.
-    public static func encode(bpm: Int, contact: Bool = true) -> [UInt8] {
-        [contact ? 0x06 : 0x04, UInt8(clamping: bpm)]
-    }
 }

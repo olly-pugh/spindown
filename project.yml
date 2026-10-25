@@ -44,10 +44,9 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSRequiresIPhoneOS: true
         ITSAppUsesNonExemptEncryption: false
-        NSBluetoothAlwaysUsageDescription: Spindown connects to your Kinetic inRide sensor and heart-rate strap, and can share power and heart rate with your Garmin watch.
+        NSBluetoothAlwaysUsageDescription: Spindown connects to the Kinetic inRide sensor on your trainer and to your heart-rate strap.
         UIBackgroundModes:
           - bluetooth-central
-          - bluetooth-peripheral
           - processing
         BGTaskSchedulerPermittedIdentifiers:
           - com.spindown.app.upload

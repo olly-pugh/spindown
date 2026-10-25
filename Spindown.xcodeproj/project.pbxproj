@@ -29,7 +29,6 @@
 		E33537DCC8E9E24F6455411A /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CCD3D0F176457EEAE3B597C /* SettingsView.swift */; };
 		ED0D19C838E46597A34A8AE6 /* TrainerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F72BDF0E82915550AA6BD6A /* TrainerManager.swift */; };
 		F053DD0B73BC5725AB3AD343 /* HeartRateMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DEBF0AA79ED63827B600351 /* HeartRateMonitor.swift */; };
-		F5D4C43EC430F3F23E8D231E /* SensorBroadcaster.swift in Sources */ = {isa = PBXBuildFile; fileRef = 669160F16A73CCB1067EDDAE /* SensorBroadcaster.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -43,7 +42,6 @@
 		56600CC29558417402414B0B /* DiagnosticsLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsLog.swift; sourceTree = "<group>"; };
 		5A23755B6C1273CF5118BDE1 /* InRideKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = InRideKit; path = Packages/InRideKit; sourceTree = SOURCE_ROOT; };
 		63982F6E275C9DD62307493F /* RideSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RideSession.swift; sourceTree = "<group>"; };
-		669160F16A73CCB1067EDDAE /* SensorBroadcaster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorBroadcaster.swift; sourceTree = "<group>"; };
 		8DEBF0AA79ED63827B600351 /* HeartRateMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartRateMonitor.swift; sourceTree = "<group>"; };
 		8E9E575542B0CD3EE845CC54 /* Platform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Platform.swift; sourceTree = "<group>"; };
 		9F72BDF0E82915550AA6BD6A /* TrainerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainerManager.swift; sourceTree = "<group>"; };
@@ -114,7 +112,6 @@
 			children = (
 				56600CC29558417402414B0B /* DiagnosticsLog.swift */,
 				8DEBF0AA79ED63827B600351 /* HeartRateMonitor.swift */,
-				669160F16A73CCB1067EDDAE /* SensorBroadcaster.swift */,
 				9F72BDF0E82915550AA6BD6A /* TrainerManager.swift */,
 			);
 			path = Bluetooth;
@@ -276,7 +273,6 @@
 				15A76CD87611EC3CD2A3419F /* RideStore.swift in Sources */,
 				583260D85692948F90586DC6 /* RideView.swift in Sources */,
 				4E718492354513260A1B983B /* RootView.swift in Sources */,
-				F5D4C43EC430F3F23E8D231E /* SensorBroadcaster.swift in Sources */,
 				B99E99EEC63C53F93325A6E1 /* SensorsView.swift in Sources */,
 				E33537DCC8E9E24F6455411A /* SettingsView.swift in Sources */,
 				99CB5EBDEE961A17A20A8298 /* SpindownApp.swift in Sources */,
