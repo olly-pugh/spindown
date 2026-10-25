@@ -1,28 +1,31 @@
 import SwiftUI
 import InRideKit
 
-/// Guided spindown. The inRide measures how long the flywheel takes to coast from ~31 to ~18 km/h
+/// Guided spindown. The inRide measures how long the flywheel takes to coast from ~31 to ~21 km/h
 /// and uses it to correct the power curve for roller pressure (and to detect a Pro Flywheel).
+///
+/// `SpindownCoach` decides when to arm the sensor and cancels attempts where the rider was still
+/// pedalling, so only a genuine coast is timed.
 struct CalibrationView: View {
     @Environment(TrainerManager.self) private var trainer
     @Environment(AppSettings.self) private var settings
     @Environment(\.dismiss) private var dismiss
 
-    @State private var started = false
-    @State private var sawSpindown = false
-    @State private var finished = false
+    @State private var coach = SpindownCoach()
+    @State private var running = false
+    @State private var result: InRidePowerMeasurement?
     @State private var error: String?
-
-    private var state: InRideSensorState { trainer.latest?.state ?? .normal }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 24) {
                 Spacer()
-                if !started {
+                if !running {
                     intro
-                } else if finished, let m = trainer.latest {
-                    result(m)
+                } else if let result {
+                    resultView(result)
+                } else if case .failed(let message) = coach.phase {
+                    failedView(message)
                 } else {
                     progress
                 }
@@ -35,65 +38,110 @@ struct CalibrationView: View {
             .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(finished ? "Done" : "Cancel") { cancel() }
+                    Button(result != nil ? "Done" : "Cancel") { close() }
                 }
             }
-            .onChange(of: trainer.latest?.state) { _, new in
-                guard started, let new else { return }
-                if new == .spindownReady || new == .spindownActive { sawSpindown = true }
-                if new == .normal, sawSpindown { finished = true }
-            }
-            .interactiveDismissDisabled(started && !finished)
+            .onChange(of: trainer.latestAt) { _, _ in feedCoach() }
+            .onAppear { trainer.enterCalibrationMode() }
+            .onDisappear { trainer.exitCalibrationMode() }
+            .interactiveDismissDisabled(running && result == nil)
+            .sensoryFeedback(.impact(weight: .heavy), trigger: phaseKey)
         }
+    }
+
+    /// Changes whenever the rider needs to act, for a haptic nudge.
+    private var phaseKey: Int {
+        switch coach.phase {
+        case .accelerate: return 0
+        case .stopPedalling: return 1
+        case .measuring: return 2
+        case .finished: return 3
+        case .failed: return 4
+        }
+    }
+
+    private func feedCoach() {
+        guard running, result == nil, let m = trainer.latest, let at = trainer.latestAt else { return }
+        let action = coach.ingest(speedKPH: m.speedKPH, sensorState: m.state, at: at.timeIntervalSince1970)
+        switch action {
+        case .sendStart?:
+            do { try trainer.send(.startCalibration) } catch { self.error = "Could not start: \(error)" }
+        case .sendStop?:
+            try? trainer.send(.stopCalibration)
+        case nil:
+            break
+        }
+        if coach.phase == .finished { result = m }
+    }
+
+    private var targetText: String {
+        "\(Format.speed(kph: coach.targetSpeed, settings.units)) \(Format.speedUnit(settings.units))"
     }
 
     private var intro: some View {
         VStack(alignment: .leading, spacing: 14) {
             Label("Warm up for about 10 minutes first so the tyre and resistance unit are at riding temperature.", systemImage: "thermometer.medium")
-            Label("When asked, ride up to \(targetSpeedText) and then stop pedalling completely.", systemImage: "speedometer")
-            Label("Let the wheel coast to a stop on its own. Don't touch the brakes.", systemImage: "hand.raised")
-            Text("The result corrects power for your roller pressure and detects a Pro Flywheel. Redo it if you change tyre, tyre pressure or roller tension.")
+            Label("Ride up to \(targetText) and hold it. Spindown will tell you when to stop pedalling.", systemImage: "speedometer")
+            Label("Then stop pedalling completely and keep your legs still until the wheel stops. Don't brake.", systemImage: "hand.raised")
+            Text("Spindown only lets the trainer time a genuine coast: if you slow down while still pedalling, the attempt is cancelled and you can go again. Redo calibration after changing tyre, tyre pressure or roller tension.")
                 .font(.footnote).foregroundStyle(.secondary)
         }
-    }
-
-    private var targetSpeedText: String {
-        "\(Format.speed(kph: InRideDecoder.calibrationReadySpeedKPH, settings.units)) \(Format.speedUnit(settings.units))"
     }
 
     private var progress: some View {
         let speed = trainer.latest?.speedKPH ?? 0
         return VStack(spacing: 18) {
-            Text(stepTitle).font(.title.weight(.bold)).multilineTextAlignment(.center)
-            Text(stepDetail).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Text(title).font(.largeTitle.weight(.heavy)).multilineTextAlignment(.center)
+                .foregroundStyle(titleColor)
+            Text(detail).foregroundStyle(.secondary).multilineTextAlignment(.center)
             Text("\(Format.speed(kph: speed, settings.units)) \(Format.speedUnit(settings.units))")
                 .font(.system(size: 64, weight: .bold, design: .rounded).monospacedDigit())
-            if state == .spindownIdle {
-                ProgressView(value: min(speed / InRideDecoder.calibrationReadySpeedKPH, 1))
-                    .tint(speed >= InRideDecoder.calibrationReadySpeedKPH ? .green : .orange)
+            if coach.phase == .accelerate {
+                ProgressView(value: min(speed / coach.targetSpeed, 1))
+                    .tint(speed >= coach.targetSpeed ? .green : .orange)
+            }
+            if let hint = coach.hint {
+                Label(hint, systemImage: "arrow.uturn.backward.circle").font(.callout).foregroundStyle(.orange)
             }
         }
     }
 
-    private var stepTitle: String {
-        switch state {
-        case .spindownIdle: return "Speed up"
-        case .spindownReady: return "Stop pedalling now"
-        case .spindownActive: return "Coasting…"
-        case .normal: return sawSpindown ? "Finishing…" : "Starting…"
+    private var title: String {
+        switch coach.phase {
+        case .accelerate: return "Speed up"
+        case .stopPedalling: return "STOP PEDALLING"
+        case .measuring: return "Coasting…"
+        case .finished: return "Finishing…"
+        case .failed: return "Try again"
         }
     }
 
-    private var stepDetail: String {
-        switch state {
-        case .spindownIdle: return "Ride steadily above \(targetSpeedText)."
-        case .spindownReady: return "Let the wheel coast. If you pedal, the sensor restarts the test."
-        case .spindownActive: return "Keep still while the sensor times the run-down."
-        case .normal: return "Waiting for the sensor."
+    private var titleColor: Color {
+        switch coach.phase {
+        case .stopPedalling: return .green
+        case .measuring: return .blue
+        default: return .primary
         }
     }
 
-    private func result(_ m: InRidePowerMeasurement) -> some View {
+    private var detail: String {
+        switch coach.phase {
+        case .accelerate: return "Get above \(targetText) and hold it for a moment."
+        case .stopPedalling: return "Stop pedalling now and let the wheel coast. Keep your legs still."
+        case .measuring: return "The trainer is timing the run-down. Don't pedal."
+        case .finished, .failed: return ""
+        }
+    }
+
+    private func failedView(_ message: String) -> some View {
+        VStack(spacing: 14) {
+            Image(systemName: "arrow.counterclockwise.circle.fill").font(.system(size: 56)).foregroundStyle(.orange)
+            Text("Spindown cancelled").font(.title2.weight(.bold))
+            Text(message).multilineTextAlignment(.center).foregroundStyle(.secondary)
+        }
+    }
+
+    private func resultView(_ m: InRidePowerMeasurement) -> some View {
         VStack(spacing: 14) {
             Image(systemName: m.calibrationResult == .success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                 .font(.system(size: 56))
@@ -128,25 +176,22 @@ struct CalibrationView: View {
 
     @ViewBuilder
     private var actionButton: some View {
-        if !started {
+        if !running {
             Button {
-                do {
-                    try trainer.send(.startCalibration)
-                    started = true
-                    error = nil
-                } catch {
-                    self.error = "Could not start: \(error). Make sure the trainer is connected."
-                }
+                coach.reset()
+                result = nil
+                error = nil
+                running = true
             } label: {
                 Text("Start Calibration").font(.title3.weight(.bold)).frame(maxWidth: .infinity, minHeight: 56)
             }
             .buttonStyle(.borderedProminent)
             .disabled(!trainer.state.isStreaming)
-        } else if finished {
+        } else if result != nil || isFailed {
             Button {
-                started = false
-                sawSpindown = false
-                finished = false
+                coach.reset()
+                result = nil
+                error = nil
             } label: {
                 Text("Calibrate Again").frame(maxWidth: .infinity, minHeight: 50)
             }
@@ -154,8 +199,18 @@ struct CalibrationView: View {
         }
     }
 
-    private func cancel() {
-        if started && !finished { try? trainer.send(.stopCalibration) }
+    private var isFailed: Bool {
+        if case .failed = coach.phase { return true }
+        return false
+    }
+
+    private func close() {
+        switch coach.phase {
+        case .stopPedalling, .measuring:
+            try? trainer.send(.stopCalibration)
+        default:
+            break
+        }
         dismiss()
     }
 }

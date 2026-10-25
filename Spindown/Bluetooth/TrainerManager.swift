@@ -452,6 +452,35 @@ final class TrainerManager: NSObject {
         }
     }
 
+    /// Rate in use before calibration, restored afterwards.
+    private var rateBeforeCalibration: InRideUpdateRate?
+
+    /// Switches to 4 packets a second so a coast can be told from pedalling quickly.
+    func enterCalibrationMode() {
+        guard rateBeforeCalibration == nil else { return }
+        let current = configuration.flatMap { InRideUpdateRate(rawValue: $0.updateRateDefault) } ?? .hz1
+        rateBeforeCalibration = current
+        guard current != .hz4 else { return }
+        do {
+            try send(.configure(updateRate: .hz4))
+            log.log("Calibration: update rate raised to 4 Hz")
+        } catch {
+            log.log("Calibration: could not raise update rate: \(error)", level: .warning)
+        }
+    }
+
+    func exitCalibrationMode() {
+        guard let previous = rateBeforeCalibration else { return }
+        rateBeforeCalibration = nil
+        guard previous != .hz4 else { return }
+        do {
+            try send(.configure(updateRate: settings.preferredUpdateRate ?? previous))
+            log.log("Calibration: update rate restored")
+        } catch {
+            log.log("Calibration: could not restore update rate: \(error)", level: .warning)
+        }
+    }
+
     func applyUpdateRateNow() {
         pendingUpdateRateCheck = true
         applyPreferredUpdateRateIfNeeded()
