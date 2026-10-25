@@ -54,6 +54,9 @@ struct HistoryView: View {
                 Label(Format.shortDuration(r.summary.timerTime), systemImage: "clock")
                 Label("\(Format.distance(r.summary.distance, settings.units)) \(Format.distanceUnit(settings.units))", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
                 Label("\(Format.watts(r.summary.averagePower)) W", systemImage: "bolt")
+                if let hr = r.summary.averageHeartRate {
+                    Label("\(Int(hr.rounded())) bpm", systemImage: "heart")
+                }
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
@@ -159,6 +162,10 @@ struct RideDetailView: View {
                 MetricTile(title: "Energy", value: String(Int((s.work / 1000).rounded())), unit: "kJ", size: 26)
                 MetricTile(title: "Avg Cadence", value: Format.rpm(s.averageCadence), unit: "rpm", size: 26)
                 MetricTile(title: "Max Speed", value: Format.speed(metresPerSecond: s.maxSpeed, u), unit: Format.speedUnit(u), size: 26)
+                if s.averageHeartRate != nil {
+                    MetricTile(title: "Avg HR", value: Format.rpm(s.averageHeartRate), unit: "bpm", tint: .red, size: 26)
+                    MetricTile(title: "Max HR", value: s.maxHeartRate.map(String.init) ?? "--", unit: "bpm", tint: .red, size: 26)
+                }
             }
             .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
         }
@@ -168,7 +175,8 @@ struct RideDetailView: View {
         // Downsample to ~600 points; plenty for a phone-width chart.
         let step = max(1, track.samples.count / 600)
         let points = stride(from: 0, to: track.samples.count, by: step).map { track.samples[$0] }
-        return Section("Power") {
+        let hasHeartRate = points.contains { $0.heartRate != nil }
+        return Section(hasHeartRate ? "Power and heart rate" : "Power") {
             Chart(points, id: \.t) { s in
                 if let p = s.power {
                     LineMark(x: .value("Time", s.t / 60), y: .value("Power", p))
@@ -178,7 +186,20 @@ struct RideDetailView: View {
             }
             .chartXAxisLabel("minutes")
             .chartYAxisLabel("W")
-            .frame(height: 180)
+            .frame(height: 160)
+            if hasHeartRate {
+                Chart(points, id: \.t) { s in
+                    if let hr = s.heartRate {
+                        LineMark(x: .value("Time", s.t / 60), y: .value("Heart rate", hr))
+                            .interpolationMethod(.monotone)
+                            .foregroundStyle(.red)
+                    }
+                }
+                .chartXAxisLabel("minutes")
+                .chartYAxisLabel("bpm")
+                .chartYScale(domain: .automatic(includesZero: false))
+                .frame(height: 130)
+            }
         }
     }
 
@@ -262,11 +283,12 @@ struct RideDetailView: View {
     }
 
     private func trainerSection(_ t: TrainerInfo) -> some View {
-        Section("Trainer") {
-            LabeledValue("Sensor", t.model ?? t.name)
+        Section("Equipment") {
+            LabeledValue("Trainer sensor", t.model ?? t.name)
             LabeledValue("Firmware", t.firmware)
             LabeledValue("Spindown", t.spindownTime.map { String(format: "%.2f s", $0) })
             LabeledValue("Pro Flywheel", t.proFlywheel.map { $0 ? "Yes" : "No" })
+            LabeledValue("Heart-rate monitor", t.heartRateMonitor ?? "None")
         }
     }
 }

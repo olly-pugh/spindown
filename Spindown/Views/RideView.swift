@@ -4,6 +4,7 @@ import InRideKit
 struct RideView: View {
     @Environment(AppModel.self) private var model
     @Environment(TrainerManager.self) private var trainer
+    @Environment(HeartRateMonitor.self) private var heartRate
     @Environment(RideSession.self) private var session
     @Environment(AppSettings.self) private var settings
 
@@ -28,7 +29,7 @@ struct RideView: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
-                        Button("Trainer…", systemImage: "antenna.radiowaves.left.and.right") { showTrainerPicker = true }
+                        Button("Sensors…", systemImage: "antenna.radiowaves.left.and.right") { showTrainerPicker = true }
                         Button("Calibrate (spindown)…", systemImage: "gauge.with.dots.needle.33percent") { showCalibration = true }
                             .disabled(!trainer.state.isStreaming)
                     } label: {
@@ -36,7 +37,7 @@ struct RideView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showTrainerPicker) { TrainerPickerView() }
+            .sheet(isPresented: $showTrainerPicker) { SensorsView() }
             .sheet(isPresented: $showCalibration) { CalibrationView() }
             .confirmationDialog("Finish ride?", isPresented: $confirmFinish, titleVisibility: .visible) {
                 Button("Save Ride") { model.finishRide() }
@@ -57,8 +58,8 @@ struct RideView: View {
         if landscape {
             HStack(spacing: 12) {
                 VStack(spacing: 12) {
-                    connectionBar
-                    powerHero(now: now, size: 120)
+                    connectionBar(now: now)
+                    powerHero(now: now, size: 110)
                     controls
                 }
                 .frame(maxWidth: .infinity)
@@ -67,8 +68,8 @@ struct RideView: View {
             }
         } else {
             VStack(spacing: 10) {
-                connectionBar
-                powerHero(now: now, size: 112)
+                connectionBar(now: now)
+                powerHero(now: now, size: 96)
                 metricsGrid(now: now, columns: 2, size: 38)
                 Spacer(minLength: 0)
                 if let error = session.lastError {
@@ -79,7 +80,7 @@ struct RideView: View {
         }
     }
 
-    private var connectionBar: some View {
+    private func connectionBar(now: Date) -> some View {
         Button { showTrainerPicker = true } label: {
             HStack(spacing: 8) {
                 Circle().fill(trainer.state.color).frame(width: 10, height: 10)
@@ -92,6 +93,7 @@ struct RideView: View {
                     Text(String(format: "%.0f Hz", trainer.stats.measuredHz.rounded()))
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
+                heartRatePill(now: now)
                 if let battery = trainer.info.battery {
                     Label("\(battery)%", systemImage: battery < 20 ? "battery.25" : "battery.75")
                         .font(.caption.monospacedDigit())
@@ -113,7 +115,44 @@ struct RideView: View {
         .accessibilityLabel("Trainer: \(trainer.state.title)")
     }
 
+    private func heartRatePill(now: Date) -> some View {
+        let hr = heartRate.freshHeartRate(now: now)
+        let color: Color = hr != nil ? .red : (heartRate.state == .idle ? .gray : .orange)
+        return Image(systemName: hr != nil ? "heart.fill" : "heart")
+            .font(.caption)
+            .foregroundStyle(color)
+            .symbolEffect(.pulse, isActive: hr != nil)
+            .accessibilityLabel(hr != nil ? "Heart rate connected" : "Heart rate not connected")
+    }
+
     private func powerHero(now: Date, size: CGFloat) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            powerValue(now: now, size: size)
+            heartRateValue(now: now, size: size * 0.62)
+                .frame(maxWidth: 150)
+        }
+    }
+
+    private func heartRateValue(now: Date, size: CGFloat) -> some View {
+        let hr = heartRate.freshHeartRate(now: now)
+        return VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(hr.map(String.init) ?? "--")
+                    .font(.system(size: size, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(hr != nil ? Color.red : Color.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.4)
+                    .contentTransition(.numericText())
+                Image(systemName: "heart.fill").font(.title3).foregroundStyle(hr != nil ? .red : .secondary)
+            }
+            Text(hr == nil && heartRate.state == .idle ? "NO HR STRAP" : "BPM")
+                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Heart rate \(hr.map(String.init) ?? "no data") beats per minute")
+    }
+
+    private func powerValue(now: Date, size: CGFloat) -> some View {
         let power = session.displayPower(at: now)
         return VStack(spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -187,76 +226,5 @@ struct RideView: View {
         .tint(color)
         .foregroundStyle(.black)
         .sensoryFeedback(.impact, trigger: session.phase)
-    }
-}
-
-struct TrainerPickerView: View {
-    @Environment(TrainerManager.self) private var trainer
-    @Environment(AppSettings.self) private var settings
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    HStack {
-                        Circle().fill(trainer.state.color).frame(width: 10, height: 10)
-                        Text(trainer.state.title)
-                    }
-                    if trainer.state.isConnected || settings.rememberedTrainerID != nil {
-                        Button("Disconnect", role: .destructive) { trainer.disconnect(forget: false) }
-                        Button("Forget This Trainer", role: .destructive) { trainer.disconnect(forget: true) }
-                    }
-                }
-
-                Section {
-                    if trainer.discovered.isEmpty {
-                        HStack(spacing: 12) {
-                            ProgressView()
-                            Text("Looking for an inRide… Spin the wheel to wake the sensor; it sleeps when the roller stops.")
-                                .font(.callout).foregroundStyle(.secondary)
-                        }
-                    }
-                    ForEach(trainer.discovered) { device in
-                        Button {
-                            trainer.connect(to: device.id)
-                            dismiss()
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(device.name).font(.body.weight(.medium))
-                                    Text(device.advertisesInRide ? "Kinetic inRide" : "Other BLE device")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if device.id == trainer.peripheralID, trainer.state.isConnected {
-                                    Image(systemName: "checkmark").foregroundStyle(.green)
-                                }
-                                Text("\(device.rssi) dBm").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                            }
-                        }
-                        .disabled(!device.advertisesInRide && !trainer.scanAllDevices)
-                    }
-                } header: {
-                    Text("Nearby")
-                }
-
-                Section {
-                    Button(settings.simulatorEnabled ? "Stop Simulator" : "Use Simulated Trainer") {
-                        settings.simulatorEnabled.toggle()
-                        if settings.simulatorEnabled { trainer.startSimulator() } else { trainer.stopSimulator(); trainer.reconnectRemembered() }
-                        dismiss()
-                    }
-                } footer: {
-                    Text("The simulator generates genuine inRide packets so you can try the app without the trainer.")
-                }
-            }
-            .groupedList()
-            .navigationTitle("Trainer")
-            .inlineNavigationTitle()
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .onAppear { trainer.startScan() }
-            .onDisappear { trainer.stopScan() }
-        }
     }
 }

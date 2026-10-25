@@ -3,6 +3,8 @@ import InRideKit
 
 struct DiagnosticsView: View {
     @Environment(TrainerManager.self) private var trainer
+    @Environment(HeartRateMonitor.self) private var heartRate
+    @Environment(SensorBroadcaster.self) private var broadcaster
     @Environment(AppSettings.self) private var settings
     @State private var exportURL: URL?
     @State private var exportError: String?
@@ -16,6 +18,8 @@ struct DiagnosticsView: View {
                     configurationSection
                     liveSection
                     rawSection
+                    heartRateSection(now: context.date)
+                    broadcastSection
                     Section("Tools") {
                         NavigationLink("Packet Log (\(trainer.log.packets.count))") { PacketLogView() }
                         NavigationLink("Event Log (\(trainer.log.events.count))") { EventLogView() }
@@ -139,6 +143,35 @@ struct DiagnosticsView: View {
         }
     }
 
+    private func heartRateSection(now: Date) -> some View {
+        Section("Heart-Rate Monitor") {
+            LabeledValue("Status", heartRate.statusLine(now: now))
+            LabeledValue("Device", heartRate.deviceName)
+            LabeledValue("Identifier", heartRate.deviceID?.uuidString, monospaced: true)
+            LabeledValue("Manufacturer / firmware", [heartRate.manufacturer, heartRate.firmware].compactMap { $0 }.joined(separator: " / "))
+            LabeledValue("Heart rate", heartRate.bpm.map { "\($0) bpm" })
+            LabeledValue("Skin contact", heartRate.sensorContact.map { $0 ? "Yes" : "No" } ?? "Not reported")
+            LabeledValue("RR intervals", heartRate.lastRRIntervals.isEmpty ? nil : heartRate.lastRRIntervals.map { String(format: "%.0f ms", $0 * 1000) }.joined(separator: ", "))
+            LabeledValue("Last reading", heartRate.lastAt.map { String(format: "%.1f s ago", now.timeIntervalSince($0)) })
+            LabeledValue("Readings", "\(heartRate.packets)")
+            LabeledValue("Connects / drops", "\(heartRate.connects) / \(heartRate.disconnects)")
+            LabeledValue("Battery", heartRate.battery.map { "\($0)%" })
+            LabeledValue("RSSI", heartRate.rssi.map { "\($0) dBm" })
+            LabeledValue("Last packet", heartRate.lastPacket?.hexString, monospaced: true)
+        }
+    }
+
+    private var broadcastSection: some View {
+        Section("Watch Broadcast") {
+            LabeledValue("Enabled", settings.broadcastToWatch ? "Yes" : "No")
+            LabeledValue("State", String(describing: broadcaster.state))
+            LabeledValue("Power subscribers", "\(broadcaster.powerSubscribers)")
+            LabeledValue("Heart-rate subscribers", "\(broadcaster.heartRateSubscribers)")
+            LabeledValue("Packets sent", "\(broadcaster.packetsSent)")
+            LabeledValue("Last packet", broadcaster.lastSent?.hexString, monospaced: true)
+        }
+    }
+
     private func prepareExport() {
         let i = trainer.info
         var device: [String: String] = [:]
@@ -153,6 +186,9 @@ struct DiagnosticsView: View {
         device["systemID"] = i.systemID?.hexString(separator: "")
         device["battery"] = i.battery.map(String.init)
         device["state"] = trainer.state.title
+        device["heartRateMonitor"] = heartRate.deviceName
+        device["heartRateStatus"] = heartRate.statusLine()
+        device["watchBroadcast"] = String(describing: broadcaster.state)
         do {
             exportURL = try trainer.log.exportBundle(device: device, configuration: trainer.configuration, latest: trainer.latest)
             exportError = nil

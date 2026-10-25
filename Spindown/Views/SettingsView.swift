@@ -5,9 +5,13 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(AppSettings.self) private var settings
     @Environment(TrainerManager.self) private var trainer
+    @Environment(HeartRateMonitor.self) private var heartRate
     @Environment(UploadCoordinator.self) private var uploads
 
     @State private var showGarminSignIn = false
+    @State private var showSensors = false
+    @State private var verifyingGarmin = false
+    @State private var verifyingStrava = false
     @State private var garminTestResult: String?
     @State private var stravaClientID = ""
     @State private var stravaSecret = ""
@@ -16,6 +20,20 @@ struct SettingsView: View {
         @Bindable var settings = settings
         NavigationStack {
             Form {
+                Section("Sensors") {
+                    Button { showSensors = true } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label(trainer.state.title, systemImage: "bicycle").foregroundStyle(trainer.state.color)
+                            Label(heartRate.statusLine(), systemImage: "heart.fill")
+                                .foregroundStyle(heartRate.freshHeartRate() != nil ? .green : .secondary)
+                        }
+                        .font(.callout)
+                    }
+                    Button("Manage Trainer & Heart-Rate Monitor…") { showSensors = true }
+                }
+
+                WatchBroadcastSection()
+
                 Section("Trainer") {
                     LabeledValue("Trainer", settings.rememberedTrainerName ?? "None")
                     Toggle("Reconnect automatically", isOn: $settings.autoConnect)
@@ -57,6 +75,7 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .sheet(isPresented: $showGarminSignIn) { GarminSignInView() }
+            .sheet(isPresented: $showSensors) { SensorsView() }
             .task {
                 let config = await uploads.strava.config
                 stravaClientID = config.clientID
@@ -75,8 +94,12 @@ struct SettingsView: View {
                     Button("Sign In Again") { showGarminSignIn = true }
                 }
                 Toggle("Upload rides automatically", isOn: $settings.autoUploadGarmin)
-                Button("Test Connection") { Task { garminTestResult = await uploads.testGarmin() } }
-                if let garminTestResult { Text(garminTestResult).font(.footnote) }
+                verifyButton(working: verifyingGarmin) {
+                    verifyingGarmin = true
+                    garminTestResult = await uploads.testGarmin()
+                    verifyingGarmin = false
+                }
+                verificationRow(uploads.garminVerification)
                 Button("Sign Out", role: .destructive) { Task { await uploads.signOutGarmin() } }
             } else {
                 Button("Sign In to Garmin Connect", systemImage: "person.crop.circle.badge.plus") { showGarminSignIn = true }
@@ -94,7 +117,17 @@ struct SettingsView: View {
         return Section {
             if uploads.stravaSignedIn {
                 LabeledValue("Athlete", uploads.stravaAccountName ?? "Signed in")
+                if uploads.stravaNeedsSignIn {
+                    Label("Strava needs you to sign in again", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                    StravaSignInButton()
+                }
                 Toggle("Upload rides automatically", isOn: $settings.autoUploadStrava)
+                verifyButton(working: verifyingStrava) {
+                    verifyingStrava = true
+                    await uploads.verifyStrava()
+                    verifyingStrava = false
+                }
+                verificationRow(uploads.stravaVerification)
                 Button("Disconnect Strava", role: .destructive) { Task { await uploads.signOutStrava() } }
             } else {
                 TextField("Client ID", text: $stravaClientID).plainTextEntry()
@@ -104,6 +137,7 @@ struct SettingsView: View {
                 }
                 .disabled(stravaClientID.isEmpty || stravaSecret.isEmpty)
                 StravaSignInButton()
+                verificationRow(uploads.stravaVerification)
             }
         } header: {
             Text("Strava")
@@ -111,6 +145,33 @@ struct SettingsView: View {
             Text(settings.autoUploadGarmin && settings.autoUploadStrava
                  ? "Both Garmin and Strava uploads are on. If Garmin Connect is already linked to Strava you will get duplicates; turn one off."
                  : "Only needed if your Garmin account is not linked to Strava. Create a free API application at strava.com/settings/api with the callback domain \"localhost\", then enter its Client ID and Secret. Uploads are marked as indoor trainer rides.")
+        }
+    }
+
+    private func verifyButton(working: Bool, action: @escaping () async -> Void) -> some View {
+        Button {
+            Task { await action() }
+        } label: {
+            HStack {
+                Label("Verify Connection", systemImage: "checkmark.shield")
+                if working { Spacer(); ProgressView() }
+            }
+        }
+        .disabled(working)
+    }
+
+    @ViewBuilder
+    private func verificationRow(_ v: UploadCoordinator.Verification?) -> some View {
+        if let v {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(v.message)
+                    Text("Checked \(v.date.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(.secondary)
+                }
+            } icon: {
+                Image(systemName: v.ok ? "checkmark.circle.fill" : "xmark.octagon.fill").foregroundStyle(v.ok ? .green : .red)
+            }
+            .font(.callout)
         }
     }
 }

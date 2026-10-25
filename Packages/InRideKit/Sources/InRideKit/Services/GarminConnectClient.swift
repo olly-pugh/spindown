@@ -68,6 +68,10 @@ public struct GarminConnectConfig: Sendable, Equatable {
         public var title: String?
         public var ticket: String?
         public var serviceURL: String?
+        /// Text the page wants the app to show (errors such as a wrong password, or notices).
+        public var message: String?
+        /// "ERROR", "WARNING", "INFO" or "SUCCESS".
+        public var messageType: String?
     }
 
     /// Parses a bridge message. The page sends `{eventType, flowName, logMessage, data}`; on success
@@ -81,8 +85,11 @@ public struct GarminConnectConfig: Sendable, Equatable {
         guard let dict = object as? [String: Any], let type = dict["eventType"] as? String else { return nil }
         let data = dict["data"] as? [String: Any]
         let ticket = (data?["serviceTicket"] as? String).flatMap { $0.hasPrefix("ST-") ? $0 : nil }
+        let communication = data?["communication"] as? [String: Any]
+        let message = (communication?["message"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         return BridgeEvent(type: type, flow: dict["flowName"] as? String, title: data?["title"] as? String,
-                           ticket: ticket, serviceURL: data?["serviceUrl"] as? String)
+                           ticket: ticket, serviceURL: data?["serviceUrl"] as? String,
+                           message: message, messageType: communication?["type"] as? String)
     }
 }
 

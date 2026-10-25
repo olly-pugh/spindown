@@ -15,6 +15,17 @@ final class UploadCoordinator {
     private(set) var stravaAccountName: String?
     private(set) var stravaNeedsSignIn = false
     private(set) var isProcessing = false
+    /// Result of the last explicit check of each account, shown in Settings.
+    private(set) var garminVerification: Verification?
+    private(set) var stravaVerification: Verification?
+    /// OAuth `state` of a Strava sign-in in progress.
+    var pendingStravaState: String?
+
+    struct Verification: Equatable {
+        var ok: Bool
+        var message: String
+        var date: Date
+    }
     private(set) var networkAvailable = true
 
     let garmin: GarminConnectClient
@@ -63,27 +74,58 @@ final class UploadCoordinator {
         garminNeedsSignIn = false
         garminAccountName = nil
         await refreshAccounts()
+        _ = await testGarmin()
         log.log("Signed in to Garmin Connect\(garminAccountName.map { " as \($0)" } ?? "")")
         notBefore.removeAll()
         await process()
     }
 
     func testGarmin() async -> String {
+        let result: Verification
         do {
             let name = try await garmin.profileName()
             garminAccountName = name
             garminNeedsSignIn = false
-            return "Connected as \(name)."
+            result = Verification(ok: true, message: "Connected as \(name)", date: Date())
         } catch let e as ServiceError {
             if case .reauthenticationRequired = e { garminNeedsSignIn = true }
-            return e.localizedDescription
+            result = Verification(ok: false, message: e.localizedDescription, date: Date())
         } catch {
-            return error.localizedDescription
+            result = Verification(ok: false, message: error.localizedDescription, date: Date())
+        }
+        garminVerification = result
+        log.log("Garmin check: \(result.message)", level: result.ok ? .info : .warning)
+        return result.message
+    }
+
+    func verifyStrava() async {
+        do {
+            let name = try await strava.verify()
+            stravaAccountName = name
+            stravaNeedsSignIn = false
+            stravaVerification = Verification(ok: true, message: "Connected as \(name)", date: Date())
+        } catch let e as ServiceError {
+            if case .reauthenticationRequired = e { stravaNeedsSignIn = true }
+            stravaVerification = Verification(ok: false, message: e.localizedDescription, date: Date())
+        } catch {
+            stravaVerification = Verification(ok: false, message: error.localizedDescription, date: Date())
+        }
+        log.log("Strava check: \(stravaVerification?.message ?? "")", level: stravaVerification?.ok == true ? .info : .warning)
+    }
+
+    func completePendingStravaSignIn(_ url: URL) async {
+        guard let state = pendingStravaState, url.path.contains("strava") else { return }
+        pendingStravaState = nil
+        do {
+            try await completeStravaSignIn(callback: url, state: state)
+        } catch {
+            stravaVerification = Verification(ok: false, message: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription, date: Date())
         }
     }
 
     func signOutGarmin() async {
         await garmin.signOut()
+        garminVerification = nil
         garminAccountName = nil
         await refreshAccounts()
         log.log("Signed out of Garmin Connect")
@@ -91,8 +133,10 @@ final class UploadCoordinator {
 
     func completeStravaSignIn(callback: URL, state: String) async throws {
         try await strava.handleCallback(callback, expectedState: state)
+        pendingStravaState = nil
         stravaNeedsSignIn = false
         await refreshAccounts()
+        await verifyStrava()
         log.log("Signed in to Strava\(stravaAccountName.map { " as \($0)" } ?? "")")
         notBefore.removeAll()
         await process()
@@ -100,6 +144,7 @@ final class UploadCoordinator {
 
     func signOutStrava() async {
         await strava.signOut()
+        stravaVerification = nil
         await refreshAccounts()
         log.log("Signed out of Strava")
     }

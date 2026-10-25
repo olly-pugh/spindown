@@ -8,6 +8,8 @@ final class AppModel {
     let settings: AppSettings
     let log: DiagnosticsLog
     let trainer: TrainerManager
+    let heartRate: HeartRateMonitor
+    let broadcaster: SensorBroadcaster
     let store: RideStore
     let session: RideSession
     let uploads: UploadCoordinator
@@ -23,6 +25,8 @@ final class AppModel {
         let log = DiagnosticsLog()
         let store = RideStore()
         let trainer = TrainerManager(settings: settings, log: log)
+        let heartRate = HeartRateMonitor(settings: settings, log: log)
+        let broadcaster = SensorBroadcaster(settings: settings, log: log)
         let keychain = KeychainStore()
         let strava = StravaClient(config: Self.stravaConfig(keychain), transport: URLSession.shared, store: keychain)
         let garmin = GarminConnectClient(transport: URLSession.shared, store: keychain)
@@ -31,11 +35,26 @@ final class AppModel {
         self.log = log
         self.store = store
         self.trainer = trainer
-        self.session = RideSession(trainer: trainer, store: store, settings: settings)
+        self.heartRate = heartRate
+        self.broadcaster = broadcaster
+        self.session = RideSession(trainer: trainer, heartRate: heartRate, store: store, settings: settings)
         self.uploads = UploadCoordinator(store: store, log: log, garmin: garmin, strava: strava)
 
-        trainer.onMeasurement = { [weak session] m, date in session?.handle(m, at: date) }
+        trainer.onMeasurement = { [weak session, weak broadcaster, weak trainer, weak heartRate] m, date in
+            session?.handle(m, at: date)
+            broadcaster?.update(reading: trainer?.freshReading(now: date), heartRate: heartRate?.freshHeartRate(now: date))
+        }
         trainer.onPacket = { [weak session] p in session?.handlePacket(p) }
+        // Heart-rate packets also keep sampling going if the trainer is asleep or disconnected.
+        heartRate.onHeartRate = { [weak session] _, date in session?.tick(now: date) }
+
+        // Feed a paired watch once a second even when no trainer packets arrive (sends zeros).
+        Task { [weak broadcaster, weak trainer, weak heartRate] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                broadcaster?.update(reading: trainer?.freshReading(), heartRate: heartRate?.freshHeartRate())
+            }
+        }
 
         store.load()
         log.log("Spindown \(Platform.appVersion) started; \(store.records.count) rides on file")
@@ -69,6 +88,14 @@ final class AppModel {
         keychain.set(clientID, for: "strava.clientID")
         keychain.set(secret, for: "strava.clientSecret")
         await uploads.strava.update(config: Self.stravaConfig(keychain))
+    }
+
+    /// Strava may hand its OAuth result back through the app's URL scheme (when the Strava app
+    /// handles the sign-in) instead of through the web authentication session.
+    func handleOpenURL(_ url: URL) {
+        guard url.scheme == "spindown" else { return }
+        log.log("Opened via link: \(url.host ?? "")\(url.path)")
+        Task { await uploads.completePendingStravaSignIn(url) }
     }
 
     func finishRide() {

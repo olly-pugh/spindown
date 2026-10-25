@@ -20,6 +20,7 @@
 		99CB5EBDEE961A17A20A8298 /* SpindownApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7C20723616CC79DE2BC6A9F /* SpindownApp.swift */; };
 		9A6C073B12ADB15A986854D8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 155B96CA7AF7CBE675B16BCA /* Assets.xcassets */; };
 		AC6557325DBB8F230DC7FF30 /* CalibrationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3ED005150E21E638F98AF76 /* CalibrationView.swift */; };
+		B99E99EEC63C53F93325A6E1 /* SensorsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB61E149E5F62BD2015B22F9 /* SensorsView.swift */; };
 		CAE6A6283186B103487C74D4 /* Platform.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9E575542B0CD3EE845CC54 /* Platform.swift */; };
 		CD8F2F3270053585854EEEEF /* DiagnosticsLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56600CC29558417402414B0B /* DiagnosticsLog.swift */; };
 		D51DF3EFE5C80B42113B8F7C /* InRideKit in Frameworks */ = {isa = PBXBuildFile; productRef = 57A13BEC0E441BB1BBBC33C8 /* InRideKit */; };
@@ -27,6 +28,8 @@
 		E015BE618485FF5C115952C0 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F7BC4A817ECF96673FF0959 /* AppSettings.swift */; };
 		E33537DCC8E9E24F6455411A /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CCD3D0F176457EEAE3B597C /* SettingsView.swift */; };
 		ED0D19C838E46597A34A8AE6 /* TrainerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F72BDF0E82915550AA6BD6A /* TrainerManager.swift */; };
+		F053DD0B73BC5725AB3AD343 /* HeartRateMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DEBF0AA79ED63827B600351 /* HeartRateMonitor.swift */; };
+		F5D4C43EC430F3F23E8D231E /* SensorBroadcaster.swift in Sources */ = {isa = PBXBuildFile; fileRef = 669160F16A73CCB1067EDDAE /* SensorBroadcaster.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,11 +43,14 @@
 		56600CC29558417402414B0B /* DiagnosticsLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsLog.swift; sourceTree = "<group>"; };
 		5A23755B6C1273CF5118BDE1 /* InRideKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = InRideKit; path = Packages/InRideKit; sourceTree = SOURCE_ROOT; };
 		63982F6E275C9DD62307493F /* RideSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RideSession.swift; sourceTree = "<group>"; };
+		669160F16A73CCB1067EDDAE /* SensorBroadcaster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorBroadcaster.swift; sourceTree = "<group>"; };
+		8DEBF0AA79ED63827B600351 /* HeartRateMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartRateMonitor.swift; sourceTree = "<group>"; };
 		8E9E575542B0CD3EE845CC54 /* Platform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Platform.swift; sourceTree = "<group>"; };
 		9F72BDF0E82915550AA6BD6A /* TrainerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainerManager.swift; sourceTree = "<group>"; };
 		AF85247433406CA9061D84C9 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
 		B868EEBEF8226F4DDD49E100 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		BAEEFAE4199925CE13EB4E9B /* RideStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RideStore.swift; sourceTree = "<group>"; };
+		BB61E149E5F62BD2015B22F9 /* SensorsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorsView.swift; sourceTree = "<group>"; };
 		C09597C3510057B8EAA9AACC /* UploadCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadCoordinator.swift; sourceTree = "<group>"; };
 		CBF110839A61E1AC8236A874 /* AccountSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountSignIn.swift; sourceTree = "<group>"; };
 		D7C20723616CC79DE2BC6A9F /* SpindownApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpindownApp.swift; sourceTree = "<group>"; };
@@ -107,6 +113,8 @@
 			isa = PBXGroup;
 			children = (
 				56600CC29558417402414B0B /* DiagnosticsLog.swift */,
+				8DEBF0AA79ED63827B600351 /* HeartRateMonitor.swift */,
+				669160F16A73CCB1067EDDAE /* SensorBroadcaster.swift */,
 				9F72BDF0E82915550AA6BD6A /* TrainerManager.swift */,
 			);
 			path = Bluetooth;
@@ -149,6 +157,7 @@
 				AF85247433406CA9061D84C9 /* HistoryView.swift */,
 				1405A2B7C05A5C5524BEE0AB /* RideView.swift */,
 				4F1F7D3C90DB371B2B5D50CB /* RootView.swift */,
+				BB61E149E5F62BD2015B22F9 /* SensorsView.swift */,
 				2CCD3D0F176457EEAE3B597C /* SettingsView.swift */,
 			);
 			path = Views;
@@ -259,6 +268,7 @@
 				82AC135AD3D4860C3C20417B /* Components.swift in Sources */,
 				CD8F2F3270053585854EEEEF /* DiagnosticsLog.swift in Sources */,
 				DB9B429F2A1428F2A321B16F /* DiagnosticsView.swift in Sources */,
+				F053DD0B73BC5725AB3AD343 /* HeartRateMonitor.swift in Sources */,
 				07661C9CAE5B9288C6533D58 /* HistoryView.swift in Sources */,
 				5C45A80D6ED8ED487AB9E338 /* Keychain.swift in Sources */,
 				CAE6A6283186B103487C74D4 /* Platform.swift in Sources */,
@@ -266,6 +276,8 @@
 				15A76CD87611EC3CD2A3419F /* RideStore.swift in Sources */,
 				583260D85692948F90586DC6 /* RideView.swift in Sources */,
 				4E718492354513260A1B983B /* RootView.swift in Sources */,
+				F5D4C43EC430F3F23E8D231E /* SensorBroadcaster.swift in Sources */,
+				B99E99EEC63C53F93325A6E1 /* SensorsView.swift in Sources */,
 				E33537DCC8E9E24F6455411A /* SettingsView.swift in Sources */,
 				99CB5EBDEE961A17A20A8298 /* SpindownApp.swift in Sources */,
 				ED0D19C838E46597A34A8AE6 /* TrainerManager.swift in Sources */,

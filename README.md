@@ -8,6 +8,11 @@ sensor: a modern, open-source replacement for the discontinued Kinetic Fit app.
   ([protocol notes](docs/INRIDE_PROTOCOL.md)).
 - Live power, speed, cadence, elapsed and moving time, distance, averages and maxima.
 - Guided spindown calibration with Kinetic's roller advice.
+- Heart rate from any Bluetooth strap (Polar H9, H10, Garmin HRM-Dual…), shown live, recorded each
+  second and included in FIT/TCX/CSV and uploads.
+- **Garmin watch broadcast:** the iPhone appears as a standard power meter (and optionally a
+  heart-rate strap) so a Garmin watch can record the ride itself, which is what Garmin requires
+  for cycling **VO2 max** estimates. Uploaded files from other apps don't produce VO2 max.
 - Automatic reconnection: the sensor sleeps when the roller stops, and Spindown reconnects
   as soon as it wakes. Rides keep recording through dropouts.
 - Crash-safe recording: a journal is fsync'd every few seconds. If iOS or a crash closes the

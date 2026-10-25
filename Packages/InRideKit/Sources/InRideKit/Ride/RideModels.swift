@@ -26,20 +26,23 @@ public struct RideSample: Codable, Sendable, Equatable {
     public var cadence: Double?
     /// Cumulative metres.
     public var distance: Double
+    /// Beats per minute from a heart-rate strap; nil when none is connected or it has no contact.
+    public var heartRate: Int?
 
     public var hasData: Bool { speed != nil }
 
     enum CodingKeys: String, CodingKey {
-        case t, dt, power = "p", speed = "v", cadence = "c", distance = "d"
+        case t, dt, power = "p", speed = "v", cadence = "c", distance = "d", heartRate = "h"
     }
 
-    public init(t: Double, dt: Double, power: Int?, speed: Double?, cadence: Double?, distance: Double) {
+    public init(t: Double, dt: Double, power: Int?, speed: Double?, cadence: Double?, distance: Double, heartRate: Int? = nil) {
         self.t = t
         self.dt = dt
         self.power = power
         self.speed = speed
         self.cadence = cadence
         self.distance = distance
+        self.heartRate = heartRate
     }
 }
 
@@ -69,6 +72,8 @@ public struct RideSummary: Codable, Sendable, Equatable {
     public var normalizedPower: Double?
     public var averageCadence: Double?
     public var maxCadence: Double?
+    public var averageHeartRate: Double?
+    public var maxHeartRate: Int?
     /// Joules.
     public var work: Double = 0
     /// Kilocalories. For cycling, Garmin and Strava both use roughly 1 kcal per kJ of work.
@@ -88,10 +93,12 @@ public struct TrainerInfo: Codable, Sendable, Equatable {
     public var systemID: String?
     public var spindownTime: Double?
     public var proFlywheel: Bool?
+    /// Name of the heart-rate monitor used, e.g. "Polar H9 1A2B3C4D".
+    public var heartRateMonitor: String?
 
     public init(name: String? = nil, identifier: String? = nil, manufacturer: String? = nil, model: String? = nil,
                 firmware: String? = nil, hardware: String? = nil, systemID: String? = nil,
-                spindownTime: Double? = nil, proFlywheel: Bool? = nil) {
+                spindownTime: Double? = nil, proFlywheel: Bool? = nil, heartRateMonitor: String? = nil) {
         self.name = name
         self.identifier = identifier
         self.manufacturer = manufacturer
@@ -101,6 +108,7 @@ public struct TrainerInfo: Codable, Sendable, Equatable {
         self.systemID = systemID
         self.spindownTime = spindownTime
         self.proFlywheel = proFlywheel
+        self.heartRateMonitor = heartRateMonitor
     }
 }
 

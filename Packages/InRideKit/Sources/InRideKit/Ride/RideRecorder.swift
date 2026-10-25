@@ -17,6 +17,9 @@ public struct RideStats: Sendable, Equatable, Codable {
     private var powerIntegral = 0.0
     private var cadenceSeconds = 0.0
     private var cadenceIntegral = 0.0
+    public private(set) var maxHeartRate: Int?
+    private var heartRateSeconds = 0.0
+    private var heartRateIntegral = 0.0
 
     public init() {}
 
@@ -25,10 +28,17 @@ public struct RideStats: Sendable, Equatable, Codable {
     public var averagePower: Double? { powerSeconds > 0 ? powerIntegral / powerSeconds : nil }
     /// Time-weighted, excluding zero cadence (the usual convention).
     public var averageCadence: Double? { cadenceSeconds > 0 ? cadenceIntegral / cadenceSeconds : nil }
+    /// Time-weighted over recording time with heart-rate data, moving or not (as Garmin does).
+    public var averageHeartRate: Double? { heartRateSeconds > 0 ? heartRateIntegral / heartRateSeconds : nil }
 
     public mutating func add(_ s: RideSample) {
         timerTime += s.dt
         distance = s.distance
+        if let hr = s.heartRate, hr > 0 {
+            maxHeartRate = max(maxHeartRate ?? 0, hr)
+            heartRateSeconds += s.dt
+            heartRateIntegral += Double(hr) * s.dt
+        }
         guard let speed = s.speed else { return }
         maxSpeed = max(maxSpeed, speed)
         if let p = s.power {
@@ -67,9 +77,10 @@ public struct RideRecorder: Sendable {
         self.startDate = startDate
     }
 
-    /// Records a sample at `t` seconds after start. Pass nil when there is no fresh trainer data.
+    /// Records a sample at `t` seconds after start. Pass nil when there is no fresh trainer data
+    /// (or heart rate). Heart rate is recorded even while the trainer is disconnected.
     @discardableResult
-    public mutating func record(t: Double, reading: TrainerReading?) -> RideSample? {
+    public mutating func record(t: Double, reading: TrainerReading?, heartRate: Int? = nil) -> RideSample? {
         guard !isPaused else { return nil }
         let dt = lastT.map { min(max(t - $0, 0), Self.maxSampleGap) } ?? 0
         lastT = t
@@ -81,7 +92,8 @@ public struct RideRecorder: Sendable {
             power: reading.map { max(0, $0.power) },
             speed: speed,
             cadence: reading.map { max(0, $0.cadenceRPM) },
-            distance: distance
+            distance: distance,
+            heartRate: heartRate.flatMap { $0 > 0 ? $0 : nil }
         )
         apply(sample)
         return sample
@@ -90,10 +102,10 @@ public struct RideRecorder: Sendable {
     /// Pauses the timer. Pass the current reading so the time up to the pause is credited;
     /// the closing sample is returned so the caller can journal it.
     @discardableResult
-    public mutating func pause(t: Double, reading: TrainerReading? = nil) -> RideSample? {
+    public mutating func pause(t: Double, reading: TrainerReading? = nil, heartRate: Int? = nil) -> RideSample? {
         guard !isPaused else { return nil }
         var closing: RideSample?
-        if let lastT, t > lastT { closing = record(t: t, reading: reading) }
+        if let lastT, t > lastT { closing = record(t: t, reading: reading, heartRate: heartRate) }
         isPaused = true
         timerEvents.append(RideTimerEvent(t: t, kind: .stop))
         return closing
@@ -132,6 +144,8 @@ public struct RideRecorder: Sendable {
         s.maxPower = stats.maxPower
         s.averageCadence = stats.averageCadence
         s.maxCadence = stats.maxCadence
+        s.averageHeartRate = stats.averageHeartRate
+        s.maxHeartRate = stats.maxHeartRate
         s.work = stats.work
         s.normalizedPower = Self.normalizedPower(samples)
         return s

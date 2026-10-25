@@ -72,7 +72,7 @@ struct ExportTests {
     func csv() {
         let text = String(decoding: ActivityExporter.csv(Self.sampleRide()), as: UTF8.self)
         let lines = text.split(separator: "\n")
-        #expect(lines.first == "elapsed_s,timestamp_utc,power_w,speed_kph,cadence_rpm,distance_m")
+        #expect(lines.first == "elapsed_s,timestamp_utc,power_w,speed_kph,cadence_rpm,distance_m,heart_rate_bpm")
         #expect(lines.count == 572)
     }
 }

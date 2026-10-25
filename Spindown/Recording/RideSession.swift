@@ -23,6 +23,7 @@ final class RideSession {
     private(set) var lastError: String?
 
     private let trainer: TrainerManager
+    private let heartRate: HeartRateMonitor
     private let store: RideStore
     private let settings: AppSettings
     private var journal: RideJournalWriter?
@@ -32,8 +33,9 @@ final class RideSession {
 
     static let resumeWindow: TimeInterval = 15 * 60
 
-    init(trainer: TrainerManager, store: RideStore, settings: AppSettings) {
+    init(trainer: TrainerManager, heartRate: HeartRateMonitor, store: RideStore, settings: AppSettings) {
         self.trainer = trainer
+        self.heartRate = heartRate
         self.store = store
         self.settings = settings
     }
@@ -42,6 +44,13 @@ final class RideSession {
 
     var startDate: Date? { recorder?.startDate }
     var stats: RideStats { recorder?.stats ?? RideStats() }
+
+    /// Trainer details plus the heart-rate strap in use, saved with the ride.
+    private var equipment: TrainerInfo {
+        var info = trainer.trainerInfo
+        if heartRate.state.isConnected { info.heartRateMonitor = heartRate.deviceName }
+        return info
+    }
 
     func elapsed(at now: Date) -> TimeInterval {
         startDate.map { max(0, now.timeIntervalSince($0)) } ?? 0
@@ -77,7 +86,7 @@ final class RideSession {
             let id = UUID()
             let start = Date()
             let writer = try RideJournalWriter(directory: store.activeDirectory, resume: false)
-            writer.append(.header(id: id, startDate: start, trainer: trainer.trainerInfo), sync: true)
+            writer.append(.header(id: id, startDate: start, trainer: equipment), sync: true)
             journal = writer
             rideID = id
             recorder = RideRecorder(startDate: start)
@@ -96,7 +105,7 @@ final class RideSession {
     func pause() {
         guard phase == .recording, var r = recorder else { return }
         let t = Date().timeIntervalSince(r.startDate)
-        if let closing = r.pause(t: t, reading: trainer.freshReading()) {
+        if let closing = r.pause(t: t, reading: trainer.freshReading(), heartRate: heartRate.freshHeartRate()) {
             journal?.append(.sample(closing))
         }
         journal?.append(.pause(t: t), sync: true)
@@ -121,12 +130,12 @@ final class RideSession {
         guard phase != .idle, var r = recorder, let id = rideID else { return nil }
         let endDate = Date()
         let endT = endDate.timeIntervalSince(r.startDate)
-        if phase == .recording, let closing = r.pause(t: endT, reading: trainer.freshReading()) {
+        if phase == .recording, let closing = r.pause(t: endT, reading: trainer.freshReading(), heartRate: heartRate.freshHeartRate()) {
             journal?.append(.sample(closing))
         }
         journal?.append(.pause(t: endT), sync: true)
         let record = RideRecord(id: id, name: RideRecord.defaultName(for: r.startDate), startDate: r.startDate, endDate: endDate,
-                                summary: r.summary(endT: endT), trainer: trainer.trainerInfo, recovered: false,
+                                summary: r.summary(endT: endT), trainer: equipment, recovered: false,
                                 uploads: Dictionary(uniqueKeysWithValues: settings.autoUploadDestinations.map { ($0, .pending) }))
         do {
             journal?.close()
@@ -185,7 +194,7 @@ final class RideSession {
         let second = now.timeIntervalSince(r.startDate).rounded(.down)
         guard second > lastRecordedSecond else { return }
         lastRecordedSecond = second
-        if let sample = r.record(t: second, reading: trainer.freshReading(now: now)) {
+        if let sample = r.record(t: second, reading: trainer.freshReading(now: now), heartRate: heartRate.freshHeartRate(now: now)) {
             journal?.append(.sample(sample))
         }
         recorder = r

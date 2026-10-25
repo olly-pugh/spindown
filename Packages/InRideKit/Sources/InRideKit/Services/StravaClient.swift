@@ -120,6 +120,30 @@ public actor StravaClient {
         return fresh.accessToken
     }
 
+    /// Confirms the saved login works by asking Strava who is signed in. Returns the athlete's name.
+    public func verify() async throws -> String {
+        let token = try await validAccessToken()
+        var r = URLRequest(url: URL(string: "\(Self.api)/athlete")!)
+        r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await transport.send(r)
+        switch response.statusCode {
+        case 200..<300:
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let name = [json?["firstname"] as? String, json?["lastname"] as? String].compactMap { $0 }.joined(separator: " ")
+            if var t = tokens, !name.isEmpty {
+                t.athleteName = name
+                save(t)
+            }
+            return name.isEmpty ? "Strava athlete" : name
+        case 401, 403:
+            throw ServiceError.reauthenticationRequired("Strava refused the saved login (HTTP \(response.statusCode)).")
+        case 429:
+            throw ServiceError.rateLimited
+        default:
+            throw ServiceError.http(status: response.statusCode, message: bodySnippet(data))
+        }
+    }
+
     public func signOut() async {
         if let t = tokens {
             var r = URLRequest(url: URL(string: "https://www.strava.com/oauth/deauthorize")!)

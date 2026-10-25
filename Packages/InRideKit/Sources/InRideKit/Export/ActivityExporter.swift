@@ -73,6 +73,13 @@ public enum ActivityExporter {
             .u32(253, Int(startTS)), .u8(0, 1), .u16(2, 290), .u16(4, 0), .u16(5, nil),  // 290 = kinetic_by_kurt
             .text(27, ride.record.trainer?.model ?? "inRide"),
         ])
+        if let hrm = ride.record.trainer?.heartRateMonitor {
+            let polar = hrm.localizedCaseInsensitiveContains("polar")
+            w.write(global: 23, [
+                .u32(253, Int(startTS)), .u8(0, 2), .u16(2, polar ? 123 : 255), .u16(4, 0), .u16(5, nil), // 123 = polar_electro
+                .text(27, hrm), .enumeration(25, 3), // source_type = bluetooth_low_energy
+            ])
+        }
 
         // Timer events and records, merged in time order.
         var events = ride.track.timerEvents.map { (t: $0.t, start: $0.kind == .start) }
@@ -103,6 +110,7 @@ public enum ActivityExporter {
                 .u16(6, sample.speed.map { Int(($0 * 1000).rounded()) }),
                 .u16(7, sample.power),
                 .u8(4, sample.cadence.map { Int($0.rounded()) }),
+                .u8(3, sample.heartRate),
             ])
         }
         while eventIndex < events.count {
@@ -124,6 +132,7 @@ public enum ActivityExporter {
         let avgCad = s.averageCadence.map { Int($0.rounded()) }
         let maxCad = s.maxCadence.map { Int($0.rounded()) }
         let kcal = Int(s.calories.rounded())
+        let avgHR = s.averageHeartRate.map { Int($0.rounded()) }
         let work = Int(s.work.rounded())
 
         // lap
@@ -133,6 +142,7 @@ public enum ActivityExporter {
             .u16(13, avgSpeed), .u16(14, maxSpeed), .u8(17, avgCad), .u8(18, maxCad),
             .u16(19, avgPower), .u16(20, s.maxPower), .enumeration(24, 7), .enumeration(25, 2),
             .u16(33, np), .enumeration(39, 6), .u32(41, work), .u32(52, moving), .u16(254, 0),
+            .u8(15, avgHR), .u8(16, s.maxHeartRate),
         ])
 
         // session
@@ -142,6 +152,7 @@ public enum ActivityExporter {
             .u16(11, kcal), .u16(14, avgSpeed), .u16(15, maxSpeed), .u8(18, avgCad), .u8(19, maxCad),
             .u16(20, avgPower), .u16(21, s.maxPower), .u16(25, 0), .u16(26, 1), .enumeration(28, 0),
             .u16(34, np), .u32(48, work), .u32(59, moving), .u16(254, 0),
+            .u8(16, avgHR), .u8(17, s.maxHeartRate),
         ])
 
         // activity
@@ -177,9 +188,11 @@ public enum ActivityExporter {
                 <TotalTimeSeconds>\(fmt(s.timerTime, 1))</TotalTimeSeconds>
                 <DistanceMeters>\(fmt(s.distance, 1))</DistanceMeters>
                 <MaximumSpeed>\(fmt(s.maxSpeed, 3))</MaximumSpeed>
-                <Calories>\(Int(s.calories.rounded()))</Calories>
-                <Intensity>Active</Intensity>\n
+                <Calories>\(Int(s.calories.rounded()))</Calories>\n
         """
+        if let hr = s.averageHeartRate { x += "          <AverageHeartRateBpm><Value>\(Int(hr.rounded()))</Value></AverageHeartRateBpm>\n" }
+        if let hr = s.maxHeartRate { x += "          <MaximumHeartRateBpm><Value>\(hr)</Value></MaximumHeartRateBpm>\n" }
+        x += "          <Intensity>Active</Intensity>\n"
         if let c = s.averageCadence { x += "          <Cadence>\(Int(c.rounded()))</Cadence>\n" }
         x += """
                   <TriggerMethod>Manual</TriggerMethod>
@@ -193,6 +206,7 @@ public enum ActivityExporter {
             x += "            <Trackpoint>\n"
             x += "              <Time>\(iso.string(from: ride.start.addingTimeInterval(Double(second))))</Time>\n"
             x += "              <DistanceMeters>\(fmt(sample.distance, 2))</DistanceMeters>\n"
+            if let hr = sample.heartRate { x += "              <HeartRateBpm><Value>\(hr)</Value></HeartRateBpm>\n" }
             if let c = sample.cadence { x += "              <Cadence>\(min(254, Int(c.rounded())))</Cadence>\n" }
             if sample.speed != nil || sample.power != nil {
                 x += "              <Extensions><ns3:TPX>"
@@ -217,17 +231,16 @@ public enum ActivityExporter {
     // MARK: CSV
 
     public static func csv(_ ride: ExportableRide) -> Data {
-        var out = "elapsed_s,timestamp_utc,power_w,speed_kph,cadence_rpm,distance_m\n"
+        var out = "elapsed_s,timestamp_utc,power_w,speed_kph,cadence_rpm,distance_m,heart_rate_bpm\n"
         let iso = ISO8601DateFormatter()
         for s in ride.track.samples {
-            out += [
-                fmt(s.t, 1),
-                iso.string(from: ride.start.addingTimeInterval(s.t)),
-                s.power.map(String.init) ?? "",
-                s.speed.map { fmt($0 * 3.6, 2) } ?? "",
-                s.cadence.map { fmt($0, 1) } ?? "",
-                fmt(s.distance, 2),
-            ].joined(separator: ",") + "\n"
+            let power: String = s.power.map { String($0) } ?? ""
+            let speed: String = s.speed.map { fmt($0 * 3.6, 2) } ?? ""
+            let cadence: String = s.cadence.map { fmt($0, 1) } ?? ""
+            let heartRate: String = s.heartRate.map { String($0) } ?? ""
+            let fields: [String] = [fmt(s.t, 1), iso.string(from: ride.start.addingTimeInterval(s.t)),
+                                    power, speed, cadence, fmt(s.distance, 2), heartRate]
+            out += fields.joined(separator: ",") + "\n"
         }
         return Data(out.utf8)
     }
