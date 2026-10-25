@@ -455,27 +455,28 @@ final class TrainerManager: NSObject {
     /// Rate in use before calibration, restored afterwards.
     private var rateBeforeCalibration: InRideUpdateRate?
 
-    /// Switches to 4 packets a second so a coast can be told from pedalling quickly.
-    func enterCalibrationMode() {
-        guard rateBeforeCalibration == nil else { return }
-        let current = configuration.flatMap { InRideUpdateRate(rawValue: $0.updateRateDefault) } ?? .hz1
-        rateBeforeCalibration = current
-        guard current != .hz4 else { return }
+    /// Switches to 4 packets a second (so a coast can be told from pedalling quickly) and lowers the
+    /// sensor's spindown arming speed. The timed window Kinetic's power model uses is unchanged.
+    func enterCalibrationMode(armingSpeed: Double) {
+        if rateBeforeCalibration == nil {
+            rateBeforeCalibration = configuration.flatMap { InRideUpdateRate(rawValue: $0.updateRateDefault) } ?? .hz1
+        }
+        let ticks = InRideCommand.ticks(forKPH: armingSpeed)
         do {
-            try send(.configure(updateRate: .hz4))
-            log.log("Calibration: update rate raised to 4 Hz")
+            try send(.configureCalibration(updateRate: .hz4, readyTicks: ticks))
+            log.log(String(format: "Calibration: 4 Hz, arming at %.1f km/h (%d ticks)", armingSpeed, ticks))
         } catch {
-            log.log("Calibration: could not raise update rate: \(error)", level: .warning)
+            log.log("Calibration: could not configure sensor: \(error)", level: .warning)
         }
     }
 
+    /// Restores Kinetic's standard thresholds and the previous update rate.
     func exitCalibrationMode() {
         guard let previous = rateBeforeCalibration else { return }
         rateBeforeCalibration = nil
-        guard previous != .hz4 else { return }
         do {
             try send(.configure(updateRate: settings.preferredUpdateRate ?? previous))
-            log.log("Calibration: update rate restored")
+            log.log("Calibration: standard sensor settings restored")
         } catch {
             log.log("Calibration: could not restore update rate: \(error)", level: .warning)
         }

@@ -297,8 +297,8 @@ enum WorldRenderer {
 
     private static func drawSpeedLines(_ g: inout GraphicsContext, w: Double, h: Double, horizon: Double, engine: GameEngine) {
         let kph = engine.speed * 3.6
-        guard kph > 33 else { return }
-        let strength = min(1, (kph - 33) / 12)
+        guard kph > 28 else { return }
+        let strength = min(1, (kph - 28) / 8)
         for k in 0..<14 {
             let y = horizon * 0.3 + (h * 0.75 - horizon * 0.3) * GameMath.hash(k * 37)
             let len = 40 + 80 * GameMath.hash(k * 3)

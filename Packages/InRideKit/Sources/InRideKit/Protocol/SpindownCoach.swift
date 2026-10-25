@@ -7,14 +7,18 @@ import Foundation
 /// about 30.5 km/h (655 ticks/rev), whether or not the rider is still pedalling. Riding near
 /// those speeds, ordinary fluctuations start false spindowns.
 ///
-/// So the app guards it:
-/// 1. The start command is only sent once the rider has held `targetSpeed` (well above the
-///    sensor's thresholds), and the rider is then told to stop pedalling.
-/// 2. If speed sags towards the timing threshold slowly, as it does when easing off while still
+/// The timed window (30.5 to 21 km/h) is what Kinetic's power model is built on, so it is never
+/// changed. The arming speed is lowered (see `armingSpeed`) so the rider only needs to touch about
+/// 32.5 km/h, and the app guards the run:
+/// 1. The start command is only sent once the rider has held `targetSpeed`; the rider is then
+///    told to stop pedalling.
+/// 2. If speed sags to just above the timing point slowly, as it does when easing off while still
 ///    pedalling, the spindown is cancelled before the sensor can begin timing.
-/// 3. If speed rises while the sensor is timing (pedalling), the run is cancelled and discarded.
-/// A coasting Road Machine flywheel loses roughly 5 km/h per second at these speeds; easing off
-/// while pedalling is far slower, so the two are easy to tell apart.
+/// 3. While the sensor is timing, the speed must keep falling like a freewheeling flywheel
+///    (at least `coastingDeceleration`); a rise or a slow fade means pedalling, and the run is
+///    cancelled and discarded.
+/// A standard flywheel coasts down at roughly 5 km/h per second here and a Pro Flywheel at about
+/// 1.5 to 2; fading while pedalling is slower than either.
 public struct SpindownCoach: Sendable {
     public enum Phase: Equatable, Sendable {
         /// Get above the target speed.
@@ -30,12 +34,15 @@ public struct SpindownCoach: Sendable {
 
     public enum Action: Equatable, Sendable { case sendStart, sendStop }
 
-    /// Speed to hold before arming, with margin over the sensor's ~33.2 km/h arming speed.
+    /// Speed to hold before arming.
     public var targetSpeed: Double
+    /// Speed at which the sensor arms (written to it as calibration "ready"). Must sit between the
+    /// timing start (~30.5 km/h) and `targetSpeed`.
+    public var armingSpeed: Double = 31.8
     /// Below this, a slow (pedalling) deceleration cancels before the sensor's ~30.5 km/h timing point.
-    public var guardSpeed: Double = 32.5
-    /// Deceleration that counts as coasting, km/h per second.
-    public var coastingDeceleration: Double = 2.5
+    public var guardSpeed: Double = 31.0
+    /// Deceleration that counts as coasting, km/h per second (allows for a Pro Flywheel).
+    public var coastingDeceleration: Double = 1.2
     /// Seconds to hold the target speed before arming.
     public var holdTime: Double = 1.0
 
@@ -45,9 +52,10 @@ public struct SpindownCoach: Sendable {
 
     private var samples: [(t: Double, speed: Double)] = []
     private var aboveTargetSince: Double?
+    private var measuringStart: (t: Double, speed: Double)?
     private var lastT: Double?
 
-    public init(targetSpeed: Double = 36) {
+    public init(targetSpeed: Double = 32.5) {
         self.targetSpeed = targetSpeed
     }
 
@@ -56,6 +64,7 @@ public struct SpindownCoach: Sendable {
         hint = nil
         samples.removeAll()
         aboveTargetSince = nil
+        measuringStart = nil
         lastT = nil
     }
 
@@ -92,6 +101,7 @@ public struct SpindownCoach: Sendable {
         case .stopPedalling(let since):
             if sensorState == .spindownActive {
                 phase = .measuring
+                measuringStart = (t, speedKPH)
                 return nil
             }
             if speedKPH <= guardSpeed {
@@ -117,8 +127,14 @@ public struct SpindownCoach: Sendable {
                 phase = .failed("Pedalling was detected during the spindown. Try again and keep your legs still until the wheel stops.")
                 return .sendStop
             }
-            if let previous, speedKPH > previous.speed + 0.5 {
-                phase = .failed("Pedalling was detected during the spindown. Try again and keep your legs still until the wheel stops.")
+            let pedalling = "Pedalling was detected during the spindown. Try again and keep your legs still until the wheel stops."
+            if let previous, speedKPH > previous.speed + 0.3 {
+                phase = .failed(pedalling)
+                return .sendStop
+            }
+            if let start = measuringStart, t - start.t >= 1.0,
+               (start.speed - speedKPH) / (t - start.t) < coastingDeceleration {
+                phase = .failed(pedalling)
                 return .sendStop
             }
             return nil

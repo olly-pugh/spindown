@@ -42,7 +42,7 @@ struct CalibrationView: View {
                 }
             }
             .onChange(of: trainer.latestAt) { _, _ in feedCoach() }
-            .onAppear { trainer.enterCalibrationMode() }
+            .onAppear { trainer.enterCalibrationMode(armingSpeed: coach.armingSpeed) }
             .onDisappear { trainer.exitCalibrationMode() }
             .interactiveDismissDisabled(running && result == nil)
             .sensoryFeedback(.impact(weight: .heavy), trigger: phaseKey)
@@ -74,6 +74,15 @@ struct CalibrationView: View {
         if coach.phase == .finished { result = m }
     }
 
+    private var targetBinding: Binding<Double> {
+        Binding(get: { coach.targetSpeed }, set: { value in
+            coach.targetSpeed = value
+            coach.armingSpeed = max(31.3, value - 0.7)
+            coach.guardSpeed = min(31.0, coach.armingSpeed - 0.3)
+            trainer.enterCalibrationMode(armingSpeed: coach.armingSpeed)
+        })
+    }
+
     private var targetText: String {
         "\(Format.speed(kph: coach.targetSpeed, settings.units)) \(Format.speedUnit(settings.units))"
     }
@@ -81,9 +90,12 @@ struct CalibrationView: View {
     private var intro: some View {
         VStack(alignment: .leading, spacing: 14) {
             Label("Warm up for about 10 minutes first so the tyre and resistance unit are at riding temperature.", systemImage: "thermometer.medium")
-            Label("Ride up to \(targetText) and hold it. Spindown will tell you when to stop pedalling.", systemImage: "speedometer")
+            Label("Ride up to \(targetText) and hold it for a second. Spindown will tell you when to stop pedalling.", systemImage: "speedometer")
             Label("Then stop pedalling completely and keep your legs still until the wheel stops. Don't brake.", systemImage: "hand.raised")
-            Text("Spindown only lets the trainer time a genuine coast: if you slow down while still pedalling, the attempt is cancelled and you can go again. Redo calibration after changing tyre, tyre pressure or roller tension.")
+            Stepper(value: targetBinding, in: 32...36, step: 0.5) {
+                LabeledValue("Target speed", targetText)
+            }
+            Text("The trainer times the coast from 30.5 km/h, so you need to be a little above that when you stop. 32.5 km/h only has to be reached briefly; raise the target if attempts keep getting cancelled. Spindown only accepts a genuine coast: if you were still pedalling, the attempt is cancelled and you can go again. Redo calibration after changing tyre, tyre pressure or roller tension.")
                 .font(.footnote).foregroundStyle(.secondary)
         }
     }

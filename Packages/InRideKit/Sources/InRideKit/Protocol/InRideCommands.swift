@@ -6,6 +6,10 @@ import Foundation
 public enum InRideCommand: Sendable, Equatable {
     /// Sets update rates and the spindown thresholds. Kinetic always sends the same thresholds.
     case configure(updateRate: InRideUpdateRate)
+    /// Configure with a custom spindown arming threshold (ticks per roller revolution; lower = faster).
+    /// Only the arming speed changes; the timed window (655 to 950 ticks) that Kinetic's power model
+    /// is calibrated against stays exactly as Kinetic set it.
+    case configureCalibration(updateRate: InRideUpdateRate, readyTicks: UInt16)
     case setName(String)
     case startCalibration
     case stopCalibration
@@ -13,7 +17,7 @@ public enum InRideCommand: Sendable, Equatable {
 
     public var opcode: UInt8 {
         switch self {
-        case .configure: return 0x01
+        case .configure, .configureCalibration: return 0x01
         case .setName: return 0x02
         case .startCalibration: return 0x03
         case .stopCalibration: return 0x04
@@ -35,6 +39,27 @@ public enum InRideCommand: Sendable, Equatable {
         }
     }
 
+    /// Kinetic's spindown thresholds, in 32.768 kHz ticks per roller revolution
+    /// (KineticInRideCalibrationInterval): arm above ~33.2 km/h, time from ~30.5 to ~21.1 km/h.
+    public static let kineticReadyTicks: UInt16 = 602
+    public static let kineticStartTicks: UInt16 = 655
+    public static let kineticEndTicks: UInt16 = 950
+    public static let kineticDebounceTicks: UInt16 = 327
+
+    static func writeConfiguration(_ w: inout ByteWriter, rate: InRideUpdateRate, readyTicks: UInt16) {
+        w.uint16(readyTicks)
+        w.uint16(kineticStartTicks)
+        w.uint16(kineticEndTicks)
+        w.uint16(kineticDebounceTicks)
+        w.uint16(rate.rawValue)
+        w.uint16(InRideUpdateRate.hz4.rawValue) // update rate during calibration
+    }
+
+    /// Ticks per revolution for a roller speed, the inverse of `InRideDecoder.speed`.
+    public static func ticks(forKPH kph: Double) -> UInt16 {
+        UInt16(clamping: Int((InRideDecoder.speedConstant / kph).rounded()))
+    }
+
     /// `systemId[systemId[3] % 6] | systemId[systemId[5] % 6] << 8`, from Kinetic's `command_key`.
     public static func commandKey(systemID: [UInt8]) throws -> [UInt8] {
         guard systemID.count == 6 else { throw BuildError.invalidSystemID }
@@ -47,13 +72,10 @@ public enum InRideCommand: Sendable, Equatable {
         w.uint8(opcode)
         switch self {
         case .configure(let rate):
-            // Values from KineticInRideCalibrationInterval / inride_create_config_sensor_command_data.
-            w.uint16(602) // calibration ready
-            w.uint16(655) // calibration start
-            w.uint16(950) // calibration end
-            w.uint16(327) // calibration debounce
-            w.uint16(rate.rawValue)
-            w.uint16(InRideUpdateRate.hz4.rawValue) // update rate during calibration
+            Self.writeConfiguration(&w, rate: rate, readyTicks: Self.kineticReadyTicks)
+        case .configureCalibration(let rate, let ready):
+            guard ready >= 400, ready + 15 <= Self.kineticStartTicks else { throw BuildError.invalidSpindown }
+            Self.writeConfiguration(&w, rate: rate, readyTicks: ready)
         case .setName(let name):
             guard name.count >= 3, name.count <= 8, name.allSatisfy({ $0.isASCII }),
                   let data = name.data(using: .ascii) else { throw BuildError.invalidName }
