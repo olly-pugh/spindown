@@ -37,6 +37,8 @@ final class AppSettings {
     /// The heart-rate strap to reconnect to automatically.
     var rememberedHeartRateID: UUID? { didSet { defaults.set(rememberedHeartRateID?.uuidString, forKey: "hrmID") } }
     var rememberedHeartRateName: String? { didSet { defaults.set(rememberedHeartRateName, forKey: "hrmName") } }
+    /// Functional threshold power, for workout targets in the Lakes game.
+    var ftp: Int { didSet { defaults.set(ftp, forKey: "ftp") } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -49,6 +51,7 @@ final class AppSettings {
             // Off by default: Garmin forwards uploads to Strava for most riders, so both would duplicate.
             "autoUploadStrava": false,
             "captureRawPackets": true,
+            "ftp": 200,
         ])
         units = UnitSystem(rawValue: defaults.string(forKey: "units") ?? "") ?? .metric
         powerSmoothing = PowerSmoothing(rawValue: defaults.integer(forKey: "powerSmoothing")) ?? .three
@@ -63,6 +66,7 @@ final class AppSettings {
         rememberedTrainerName = defaults.string(forKey: "trainerName")
         rememberedHeartRateID = defaults.string(forKey: "hrmID").flatMap(UUID.init(uuidString:))
         rememberedHeartRateName = defaults.string(forKey: "hrmName")
+        ftp = defaults.integer(forKey: "ftp")
     }
 
     var autoUploadDestinations: [UploadDestination] {

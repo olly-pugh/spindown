@@ -8,6 +8,8 @@ struct RootView: View {
         TabView {
             RideView()
                 .tabItem { Label("Ride", systemImage: "bicycle") }
+            GameView()
+                .tabItem { Label("Lakes", systemImage: "mountain.2.fill") }
             HistoryView()
                 .tabItem { Label("History", systemImage: "list.bullet.rectangle") }
             DiagnosticsView()

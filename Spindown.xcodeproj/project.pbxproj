@@ -14,6 +14,7 @@
 		4E718492354513260A1B983B /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F1F7D3C90DB371B2B5D50CB /* RootView.swift */; };
 		583260D85692948F90586DC6 /* RideView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1405A2B7C05A5C5524BEE0AB /* RideView.swift */; };
 		5C45A80D6ED8ED487AB9E338 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DA4E1A5EB2D85B54A193A97 /* Keychain.swift */; };
+		6F0BF01FC88E2C2A17C6089D /* GameEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ADF1F6587933D1E4A791654 /* GameEngine.swift */; };
 		82AC135AD3D4860C3C20417B /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D7EB28C043FD1E01CF0625 /* Components.swift */; };
 		8869C27D2367499AC4E90DCC /* RideSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63982F6E275C9DD62307493F /* RideSession.swift */; };
 		8C3CA5527289F4BF87C1C328 /* AccountSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBF110839A61E1AC8236A874 /* AccountSignIn.swift */; };
@@ -24,9 +25,11 @@
 		CAE6A6283186B103487C74D4 /* Platform.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9E575542B0CD3EE845CC54 /* Platform.swift */; };
 		CD8F2F3270053585854EEEEF /* DiagnosticsLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56600CC29558417402414B0B /* DiagnosticsLog.swift */; };
 		D51DF3EFE5C80B42113B8F7C /* InRideKit in Frameworks */ = {isa = PBXBuildFile; productRef = 57A13BEC0E441BB1BBBC33C8 /* InRideKit */; };
+		D5BF801E79C59E3D37D0D04F /* WorldRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7D11F9B3005624F39A00129 /* WorldRenderer.swift */; };
 		DB9B429F2A1428F2A321B16F /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DED9FD0C72F29ECBE50F8BFC /* DiagnosticsView.swift */; };
 		E015BE618485FF5C115952C0 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F7BC4A817ECF96673FF0959 /* AppSettings.swift */; };
 		E33537DCC8E9E24F6455411A /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CCD3D0F176457EEAE3B597C /* SettingsView.swift */; };
+		E68B3594C611D0B8D1DB6715 /* GameView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B59C2B92FA2364E0438F774 /* GameView.swift */; };
 		ED0D19C838E46597A34A8AE6 /* TrainerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F72BDF0E82915550AA6BD6A /* TrainerManager.swift */; };
 		F053DD0B73BC5725AB3AD343 /* HeartRateMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DEBF0AA79ED63827B600351 /* HeartRateMonitor.swift */; };
 /* End PBXBuildFile section */
@@ -41,7 +44,9 @@
 		5577BA392587E9E66B925F5C /* Spindown.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Spindown.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		56600CC29558417402414B0B /* DiagnosticsLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsLog.swift; sourceTree = "<group>"; };
 		5A23755B6C1273CF5118BDE1 /* InRideKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = InRideKit; path = Packages/InRideKit; sourceTree = SOURCE_ROOT; };
+		5ADF1F6587933D1E4A791654 /* GameEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameEngine.swift; sourceTree = "<group>"; };
 		63982F6E275C9DD62307493F /* RideSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RideSession.swift; sourceTree = "<group>"; };
+		7B59C2B92FA2364E0438F774 /* GameView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameView.swift; sourceTree = "<group>"; };
 		8DEBF0AA79ED63827B600351 /* HeartRateMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartRateMonitor.swift; sourceTree = "<group>"; };
 		8E9E575542B0CD3EE845CC54 /* Platform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Platform.swift; sourceTree = "<group>"; };
 		9F72BDF0E82915550AA6BD6A /* TrainerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainerManager.swift; sourceTree = "<group>"; };
@@ -56,6 +61,7 @@
 		E7D7EB28C043FD1E01CF0625 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		F3ED005150E21E638F98AF76 /* CalibrationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalibrationView.swift; sourceTree = "<group>"; };
 		F71805A57265C999C611B0DF /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		F7D11F9B3005624F39A00129 /* WorldRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorldRenderer.swift; sourceTree = "<group>"; };
 		FE4A88FC63123873F33BCF8E /* App.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = App.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -77,6 +83,16 @@
 				FE4A88FC63123873F33BCF8E /* App.xcconfig */,
 			);
 			path = Config;
+			sourceTree = "<group>";
+		};
+		0A6A0E00002F220AAD82B481 /* Game */ = {
+			isa = PBXGroup;
+			children = (
+				5ADF1F6587933D1E4A791654 /* GameEngine.swift */,
+				7B59C2B92FA2364E0438F774 /* GameView.swift */,
+				F7D11F9B3005624F39A00129 /* WorldRenderer.swift */,
+			);
+			path = Game;
 			sourceTree = "<group>";
 		};
 		0B4BE71D344DD8FCE4904EC2 /* Packages */ = {
@@ -165,6 +181,7 @@
 			children = (
 				23D960C3E3DE65B3C4B4F74C /* App */,
 				3C5EADABAA66542CD2A9EC7D /* Bluetooth */,
+				0A6A0E00002F220AAD82B481 /* Game */,
 				F8A3C8FA22BCB1641866B836 /* Recording */,
 				27431BB1064B2EC00D5D54B5 /* Resources */,
 				A19F6139CCE6357B948814E1 /* Services */,
@@ -265,6 +282,8 @@
 				82AC135AD3D4860C3C20417B /* Components.swift in Sources */,
 				CD8F2F3270053585854EEEEF /* DiagnosticsLog.swift in Sources */,
 				DB9B429F2A1428F2A321B16F /* DiagnosticsView.swift in Sources */,
+				6F0BF01FC88E2C2A17C6089D /* GameEngine.swift in Sources */,
+				E68B3594C611D0B8D1DB6715 /* GameView.swift in Sources */,
 				F053DD0B73BC5725AB3AD343 /* HeartRateMonitor.swift in Sources */,
 				07661C9CAE5B9288C6533D58 /* HistoryView.swift in Sources */,
 				5C45A80D6ED8ED487AB9E338 /* Keychain.swift in Sources */,
@@ -278,6 +297,7 @@
 				99CB5EBDEE961A17A20A8298 /* SpindownApp.swift in Sources */,
 				ED0D19C838E46597A34A8AE6 /* TrainerManager.swift in Sources */,
 				385403AA72FE2CC2C307737D /* UploadCoordinator.swift in Sources */,
+				D5BF801E79C59E3D37D0D04F /* WorldRenderer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
