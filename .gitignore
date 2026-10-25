@@ -3,3 +3,4 @@ xcuserdata/
 DerivedData/
 .build/
 Config/Secrets.xcconfig
+.playwright-mcp/
