@@ -1,0 +1,60 @@
+# Builds the Spindown for Windows installer on GitHub's Windows runners.
+#
+# - Every push that changes windows/ runs the tests and builds Spindown-Setup.exe as a downloadable
+#   artifact (nothing is published).
+# - "Run workflow" (Actions › Windows app › Run workflow) also publishes it as a GitHub Release. Installed
+#   copies check that release and update themselves the next time they are closed, so this is how a fix
+#   reaches someone else's laptop. The newest installer is always at:
+#   https://github.com/olly-pugh/spindown/releases/latest/download/Spindown-Setup.exe
+name: Windows app
+
+on:
+  push:
+    branches: [main]
+    paths: ['windows/**', '.github/workflows/windows.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: windows/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Version
+        shell: bash
+        run: npm version "1.0.${{ github.run_number }}" --no-git-tag-version
+
+      - name: Build installer
+        if: github.event_name != 'workflow_dispatch'
+        run: npm run dist
+
+      - name: Build installer and publish release
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Spindown-Setup
+          path: windows/release/Spindown-Setup.exe
+          retention-days: 30

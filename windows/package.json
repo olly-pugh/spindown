@@ -1,0 +1,75 @@
+{
+  "name": "spindown",
+  "productName": "Spindown",
+  "version": "1.0.0",
+  "description": "Spindown for Windows: Kinetic Road Machine Smart (inRide) trainer app with Garmin Connect upload",
+  "author": "Spindown",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "src/main/main.js",
+  "scripts": {
+    "build": "node scripts/build-renderer.mjs",
+    "start": "npm run build && electron .",
+    "test": "node --test test/*.test.js",
+    "dist": "npm run build && electron-builder --win nsis --x64 --publish never",
+    "release": "npm run build && electron-builder --win nsis --x64 --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11"
+  },
+  "devDependencies": {
+    "electron": "45.3.2",
+    "electron-builder": "26.18.0",
+    "esbuild": "0.28.2",
+    "htm": "3.1.1",
+    "preact": "11.2.0"
+  },
+  "build": {
+    "appId": "com.spindown.windows",
+    "productName": "Spindown",
+    "copyright": "Spindown contributors",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "dist/**/*",
+      "build/icon.png",
+      "package.json",
+      "!dist/*.map"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "Spindown-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Spindown",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "Spindown-Setup.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "olly-pugh",
+        "repo": "spindown",
+        "releaseType": "release"
+      }
+    ]
+  }
+}
