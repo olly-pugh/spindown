@@ -116,6 +116,26 @@ export function garminSignIn(parent, log) {
     win.webContents.ipc.on('garmin:bridge', onBridge);
 
     win.webContents.on('did-finish-load', () => log(`page loaded: ${safePath(win.webContents.getURL())}`));
+
+    // After a successful login the page sends the ticket over the bridge and then moves to /portal/sso/embed,
+    // which never finishes for an app. If no ticket arrived, say so rather than leave a spinner forever.
+    let embedTimer = null;
+    win.webContents.on('did-navigate', (_e, url) => {
+      if (delivered || embedTimer || !safePath(url).endsWith('/portal/sso/embed')) return;
+      embedTimer = setTimeout(() => {
+        if (delivered || win.isDestroyed()) return;
+        log('page finished signing in but no ticket reached the app');
+        dialog
+          .showMessageBox(win, {
+            type: 'error',
+            title: 'Garmin',
+            message: 'Garmin accepted the sign-in, but Spindown did not receive it.',
+            detail: 'Close this window and try again. If it keeps happening, save a Diagnostics bundle (Diagnostics tab) and send it over.',
+          })
+          .then(() => !win.isDestroyed() && win.close());
+      }, 5000);
+    });
+    win.on('closed', () => clearTimeout(embedTimer));
     win.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
       if (isMainFrame && code !== -3 && !delivered) log(`navigation failed: ${desc} (${code}) ${safePath(url)}`);
     });
