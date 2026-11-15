@@ -44,12 +44,18 @@ jobs:
         run: npm version "1.0.${{ github.run_number }}" --no-git-tag-version
 
       - name: Build installer
-        if: github.event_name != 'workflow_dispatch'
         run: npm run dist
 
-      - name: Build installer and publish release
+      # One gh call uploads the installer, its blockmap and latest.yml (which installed copies read to
+      # find updates) to a draft and publishes it only when all three are up, so a release is never partial.
+      - name: Publish release
         if: github.event_name == 'workflow_dispatch'
-        run: npm run release
+        shell: bash
+        run: |
+          v="1.0.${{ github.run_number }}"
+          gh release create "v$v" release/Spindown-Setup.exe release/Spindown-Setup.exe.blockmap release/latest.yml \
+            --target "${{ github.sha }}" --title "Spindown $v" --latest \
+            --notes "Spindown for Windows $v. Install: download Spindown-Setup.exe and open it. Installed copies update themselves."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
