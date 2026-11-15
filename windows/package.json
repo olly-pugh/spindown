@@ -12,8 +12,7 @@
     "build": "node scripts/build-renderer.mjs",
     "start": "npm run build && electron .",
     "test": "node --test test/*.test.js",
-    "dist": "npm run build && electron-builder --win nsis --x64 --publish never",
-    "release": "npm run build && electron-builder --win nsis --x64 --publish always"
+    "dist": "npm run build && electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
     "electron-updater": "6.8.11"
