@@ -5,7 +5,7 @@ import { html, Modal, Confirm } from './components.js';
 import { subscribe } from './model.js';
 import { createApp } from './app.js';
 import { RideView } from './views/ride.js';
-import { LakesView } from './views/lakes.js';
+import { WorldView } from './views/world.js';
 import { HistoryView, RideDetail } from './views/history.js';
 import { DiagnosticsView } from './views/diagnostics.js';
 import { SettingsView } from './views/settings.js';
@@ -16,7 +16,7 @@ import { linkTitle, linkColor } from './ble/trainer.js';
 
 const TABS = [
   ['ride', 'Ride'],
-  ['lakes', 'Lakes'],
+  ['world', 'World'],
   ['history', 'History'],
   ['diagnostics', 'Diagnostics'],
   ['settings', 'Settings'],
@@ -39,7 +39,7 @@ function Root({ app }) {
 
   let screen;
   switch (tab) {
-    case 'lakes': screen = html`<${LakesView} app=${app} openSensors=${openSensors} />`; break;
+    case 'world': screen = html`<${WorldView} app=${app} openSensors=${openSensors} />`; break;
     case 'history': screen = html`<${HistoryView} app=${app} selectedID=${historySelection} onSelect=${setHistorySelection} />`; break;
     case 'diagnostics': screen = html`<${DiagnosticsView} app=${app} />`; break;
     case 'settings': screen = html`<${SettingsView} app=${app} openSensors=${openSensors} openWelcome=${() => setModal('welcome')} />`; break;

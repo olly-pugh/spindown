@@ -48,9 +48,25 @@ export const SETTINGS_DEFAULTS = {
   trainerName: null,
   hrmID: null,
   hrmName: null,
-  ftp: 200,
+  ftp: 170,
   onboarded: false,
 };
+
+/** The 3D game's profile (XP, kit, PRs, ghosts), kept apart from the app's settings and rides. */
+export class GameStore {
+  constructor(dir) {
+    this.file = path.join(dir, 'game.json');
+  }
+  load() {
+    return readJSON(this.file, null);
+  }
+  save(text) {
+    if (typeof text !== 'string' || text.length > 5_000_000) return false;
+    JSON.parse(text); // only valid JSON is written
+    writeAtomic(this.file, text);
+    return true;
+  }
+}
 
 export class Settings {
   constructor(dir, { imperial = false } = {}) {

@@ -21,7 +21,7 @@ export class RideSession {
     this.lastRecordedSecond = 0;
     this.timer = null;
     this.powerWindow = [];
-    this.lakesVisible = false;
+    this.worldVisible = false;
   }
 
   get startDate() {
@@ -76,7 +76,7 @@ export class RideSession {
 
   updateKeepAwake() {
     const recording = this.phase !== 'idle' && this.settings.get('keepScreenOn');
-    this.api.app.keepAwake(recording || this.lakesVisible);
+    this.api.app.keepAwake(recording || this.worldVisible);
   }
 
   async start() {

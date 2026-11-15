@@ -22,6 +22,10 @@ contextBridge.exposeInMainWorld('spindown', {
     onUpdate: on('app:update'),
     onFinishAndClose: on('app:finishAndClose'),
   },
+  game: {
+    load: invoke('game:load'),
+    save: invoke('game:save'),
+  },
   settings: {
     all: invoke('settings:all'),
     set: invoke('settings:set'),
