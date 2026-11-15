@@ -21,6 +21,10 @@ sensor: a modern, open-source replacement for the discontinued Kinetic Fit app.
   and event logs, a GATT explorer, sensor commands, a scan of all BLE devices, a shareable
   diagnostics bundle, and a built-in simulator.
 
+**Windows:** the same app as a Windows desktop app (no 7-day re-signing, updates itself) lives in
+[`windows/`](windows/README.md). Latest installer:
+<https://github.com/olly-pugh/spindown/releases/latest/download/Spindown-Setup.exe>
+
 ## Requirements
 
 - iPhone on iOS 17 or later.
