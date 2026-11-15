@@ -172,13 +172,14 @@ export class WorldSim {
     const preset = race ?? RACE_PRESETS[0];
     this.race = { preset, phase: 'grid', countdown: 10, start: null, results: [], distance: 0 };
     // Field: around the player's own level, from a bit weaker to a bit stronger, so it is a real race.
-    // Field: spread by sustainable watts around your own FTP (−25% … +10%), so it is a real race at your level;
+    // Field: spread by sustainable watts below and around your own FTP, so riding at FTP is mid-pack, an all-out
+    // 30-minute effort (~5% over FTP) is podium contention, and beating Og Pog takes a great day;
     // each rider's weight then decides how they climb. Og Pog is always the strongest rider there.
     const base = this.ftp;
     const field = preset.field;
     const regulars = REGULARS.slice(1).sort(() => r() - 0.5);
     for (let i = 0; i < field - 1; i++) {
-      const spread = -0.25 + (0.35 * i) / Math.max(1, field - 2);
+      const spread = -0.32 + (0.33 * i) / Math.max(1, field - 2); // −32% … +1% of your FTP
       const reg = regulars[i] ?? null;
       const mass = reg?.mass ?? 58 + r() * 30;
       const watts = Math.max(80, base * (1 + spread + (r() - 0.5) * 0.04));
@@ -190,7 +191,7 @@ export class WorldSim {
     const bestWkg = Math.max(...field0.map((b) => b.wkg));
     const bestWatts = Math.max(...field0.map((b) => b.wkg * b.mass));
     const og = REGULARS[0];
-    this.riders.push(this.makeBot(Math.max(bestWkg * 1.05, (Math.max(bestWatts * 1.06, base * 1.2)) / og.mass), 1, og));
+    this.riders.push(this.makeBot(Math.max(bestWkg * 1.06, (Math.max(bestWatts * 1.13, base * 1.12)) / og.mass), 1, og));
     // Race distance: what the player would cover at ~95% FTP with typical drafting in the set time, ending on the line.
     const p = this.params(this.player);
     let v = steadySpeed(this.ftp * 0.95, 0, p, 0.12);
@@ -314,10 +315,16 @@ export class WorldSim {
     const log = this.powerLog;
     const avg = (n) => log.slice(-n).reduce((s, x) => s + x, 0) / Math.max(1, Math.min(n, log.length));
     let want = this.fieldScale;
-    if (this.race?.phase === 'racing' && log.length >= 120) want = avg(log.length) / (this.ftp * 0.95);
-    else if (!this.race && log.length >= 300) want = avg(300) / (this.ftp * 0.75);
-    // Follow only part of the way (power 0.6), so riding harder still moves you up the field.
-    want = Math.max(0.7, Math.min(1.35, want ** 0.6));
+    let ratio = null;
+    if (this.race?.phase === 'racing' && log.length >= 120) ratio = avg(log.length) / this.ftp;
+    else if (!this.race && log.length >= 300) ratio = avg(300) / (this.ftp * 0.75);
+    if (ratio != null) {
+      // Within ±15% of what was expected the field stays put, so your place is down to your effort. Beyond that
+      // (a wrong FTP) it follows part of the way, so you are never left miles behind or miles clear.
+      const band = 0.15;
+      const outside = ratio > 1 + band ? ratio / (1 + band) : ratio < 1 - band ? ratio / (1 - band) : 1;
+      want = Math.max(0.7, Math.min(1.35, outside ** 0.6));
+    }
     // Ease towards it so nobody suddenly surges or stalls.
     this.fieldScale += (want - this.fieldScale) * 0.25;
   }
@@ -418,6 +425,7 @@ export class WorldSim {
       for (const b of list) {
         if (a === b) continue;
         if (b.effects.some((e) => e.id === 'umbrella')) continue; // the Brolly stops anyone drafting
+        if (b.regular && b.name === 'Og Pog') continue; // nobody can hold Og Pog's wheel
         let gap = b.d - a.d;
         if (this.mode === 'free') gap = ((gap % this.L) + this.L) % this.L;
         gap -= BIKE_LENGTH;
