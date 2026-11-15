@@ -2,7 +2,7 @@
 
 The iPhone app rebuilt as a Windows desktop app, so it can run on a laptop with no 7-day re-signing.
 It does the same things the same way: inRide decoding with Kinetic's algorithm (bit-exact against the same
-240 reference packets), heart-rate straps, guided spindown calibration, the Lakes game and workouts,
+240 reference packets), heart-rate straps, guided spindown calibration, workouts,
 crash-safe recording, history with charts and FIT/TCX/CSV export, automatic Garmin Connect upload
 (optional Strava), and the diagnostics tools.
 
@@ -34,6 +34,29 @@ background, and install it when Spindown is next closed (never during a ride). T
 1. Push to `main`. The **Windows app** workflow runs the tests and builds the installer (as an artifact).
 2. On GitHub: **Actions › Windows app › Run workflow**. This publishes release `v1.0.<run number>`.
 
+## Spindown World (the World tab)
+
+A 3D cycling game in place of the iPhone app's 2D Lakes game: free rides in **York** (built from
+OpenStreetMap data: real building footprints, streets, the river, the city walls, with models of the Minster
+and Clifford's Tower) and the **Yorkshire Dales** (a procedural valley with a fell climb, village, walls,
+sheep), physics-based speed from trainer power (gradient, weight, drag, drafting), animated bot riders of
+six levels (the "regulars", with Og Pog the fastest), 30- and 10-minute races with a minimap and leaderboard,
+XP and levels that unlock jerseys, helmets, wheels and bikes (each bike has a perk), power-ups, speed-zone and
+climb medals, segment PRs with a ghost of your best lap, achievements, challenges, workouts, cameras, time of
+day, weather and sound.
+
+It is only another view of the ride: it reads the trainer and heart rate and uses the same Start/Pause/Finish,
+so recording, saving and Garmin upload are unchanged, and anything that goes wrong in the 3D world is caught
+and shown without affecting the recording. Game progress is kept in `%APPDATA%\Spindown\game.json`.
+
+```sh
+npm run demo                     # plays a scripted free ride and race live with a simulated trainer
+npm run demo -- --record videos  # and saves a video of it
+node scripts/build-york.mjs      # rebuilds src/renderer/game3d/data/york.json from OpenStreetMap
+```
+
+York map data © OpenStreetMap contributors, available under the Open Database Licence (ODbL).
+
 ## Developing
 
 ```sh
@@ -51,7 +74,9 @@ permission for Electron. Use **Trainer & heart-rate strap › Use Simulated Trai
 src/core/       platform-neutral logic, a line-for-line port of InRideKit (tested with node --test)
 src/main/       Electron main process: files, settings, encrypted tokens, upload queue, sign-in windows,
                 the Bluetooth device-chooser bridge, self-update
-src/renderer/   the app window: Bluetooth links, ride session, screens, Lakes game
+src/core/world/ the game's logic: physics, courses, bots, races, progression, power-ups (unit tested)
+src/renderer/   the app window: Bluetooth links, ride session, screens; game3d/ is the 3D world
+scripts/demo/   the simulated-trainer demo (not shipped)
 test/           unit tests
 ```
 

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import updaterPackage from 'electron-updater';
-import { Settings, SecretStore, EventLog, RideStore } from './storage.js';
+import { Settings, SecretStore, EventLog, RideStore, GameStore } from './storage.js';
 import { UploadCoordinator } from './uploads.js';
 import { garminSignIn, stravaSignIn } from './signin.js';
 import { exportRide, exportFileName, ExportFormats } from '../core/fit.js';
@@ -274,6 +274,10 @@ function start() {
       }
       return updateState;
     });
+
+    const game = new GameStore(app.getPath('userData'));
+    handle('game:load', () => game.load());
+    handle('game:save', (text) => game.save(text));
 
     handle('settings:all', () => settings.all());
     handle('settings:set', (key, value) => settings.set(key, value));
