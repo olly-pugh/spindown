@@ -1,6 +1,6 @@
 // Spindown for Windows: the main process. Owns files, uploads, sign-in windows, the Bluetooth device chooser
 // bridge and self-updating. The app window (src/renderer) owns Bluetooth, the ride and the screens.
-import { app, BrowserWindow, Menu, dialog, ipcMain, net, powerSaveBlocker, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, Menu, dialog, ipcMain, net, powerMonitor, powerSaveBlocker, safeStorage, session, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,6 +33,7 @@ function start() {
   let ridePhase = 'idle';
   let allowClose = false;
   let awakeBlocker = null;
+  let wantAwake = false;
   let bleCallback = null;
   let updateState = { status: 'idle' };
 
@@ -54,7 +55,7 @@ function start() {
     settings = new Settings(dataDir, { imperial: app.getLocaleCountryCode() === 'US' });
     secrets = new SecretStore(dataDir, safeStorage);
     store = new RideStore(dataDir, log);
-    uploads = new UploadCoordinator({ store, log, transport: httpTransport, secrets });
+    uploads = new UploadCoordinator({ store, log, transport: httpTransport, secrets, isOnline: () => net.isOnline() });
 
     log.onEvent((e) => send('log:event', e));
     store.onChange((records) => send('rides:changed', { records, loadErrors: store.loadErrors }));
@@ -103,7 +104,9 @@ function start() {
     win.once('ready-to-show', () => {
       win.maximize();
       win.show();
+      applyKeepAwake();
     });
+    for (const event of ['show', 'hide', 'minimize', 'restore']) win.on(event, applyKeepAwake);
     win.loadFile(path.join(appRoot, 'dist', 'index.html'));
 
     // Links never navigate the app window; external ones open in the browser.
@@ -170,6 +173,21 @@ function start() {
     win.close();
   }
 
+  /** Keeps the screen (and so the laptop) awake while Spindown is on screen, or at any time during a ride. */
+  function applyKeepAwake() {
+    const onScreen = win && !win.isDestroyed() && win.isVisible() && !win.isMinimized();
+    const on = wantAwake && (onScreen || ridePhase !== 'idle');
+    if (on && awakeBlocker == null) {
+      awakeBlocker = powerSaveBlocker.start('prevent-display-sleep');
+      log.log('Keeping the screen on');
+    }
+    if (!on && awakeBlocker != null) {
+      powerSaveBlocker.stop(awakeBlocker);
+      awakeBlocker = null;
+      log.log('Screen may sleep again');
+    }
+  }
+
   // ---- HTTP (Chromium's network stack: system proxy and certificate store, as a browser would) -----
 
   const httpTransport = {
@@ -180,12 +198,24 @@ function start() {
   };
 
   function watchNetwork() {
+    // Wi-Fi coming back: retry at once rather than waiting out the back-off.
     let online = net.isOnline();
     setInterval(() => {
       const now = net.isOnline();
       if (now && !online) uploads.networkRegained();
       online = now;
-    }, 15000);
+    }, 5000);
+    // Waking from sleep: Wi-Fi often drops and reconnects while the laptop sleeps, so the check above never
+    // sees it go offline. Give Wi-Fi a few seconds to reconnect, then retry.
+    const afterWake = (why) => {
+      log.log(`Laptop ${why}`);
+      setTimeout(() => {
+        online = net.isOnline();
+        if (online && uploads.hasOutstandingWork) uploads.networkRegained();
+      }, 10000);
+    };
+    powerMonitor.on('resume', () => afterWake('woke from sleep'));
+    powerMonitor.on('unlock-screen', () => afterWake('unlocked'));
     // Retries due after a back-off.
     setInterval(() => {
       if (uploads.hasOutstandingWork) uploads.process();
@@ -239,14 +269,12 @@ function start() {
       return shell.openPath(dir);
     });
     handle('app:keepAwake', (on) => {
-      if (on && awakeBlocker == null) awakeBlocker = powerSaveBlocker.start('prevent-display-sleep');
-      if (!on && awakeBlocker != null) {
-        powerSaveBlocker.stop(awakeBlocker);
-        awakeBlocker = null;
-      }
+      wantAwake = !!on;
+      applyKeepAwake();
     });
     handle('app:setRidePhase', (phase) => {
       ridePhase = phase;
+      applyKeepAwake();
     });
     handle('app:readyToClose', async () => {
       ridePhase = 'idle';

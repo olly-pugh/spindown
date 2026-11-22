@@ -60,6 +60,7 @@ export async function createApp(api) {
   });
 
   app.recoveryMessage = await session.recoverIfNeeded();
+  session.updateKeepAwake();
 
   if (settings.get('simulator')) trainer.startSimulator();
   else trainer.reconnectRemembered();
