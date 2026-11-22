@@ -65,6 +65,7 @@ export class WorldSim {
     this.roadHalf = ROAD_HALF[route.world] ?? 2.4;
     this.ftp = ftp;
     this.events = [];
+    P.syncCourse(profile, route.id, route.version);
     this.spots = route.powerupSpots.map((at, i) => ({ at, lateral: [-1.2, 0, 1.2][i % 3] }));
     this.segmentState = new Map(); // segment id -> entry time
     this.lapStart = null; // sim time when the player last crossed the line
@@ -323,7 +324,7 @@ export class WorldSim {
       // (a wrong FTP) it follows part of the way, so you are never left miles behind or miles clear.
       const band = 0.15;
       const outside = ratio > 1 + band ? ratio / (1 + band) : ratio < 1 - band ? ratio / (1 - band) : 1;
-      want = Math.max(0.7, Math.min(1.35, outside ** 0.6));
+      want = Math.max(0.7, Math.min(1.45, outside ** 0.85));
     }
     // Ease towards it so nobody suddenly surges or stalls.
     this.fieldScale += (want - this.fieldScale) * 0.25;
