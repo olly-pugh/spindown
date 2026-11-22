@@ -2,6 +2,7 @@
 // lamp posts and spectators. Everything repeated is instanced or merged, and split into square chunks so the
 // renderer can skip what is off screen and the scene can hide (or simplify) what is far away.
 import * as THREE from 'three';
+import { crowd } from './crowd.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as T from './textures.js';
 import { rng, hash2 } from '../../core/world/noise.js';
@@ -666,55 +667,9 @@ export function lampPosts(points, { shadows = false } = {}) {
   return chunked(geo, mat, items, { chunk: 300, shadows, maxDistance: 420 });
 }
 
-/** Standing spectators: people with heads, hair, arms and legs, in varied clothes (instanced in chunks). */
-export function spectators(points) {
-  const coatCols = ['#24479c', '#b33a3a', '#34704a', '#e0ac1a', '#6a7076', '#ece6d4', '#7a4a8e', '#127c90', '#cf6a12', '#32485a', '#d65f8c', '#8a5a34'];
-  const variants = [];
-  const r = rng(99);
-  const limb = (r0, r1, len) => new THREE.CylinderGeometry(r0, r1, len, 7);
-  for (let v = 0; v < 8; v++) {
-    const coat = coatCols[(v * 5 + 1) % coatCols.length];
-    const legs = ['#26324a', '#33343a', '#5a4e44', '#46597a'][v % 4];
-    const skin = ['#f1c7a5', '#e0ac8a', '#c68863', '#8d5a3b'][v % 4];
-    const hair = ['#3a2718', '#7a5632', '#d2ae6a', '#222222', '#a7a7a7'][v % 5];
-    const cheer = v % 3 === 1, wave = v % 3 === 2;
-    // Torso: a lathed coat, fuller at the shoulders and flared at the hem.
-    const torso = new THREE.LatheGeometry([[0.001, 0.82], [0.17, 0.84], [0.185, 0.95], [0.165, 1.15], [0.2, 1.36], [0.19, 1.45], [0.1, 1.52], [0.001, 1.53]].map(([x, y]) => new THREE.Vector2(x, y)), 10);
-    torso.scale(1.12, 1, 0.72);
-    const arm = (side, raise) => {
-      const g = mergeAll([limb(0.058, 0.05, 0.6).translate(0, -0.3, 0), tint(new THREE.SphereGeometry(0.055, 6, 5).translate(0, -0.63, 0), skin)].map((x, i) => (i === 0 ? tint(x, coat) : x)), { colour: true, uv: false });
-      g.rotateZ(side * raise);
-      g.translate(side * 0.235, 1.42, 0);
-      return g;
-    };
-    const parts = [
-      tint(limb(0.085, 0.065, 0.84).translate(-0.095, 0.44, 0), legs),
-      tint(limb(0.085, 0.065, 0.84).translate(0.095, 0.44, 0), legs),
-      tint(new THREE.SphereGeometry(0.085, 7, 5).scale(1, 0.55, 1.75).translate(-0.095, 0.045, -0.05), '#1c1c1e'),
-      tint(new THREE.SphereGeometry(0.085, 7, 5).scale(1, 0.55, 1.75).translate(0.095, 0.045, -0.05), '#1c1c1e'),
-      shadeY(torso, 0.8, 1.05, coat),
-      arm(-1, cheer ? 2.7 : 0.14),
-      arm(1, cheer || wave ? 2.5 : 0.14),
-      tint(limb(0.05, 0.06, 0.1).translate(0, 1.56, 0), skin),
-      tint(new THREE.SphereGeometry(0.118, 10, 8).scale(0.92, 1.08, 1).translate(0, 1.71, 0), skin),
-      tint(new THREE.SphereGeometry(0.126, 10, 7, 0, Math.PI * 2, 0, Math.PI * 0.55).scale(0.95, 1, 1.03).translate(0, 1.73, 0.012), hair),
-    ];
-    if (v % 4 === 3) parts.push(tint(new THREE.CylinderGeometry(0.2, 0.2, 0.02, 10).translate(0, 1.79, -0.03), coat), tint(new THREE.CylinderGeometry(0.115, 0.125, 0.1, 10).translate(0, 1.84, 0), coat)); // a hat
-    variants.push(mergeAll(parts, { colour: true, uv: false }));
-  }
-  const group = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 });
-  const buckets = variants.map(() => []);
-  const q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-  points.forEach((p) => {
-    q.setFromAxisAngle(up, p.rot + Math.PI);
-    const s = 0.9 + r() * 0.18;
-    buckets[Math.floor(r() * variants.length)].push({ matrix: M4().compose(new THREE.Vector3(p.x, p.y, p.z), q, new THREE.Vector3(s, s, s)) });
-  });
-  buckets.forEach((list, k) => {
-    if (list.length) group.add(chunked(variants[k], mat, list, { chunk: 400, shadows: true, maxDistance: 260 }));
-  });
-  return group;
+/** Standing spectators along the road: smooth, individually coloured people who cheer and wave (crowd.js). */
+export function spectators(points, opts) {
+  return crowd(points, opts);
 }
 
 /** A floating, spinning power-up token with a glow ring; `icon` is an emoji drawn on a sprite. */
