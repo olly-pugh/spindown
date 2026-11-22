@@ -3,6 +3,68 @@ import { useEffect, useState } from 'preact/hooks';
 import { html, LV, Section, Toggle, Select, Spinner } from '../components.js';
 import { linkTitle, linkColor } from '../ble/trainer.js';
 import { UPDATE_RATES, rateLabel } from '../../core/commands.js';
+import * as Z from '../../core/hrzones.js';
+
+/** A number box that only applies its value when you press Enter or click away, so typing "1" on the way to "176" changes nothing. */
+function NumberBox({ value, onCommit, label, width = 90 }) {
+  const shown = value == null ? '' : String(value);
+  const [draft, setDraft] = useState(shown);
+  useEffect(() => setDraft(shown), [shown]);
+  const commit = () => {
+    const n = Number(draft.trim().replace(',', '.'));
+    if (draft.trim() === '' || !Number.isFinite(n) || !onCommit(n)) setDraft(shown);
+  };
+  return html`<input type="text" inputmode="decimal" class="num zone-box" style=${{ width: `${width}px` }} aria-label=${label} value=${draft}
+    onInput=${(e) => setDraft(e.target.value)} onBlur=${commit} onKeyDown=${(e) => e.key === 'Enter' && e.target.blur()} />`;
+}
+
+const pct = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
+
+function HeartRateZonesSection({ app }) {
+  const { settings } = app;
+  const maxHR = settings.get('maxHeartRate');
+  const percents = Z.validPercents(settings.get('hrZonePercents')) ? settings.get('hrZonePercents') : Z.DEFAULT_ZONE_PERCENTS;
+  const hasMax = Z.validMaxHR(maxHR);
+  const highestRidden = app.rides.records.reduce((m, r) => Math.max(m, r.summary?.maxHeartRate ?? 0), 0);
+  const setMax = (n) => {
+    const v = Math.round(n);
+    if (!Z.validMaxHR(v)) return false;
+    settings.set('maxHeartRate', v);
+    return true;
+  };
+  const setBoundary = (i, change) => {
+    const next = Z.setBoundary(percents, i, change, maxHR);
+    settings.set('hrZonePercents', next);
+    return true;
+  };
+  const isDefault = percents.every((p, i) => p === Z.DEFAULT_ZONE_PERCENTS[i]);
+  return html`<${Section} title="Heart rate zones"
+    footer=${`Based on % of max heart rate, like a Garmin. Change a zone by typing either its bpm or its %; the other works itself out, and changing your max heart rate moves every zone with it. Garmin's defaults are 50, 60, 70, 80 and 90 %. Zones show on the Ride and World screens and in each ride's history. Between ${Z.MIN_MAX_HR} and ${Z.MAX_MAX_HR} bpm.`}>
+    <div class="list">
+      <div class="item">
+        <span style="flex:1">Max heart rate</span>
+        <${NumberBox} label="Max heart rate" value=${hasMax ? maxHR : null} onCommit=${setMax} /><span class="muted" style="width:34px">bpm</span>
+      </div>
+      ${!hasMax ? html`<div class="item small muted" style="display:block;line-height:1.5">
+        Enter your max heart rate to see your zones. If you don't know it, the highest heart rate from a really hard ride is a good guide.
+        ${highestRidden >= Z.MIN_MAX_HR ? html` <button class="btn link" onClick=${() => setMax(highestRidden)}>Use ${highestRidden} bpm, the highest in your rides</button>` : null}
+      </div>` : html`<div class="item" style="display:block">
+        <div class="zone-grid">
+          <span></span><span></span><span class="muted center small">BPM</span><span class="muted center small">%</span>
+          ${percents.map((p, i) => html`
+            <span class="zone-name"><span class="zone-dot" style=${{ background: Z.ZONE_COLORS[i] }}></span>Zone ${i + 1} <span class="muted small">${Z.ZONE_NAMES[i]}</span></span>
+            <span class="muted small" style="text-align:right">from</span>
+            <${NumberBox} label=${`Zone ${i + 1} bpm`} value=${Z.bpmFor(maxHR, p)} onCommit=${(n) => setBoundary(i, { bpm: n })} />
+            <${NumberBox} label=${`Zone ${i + 1} percent`} value=${pct(p)} onCommit=${(n) => setBoundary(i, { percent: n })} />`)}
+          <span class="zone-name" style="font-weight:650">Max Heart Rate</span><span></span>
+          <${NumberBox} label="Max heart rate" value=${maxHR} onCommit=${setMax} />
+          <span class="muted center num">100</span>
+        </div>
+        ${!isDefault ? html`<button class="btn" style="margin-top:12px" onClick=${() => settings.set('hrZonePercents', [...Z.DEFAULT_ZONE_PERCENTS])}>Reset to Garmin's default zones</button>` : null}
+      </div>`}
+    </div>
+  </${Section}>`;
+}
 
 function Verification({ v }) {
   if (!v) return null;
@@ -121,9 +183,11 @@ export function SettingsView({ app, openSensors, openWelcome }) {
         <${Select} label="Units" value=${settings.get('units')} options=${[['metric', 'Metric (km/h, km)'], ['imperial', 'Imperial (mph, mi)']]} onChange=${(v) => settings.set('units', v)} />
         <${Select} label="Power display" value=${settings.get('powerSmoothing')} options=${[[1, 'Instant'], [3, '3 s average'], [5, '5 s average'], [10, '10 s average']]}
           onChange=${(v) => settings.set('powerSmoothing', Number(v))} />
-        <${Toggle} label="Keep the screen on while riding" checked=${settings.get('keepScreenOn')} onChange=${(v) => { settings.set('keepScreenOn', v); app.session.updateKeepAwake(); }} />
+        <${Toggle} label="Keep the screen on while Spindown is open" checked=${settings.get('keepScreenOn')} onChange=${(v) => { settings.set('keepScreenOn', v); app.session.updateKeepAwake(); }} />
       </div>
     </${Section}>
+
+    <${HeartRateZonesSection} app=${app} />
 
     <${GarminSection} app=${app} />
     <${StravaSection} app=${app} />

@@ -8,8 +8,9 @@ import { Destinations, destinationName, uploadNeedsWork, describeUpload } from '
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export class UploadCoordinator {
-  constructor({ store, log, transport, secrets }) {
+  constructor({ store, log, transport, secrets, isOnline = () => true }) {
     this.store = store;
+    this.isOnline = isOnline;
     this.log = log;
     this.secrets = secrets;
     this.garmin = new GarminConnectClient({ transport, store: secrets });
@@ -160,6 +161,7 @@ export class UploadCoordinator {
       this.processAgain = true;
       return;
     }
+    if (!this.isOnline()) return; // no Wi-Fi: networkRegained() picks the queue up again
     this.setState({ isProcessing: true });
     try {
       do {
@@ -223,7 +225,11 @@ export class UploadCoordinator {
       const message = friendlyNetworkMessage(e);
       this.store.setUpload(id, destination, { status: 'failed', message, retryable });
       if (retryable) {
-        const delay = Math.min(1800, 30 * Math.pow(2, Math.min(attempt - 1, 6)));
+        // Connection trouble never reached Garmin, so retry soon (Wi-Fi is often still settling after it
+        // reconnects). Errors from the service itself back off up to 30 minutes.
+        const delay = serviceError
+          ? Math.min(1800, 30 * Math.pow(2, Math.min(attempt - 1, 6)))
+          : Math.min(60, 15 * Math.pow(2, Math.min(attempt - 1, 2)));
         this.notBefore.set(k, Date.now() + delay * 1000);
         this.log.log(`${destinationName(destination)} upload failed (attempt ${attempt}): ${message}. Retrying in ${delay} s`, 'warning');
       } else {
@@ -244,8 +250,10 @@ export class UploadCoordinator {
 
   /** Network came back: retry everything now rather than waiting out the back-off. */
   networkRegained() {
+    if (!this.hasOutstandingWork) return;
     this.log.log('Network available; retrying uploads');
     this.notBefore.clear();
+    this.attempts.clear();
     this.process();
   }
 }

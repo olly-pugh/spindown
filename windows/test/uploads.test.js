@@ -77,6 +77,49 @@ test('offline: the upload is kept and retried later', async () => {
   assert.equal(store.record(id).uploads.garmin.status, 'uploaded');
 });
 
+test('no Wi-Fi: nothing is tried until the network comes back, then the ride uploads by itself', async () => {
+  const { store, secrets, uploads, sent, log } = setup([[201, '{"detailedImportResult":{"successes":[{"internalId":2}],"failures":[]}}']]);
+  let online = false;
+  uploads.isOnline = () => online;
+  signedIn(secrets);
+  const id = saveRide(store);
+  await uploads.process();
+  assert.equal(sent.length, 0);
+  assert.equal(store.record(id).uploads.garmin.status, 'pending');
+  online = true;
+  uploads.networkRegained();
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(store.record(id).uploads.garmin.status, 'uploaded');
+  assert.ok(log.events.some((e) => /Network available/.test(e.message)));
+});
+
+test('connection errors retry within a minute however many times they fail; reconnecting resets the count', async () => {
+  const { store, secrets, uploads } = setup(Array.from({ length: 8 }, () => ['network']));
+  signedIn(secrets);
+  const id = saveRide(store);
+  const key = `${id}/garmin`;
+  for (let i = 0; i < 8; i++) {
+    uploads.notBefore.clear();
+    const before = Date.now();
+    await uploads.process();
+    assert.ok(uploads.notBefore.get(key) - before <= 61000, `attempt ${i + 1} waits at most a minute`);
+  }
+  assert.equal(uploads.attempts.get(key), 8);
+  uploads.networkRegained();
+  assert.equal(uploads.attempts.get(key) ?? 0, 0);
+});
+
+test('Garmin server errors still back off for longer', async () => {
+  const { store, secrets, uploads } = setup([[503, 'busy'], [503, 'busy'], [503, 'busy']]);
+  signedIn(secrets);
+  const id = saveRide(store);
+  for (let i = 0; i < 3; i++) {
+    uploads.notBefore.clear();
+    await uploads.process();
+  }
+  assert.ok(uploads.notBefore.get(`${id}/garmin`) - Date.now() > 100000);
+});
+
 test('not signed in: the ride waits; a refused login asks to sign in again', async () => {
   const a = setup([]);
   const id = saveRide(a.store);

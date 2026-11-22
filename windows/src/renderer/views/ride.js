@@ -3,6 +3,16 @@ import { useState } from 'preact/hooks';
 import { html, Tile, Confirm } from '../components.js';
 import * as Format from '../../core/format.js';
 import { linkTitle, linkColor, isStreaming } from '../ble/trainer.js';
+import { zoneFor, zoneDecimal, ZONE_COLORS, ZONE_NAMES } from '../../core/hrzones.js';
+
+/** The heart-rate zone for the settings' max HR and zones: {zone 0..5, decimal, color, name}, or null. */
+export function liveZone(settings, hr) {
+  const max = settings.get('maxHeartRate');
+  const pcts = settings.get('hrZonePercents');
+  const zone = zoneFor(hr, max, pcts);
+  if (zone == null) return null;
+  return { zone, decimal: zoneDecimal(hr, max, pcts), color: zone ? ZONE_COLORS[zone - 1] : null, name: zone ? ZONE_NAMES[zone - 1] : 'Below zone 1' };
+}
 
 export function StatusBar({ app, onClick }) {
   const { trainer, heartRate, session } = app;
@@ -51,7 +61,7 @@ export function useRideControls(app, { onSaved } = {}) {
         return html`${extra}<button class="btn big green" onClick=${() => session.start()}>▶ Start Ride</button>`;
     }
   };
-  return { buttons, dialogs };
+  return { buttons, dialogs, finish };
 }
 
 const TILE = 'clamp(26px, 5.4vh, 46px)';
@@ -64,6 +74,7 @@ export function RideView({ app, openSensors, openCalibration }) {
   const stats = session.stats;
   const power = session.displayPower(now);
   const hr = heartRate.freshHeartRate(now);
+  const zone = liveZone(settings, hr);
   const smoothing = settings.get('powerSmoothing');
   const { buttons, dialogs } = useRideControls(app);
 
@@ -82,6 +93,9 @@ export function RideView({ app, openSensors, openCalibration }) {
           <span class="hrnum num ${hr != null ? 'red' : 'muted'}">${hr ?? '--'}</span><span class=${hr != null ? 'red' : 'muted'} style="font-size:28px">♥</span>
         </div>
         <div class="cap">${hr == null && heartRate.state.kind === 'idle' ? 'NO HR STRAP' : 'BPM'}</div>
+        ${zone ? html`<div style="margin-top:6px">${zone.zone
+          ? html`<span class="zone-chip num" style=${{ background: zone.color }}>ZONE ${zone.decimal.toFixed(1)}</span> <span class="small muted">${zone.name}</span>`
+          : html`<span class="small muted">Below zone 1</span>`}</div>` : null}
       </div>
     </div>
     <div class="tiles" style="grid-template-columns:repeat(4,1fr)">

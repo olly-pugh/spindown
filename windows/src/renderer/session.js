@@ -74,9 +74,10 @@ export class RideSession {
     changed();
   }
 
+  /** The screen stays on the whole time Spindown is open (the setting), and always in World. The main process
+   *  only holds it while the window is on screen, or during a ride. */
   updateKeepAwake() {
-    const recording = this.phase !== 'idle' && this.settings.get('keepScreenOn');
-    this.api.app.keepAwake(recording || this.worldVisible);
+    this.api.app.keepAwake(!!this.settings.get('keepScreenOn') || this.worldVisible);
   }
 
   async start() {
