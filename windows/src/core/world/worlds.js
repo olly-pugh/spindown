@@ -3,6 +3,7 @@
 // and landmarks for on-screen banners.
 import { Route } from './route.js';
 import { riderParams, stepSpeed, steadySpeed } from './physics.js';
+import { HeightGrid } from './heightgrid.js';
 
 // ---- Yorkshire Dales: Malham ---------------------------------------------------------------------
 //
@@ -118,10 +119,14 @@ export function yorkWorldPoints(flat) {
 
 export function makeYork(data) {
   const points = yorkWorldPoints(data.route.points);
-  // Bridges over the Ouse get a gentle hump; the rest of York is flat (about 12 m above sea level).
+  // York's real relief (from LIDAR, see scripts/build-york-terrain.mjs): street level by the Ouse is the
+  // game's 12 m and the ground rises gently away from the river (the Minster stands ~6 m higher). Bridges over
+  // the Ouse get a gentle hump.
+  const relief = data.relief ? new HeightGrid(data.relief) : null;
+  const base = (x, z) => 12 + (relief ? relief.at(x, -z) : 0);
   const bridges = ['lendalBridge', 'skeldergateBridge'].map((k) => data.landmarks?.[k]).filter(Boolean).map((b) => ({ x: b.x, z: -b.y }));
   const elevation = (_d, x, z) => {
-    let h = 12;
+    let h = base(x, z);
     for (const b of bridges) {
       const r = Math.hypot(x - b.x, z - b.z);
       if (r < 70) h += 3.2 * (0.5 + 0.5 * Math.cos((Math.PI * r) / 70));
@@ -144,6 +149,7 @@ export function makeYork(data) {
     blurb: "Real streets: the city walls, the Minster, the Ouse bridges and Clifford's Tower.",
     landmarks: marks.sort((a, b) => a.at - b.at),
     streets: data.route.streets ?? [],
+    baseElevation: base,
     segments: [
       { id: 'walls-sprint', name: 'City Walls Sprint', kind: 'zone', from: 0.12 * L, to: 0.12 * L + 400 },
       { id: 'ouse-sprint', name: 'Ouse Speed Trap', kind: 'zone', from: 0.45 * L, to: 0.45 * L + 350 },

@@ -5,7 +5,7 @@
 //
 // Output: src/renderer/game3d/data/york.json. Coordinates are local metres (x east, y north) from an
 // equirectangular projection about ORIGIN, rounded to 0.1 m; polylines/polygons are flat [x,y,x,y,...].
-// Map data © OpenStreetMap contributors, ODbL.
+// Map data © OpenStreetMap contributors, ODbL. Afterwards run scripts/build-york-terrain.mjs (relief + imagery).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

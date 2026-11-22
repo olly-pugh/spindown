@@ -114,6 +114,8 @@ export function buildDales(route, data, q) {
     const rock = c === CLS.rock || c === CLS.quarry ? 1 : c === CLS.pavement ? 0.9 : c === CLS.scree ? 0.75 : 0;
     const moor = c === CLS.heath ? 1 : c === CLS.wet ? 0.8 : c === CLS.scrub ? 0.6 : 0;
     const verge = roadD < ROAD_HALF + 7 ? 1 - smoothstep(ROAD_HALF + 1, ROAD_HALF + 7, roadD) : 0;
+    // In the village and farmyards the road is edged with flags, gravel and setts, not grass.
+    if ((c === CLS.village || c === CLS.yard) && roadD < ROAD_HALF + 4) return [0.85 * (1 - smoothstep(ROAD_HALF + 2, ROAD_HALF + 4, roadD)), 0, 0];
     return [rock, moor, verge];
   }
 
@@ -438,6 +440,36 @@ export function buildDales(route, data, q) {
   const power = powerLines(data, heightAt, roadDistance, q);
   group.add(power);
 
+  // ---- Limestone outcrops: clints and boulders on the mapped bare rock and pavement near the road ----
+  {
+    const rocks = [];
+    const cap = Math.round(3500 * q.treeDensity);
+    for (const c of data.cover ?? []) {
+      if (c.c !== 'rock' && c.c !== 'pavement' && c.c !== 'scree') continue;
+      const ring = W(c.p);
+      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      for (let i = 0; i < ring.length; i += 2) {
+        minX = Math.min(minX, ring[i]);
+        maxX = Math.max(maxX, ring[i]);
+        minZ = Math.min(minZ, ring[i + 1]);
+        maxZ = Math.max(maxZ, ring[i + 1]);
+      }
+      const cd = roadDistance((minX + maxX) / 2, (minZ + maxZ) / 2);
+      if (cd > 900) continue;
+      const spacing = c.c === 'pavement' ? 4.5 : c.c === 'scree' ? 3 : 6;
+      for (let z = minZ; z < maxZ; z += spacing) {
+        for (let x = minX; x < maxX; x += spacing) {
+          const px = x + r() * spacing, pz = z + r() * spacing;
+          if (!pointInRing(px, pz, ring) || roadDistance(px, pz) < ROAD_HALF + 2) continue;
+          const big = c.c === 'pavement' ? 1.4 + r() * 2.2 : c.c === 'scree' ? 0.3 + r() * 0.6 : 0.8 + r() * 2.4;
+          rocks.push({ x: px, z: pz, s: big, pri: roadDistance(px, pz) });
+        }
+      }
+    }
+    rocks.sort((a, b) => a.pri - b.pri);
+    group.add(limestoneRocks(rocks.slice(0, cap), heightAt, q, r));
+  }
+
   // ---- Sheep in the fields near the road ----
   {
     const sheep = [];
@@ -711,6 +743,27 @@ function wallLineTexture(data, rect) {
   t.colorSpace = THREE.NoColorSpace;
   t.anisotropy = 8;
   return t;
+}
+
+/** Pale grey limestone blocks, flattened and sunk into the turf, instanced in chunks. */
+function limestoneRocks(list, heightAt, q, r) {
+  const g = new THREE.IcosahedronGeometry(1, 1);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const k = 1 + 0.18 * Math.sin(x * 5.1 + z * 2.3) + 0.12 * Math.sin(z * 7.7 - y * 3.1);
+    p.setXYZ(i, x * k, Math.max(-0.4, y) * k * (y > 0.55 ? 0.75 : 1), z * k);
+  }
+  g.computeVertexNormals();
+  const geo = C.mergeAll([C.shadeY(g, 0.62, 1.05, '#d3d1c8')], { colour: true, uv: false });
+  const qq = new THREE.Quaternion(), e = new THREE.Euler();
+  const items = list.map((rk) => {
+    e.set((r() - 0.5) * 0.15, r() * 6.28, (r() - 0.5) * 0.15);
+    qq.setFromEuler(e);
+    const s = rk.s;
+    return { matrix: new THREE.Matrix4().compose(new THREE.Vector3(rk.x, heightAt(rk.x, rk.z) - 0.12 * s, rk.z), qq, new THREE.Vector3(s * (0.8 + r() * 0.5), s * (0.22 + r() * 0.2), s * (0.6 + r() * 0.4))), colour: new THREE.Color().setScalar(0.85 + r() * 0.25) };
+  });
+  return C.chunked(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 }), items, { shadows: q.shadows, maxDistance: 650, chunk: 200 });
 }
 
 /** Swaledale sheep: woolly bodies, black faces with pale muzzles, ears and thin black legs. */

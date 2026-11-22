@@ -376,7 +376,7 @@ function MainMenu({ app, onFreeRide, onRace, onWorkouts, open }) {
       <button class="btn big white" onClick=${() => open('progress')}>🏆 Progress</button>
       <button class="btn big white" onClick=${() => open('options')}>⚙️ World settings</button>
     </div>
-    <div class="small muted" style="margin-top:10px">Tip: just start pedalling to ride. Space uses a power-up · 1–6 change camera · ← → change lane · M menu. Map data © OpenStreetMap contributors (ODbL). Terrain: Mapzen/AWS Terrain Tiles. Imagery: Sentinel-2 cloudless 2016 by EOX IT Services GmbH (contains modified Copernicus Sentinel data 2016), CC BY 4.0.</div>
+    <div class="small muted" style="margin-top:10px">Tip: just start pedalling to ride. Space uses a power-up · 1–6 change camera · ← → change lane · M menu. Map data © OpenStreetMap contributors (ODbL). Terrain: Environment Agency LIDAR (© Environment Agency, Open Government Licence v3.0) and Mapzen/AWS Terrain Tiles. Imagery: Sentinel-2 cloudless 2016 by EOX IT Services GmbH (contains modified Copernicus Sentinel data 2016), CC BY 4.0.</div>
   </div>`;
 }
 

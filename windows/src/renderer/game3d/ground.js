@@ -6,43 +6,9 @@
 // limestone textures (tinted by the imagery) take over.
 import * as THREE from 'three';
 import { rng } from '../../core/world/noise.js';
+import { HeightGrid } from '../../core/world/heightgrid.js';
 
-const smooth = (a, b, x) => {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-};
-
-/** A heightmap from the data ({x0, y0, nx, ny, cell, data: base64 Int16 decimetres}), sampled in data coords. */
-export class HeightGrid {
-  constructor(g) {
-    Object.assign(this, { x0: g.x0, y0: g.y0, nx: g.nx, ny: g.ny, cell: g.cell });
-    const bin = atob(g.data);
-    const n = g.nx * g.ny;
-    this.h = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      const v = bin.charCodeAt(i * 2) | (bin.charCodeAt(i * 2 + 1) << 8);
-      this.h[i] = ((v << 16) >> 16) / 10;
-    }
-    this.x1 = this.x0 + (this.nx - 1) * this.cell;
-    this.y1 = this.y0 + (this.ny - 1) * this.cell;
-  }
-
-  /** Bilinear height at data coords (x east, y north), clamped to the edge. */
-  at(x, y) {
-    const fx = Math.min(this.nx - 1.001, Math.max(0, (x - this.x0) / this.cell));
-    const fy = Math.min(this.ny - 1.001, Math.max(0, (y - this.y0) / this.cell));
-    const i = Math.floor(fx), j = Math.floor(fy);
-    const u = fx - i, v = fy - j;
-    const k = j * this.nx + i, h = this.h;
-    return (h[k] * (1 - u) + h[k + 1] * u) * (1 - v) + (h[k + this.nx] * (1 - u) + h[k + this.nx + 1] * u) * v;
-  }
-
-  /** 1 well inside, falling to 0 at the edge over `fade` metres. */
-  weight(x, y, fade) {
-    const d = Math.min(x - this.x0, this.x1 - x, y - this.y0, this.y1 - y);
-    return smooth(0, fade, d);
-  }
-}
+export { HeightGrid };
 
 /**
  * Nested heightmaps, finest wins: `dem(x, z)` in world coordinates (z = −north). Each finer level is blended in
@@ -246,11 +212,11 @@ export function terrainMaterial(opts, extra = {}) {
     farRect: { value: rectVec(opts.far.rect) },
     wallMap: { value: opts.walls?.texture ?? blank },
     wallRect: { value: rectVec(opts.walls?.rect ?? opts.near.rect) },
-    grassMap: { value: tex.grass },
+    grassMap: { value: opts.detailMap ?? tex.grass },
     moorMap: { value: tex.moor },
     rockMap: { value: tex.rock },
-    grade: { value: new THREE.Vector4(opts.saturation ?? 0.88, opts.gamma ?? 0.8, opts.gain ?? 2.45, 0) },
-    tint: { value: new THREE.Vector3(...(opts.tint ?? [1.3, 1.04, 0.56])) },
+    grade: { value: new THREE.Vector4(opts.saturation ?? 0.6, opts.gamma ?? 0.8, opts.gain ?? 2.25, 0) },
+    tint: { value: new THREE.Vector3(...(opts.tint ?? [1.42, 1.08, 0.56])) },
   };
   m.userData.uniforms = uniforms;
   m.onBeforeCompile = (shader) => {

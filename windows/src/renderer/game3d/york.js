@@ -3,11 +3,17 @@
 // chimney pots; the streets; the Ouse and the Foss sunk between their quay walls; parks; the medieval city
 // walls with their wall-walk and battlements on grassy ramparts; and hand-built models of York Minster and
 // Clifford's Tower placed on their real footprints. The route follows the real inner ring road.
+// The city is modelled at street level and then laid onto York's real gentle relief (LIDAR, see
+// scripts/build-york-terrain.mjs), with the Vale of York around it draped in Sentinel-2 imagery.
 import * as THREE from 'three';
 import * as C from './common.js';
 import * as T from './textures.js';
 import { RouteField } from '../../core/world/field.js';
 import { rng, hash2 } from '../../core/world/noise.js';
+import { HeightGrid } from '../../core/world/heightgrid.js';
+import { terrainMaterial, imageryTexture } from './ground.js';
+import yorkNearUrl from './data/york-near.jpg';
+import yorkFarUrl from './data/york-far.jpg';
 
 const Y0 = 12; // street level, metres above sea level
 const YW = Y0 - 3.4; // river level
@@ -146,6 +152,12 @@ export function buildYork(route, data, q) {
     return m;
   };
   const std = (o) => new THREE.MeshStandardMaterial(o);
+  // Everything modelled at street level goes in `flat`, which is laid onto the relief at the end; things built
+  // from the route's own heights (the road, kerbs, bridges' decks, lamps, people) go straight into `group`.
+  const flat = new THREE.Group();
+  const relief = data.relief ? new HeightGrid(data.relief) : null;
+  const D = (x, z) => (relief ? relief.at(x, -z) : 0);
+  const im = data.imagery;
 
   // ---- Water: the rivers lie below street level, so the ground is cut away over them ----
   const waters = data.water.map(W).map((p) => ({ p, box: bbox(p) }));
@@ -181,7 +193,7 @@ export function buildYork(route, data, q) {
   const mask = new THREE.CanvasTexture(maskCanvas);
   mask.channel = 1;
   mask.flipY = false;
-  const groundGeo = new THREE.PlaneGeometry(gw, gd, 1, 1).rotateX(-Math.PI / 2);
+  const groundGeo = new THREE.PlaneGeometry(gw, gd, Math.ceil(gw / 10), Math.ceil(gd / 10)).rotateX(-Math.PI / 2);
   {
     // After the rotation the plane's u runs east and v runs north; the mask is drawn with z (south) downwards.
     const p = groundGeo.attributes.position, uv = groundGeo.attributes.uv;
@@ -192,16 +204,55 @@ export function buildYork(route, data, q) {
       uv.setXY(i, (p.getX(i) + gw / 2) / 12, (p.getZ(i) + gd / 2) / 12);
     }
     groundGeo.setAttribute('uv1', new THREE.BufferAttribute(uv1, 2));
+    groundGeo.setAttribute('detail', new THREE.BufferAttribute(new Float32Array(p.count * 3), 3));
   }
-  const ground = new THREE.Mesh(groundGeo, C.groundMaterial({ map: T.yardTexture(), alphaMap: mask, alphaTest: 0.5, roughness: 1 }));
+  const imageryOpts = im && {
+    near: { texture: imageryTexture(yorkNearUrl), rect: im.near },
+    far: { texture: imageryTexture(yorkFarUrl), rect: im.far },
+  };
+  const ground = new THREE.Mesh(groundGeo, imageryOpts
+    ? terrainMaterial({ ...imageryOpts, detailMap: T.yardTexture(), saturation: 0.7, tint: [1.12, 1.0, 0.8] }, { alphaMap: mask, alphaTest: 0.5, roughness: 1 })
+    : C.groundMaterial({ map: T.yardTexture(), alphaMap: mask, alphaTest: 0.5, roughness: 1 }));
   ground.position.set(gx0 + gw / 2, Y0 - 0.1, gz0 + gd / 2);
   ground.receiveShadow = true;
-  group.add(ground);
+  flat.add(ground);
+  // Beyond the mapped city: the Vale of York to the horizon, imagery over the real relief.
+  if (imageryOpts && relief) {
+    const ext = 4400, cell = 40;
+    const n = Math.round((2 * ext) / cell) + 1;
+    const pos = new Float32Array(n * n * 3);
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const x = -ext + i * cell, z = -ext + j * cell, k = j * n + i;
+        pos[k * 3] = x;
+        pos[k * 3 + 1] = Y0 - 0.35;
+        pos[k * 3 + 2] = z;
+      }
+    }
+    const idx = [];
+    const inside = (x, z) => x > gx0 + 5 && x < gx0 + gw - 5 && z > gz0 + 5 && z < gz0 + gd - 5;
+    for (let j = 0; j < n - 1; j++) {
+      for (let i = 0; i < n - 1; i++) {
+        const x = -ext + i * cell, z = -ext + j * cell;
+        if (inside(x, z) && inside(x + cell, z + cell)) continue; // under the city ground
+        const a = j * n + i;
+        idx.push(a, a + n, a + 1, a + 1, a + n, a + n + 1);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('detail', new THREE.BufferAttribute(new Float32Array(n * n * 3), 3));
+    g.setIndex(idx);
+    const vale = new THREE.Mesh(g, terrainMaterial({ ...imageryOpts, saturation: 0.95, tint: [1.12, 1.0, 0.78] }));
+    vale.receiveShadow = true;
+    vale.userData.relaxNormals = true;
+    flat.add(vale);
+  }
 
   const waterNormal = T.waterNormalTexture();
   const waterMat = std({ color: '#52706a', roughness: 0.08, metalness: 0.1, normalMap: waterNormal, normalScale: new THREE.Vector2(0.18, 0.18), envMapIntensity: 1.1 });
   const waterGeo = C.mergeAll(waters.map((w) => shapeGeometry(w.p, YW, 9)).filter(Boolean));
-  group.add(receiving(new THREE.Mesh(waterGeo, waterMat)));
+  flat.add(receiving(new THREE.Mesh(waterGeo, waterMat)));
   // Quay walls down to the water.
   const quay = [];
   for (const w of waters) {
@@ -212,12 +263,12 @@ export function buildYork(route, data, q) {
     const g = C.profileAlong(p, [[-inward * 0.6, Y0 - 0.06], [0, Y0 - 0.06], [inward * 0.7, YW - 0.8]], { uvLength: 4, uvV: 4 });
     if (g) quay.push(g);
   }
-  if (quay.length) group.add(receiving(new THREE.Mesh(C.mergeAll(quay), std({ map: T.stoneWallTexture({ tone: 'rubble' }), color: '#c9c2b2', roughness: 0.95, side: THREE.DoubleSide }))));
+  if (quay.length) flat.add(receiving(new THREE.Mesh(C.mergeAll(quay), std({ map: T.stoneWallTexture({ tone: 'rubble' }), color: '#c9c2b2', roughness: 0.95, side: THREE.DoubleSide }))));
 
   // ---- Parks ----
   const greens = data.green.map(W);
   const greenGeo = C.mergeAll(greens.map((p) => shapeGeometry(p, Y0 - 0.06, 7)).filter(Boolean));
-  group.add(receiving(new THREE.Mesh(greenGeo, C.groundMaterial({ map: T.grassTexture(), color: '#dfeec8', roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }))));
+  flat.add(receiving(new THREE.Mesh(greenGeo, C.groundMaterial({ map: T.grassTexture(), color: '#dfeec8', roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }))));
 
   // ---- Streets ----
   const roadSets = { asphalt: [], cobbles: [], paving: [] };
@@ -243,10 +294,10 @@ export function buildYork(route, data, q) {
     cobbles: std({ map: T.cobbleTexture(), roughness: 0.85, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }),
     paving: std({ map: T.pavingTexture(), roughness: 0.95, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
   };
-  for (const [k, list] of Object.entries(roadSets)) if (list.length) group.add(receiving(new THREE.Mesh(C.mergeAll(list), streetMats[k])));
+  for (const [k, list] of Object.entries(roadSets)) if (list.length) flat.add(receiving(new THREE.Mesh(C.mergeAll(list), streetMats[k])));
   const limestone = std({ map: T.stoneWallTexture({ tone: 'limestone' }), roughness: 0.9 });
   const limestone2 = std({ map: T.stoneWallTexture({ tone: 'limestone' }), roughness: 0.9, side: THREE.DoubleSide });
-  if (skirts.length) group.add(shadowy(new THREE.Mesh(C.mergeAll(skirts), limestone2)));
+  if (skirts.length) flat.add(shadowy(new THREE.Mesh(C.mergeAll(skirts), limestone2)));
 
   // The route: full-width tarmac with double yellow lines, raised kerbs and stone-flagged pavements.
   group.add(receiving(new THREE.Mesh(C.ribbon(route, { left: -ROAD_HALF, right: ROAD_HALF, lift: 0.06, uvLength: 9, step: 2 }), C.roadMaterial({ centreLine: true, yellow: true }))));
@@ -383,15 +434,15 @@ export function buildYork(route, data, q) {
     built++;
   }
   group.userData.buildingCount = built;
-  for (const [k, list] of Object.entries(walls)) if (list.length) group.add(shadowy(new THREE.Mesh(C.mergeAll(list, { colour: true }), std({ map: T.facadeTexture(k), vertexColors: true, roughness: 0.9 }))));
-  if (plainBrick.length) group.add(shadowy(new THREE.Mesh(C.mergeAll(plainBrick, { colour: true }), std({ map: T.brickTexture(), vertexColors: true, roughness: 0.9, side: THREE.DoubleSide }))));
+  for (const [k, list] of Object.entries(walls)) if (list.length) flat.add(shadowy(new THREE.Mesh(C.mergeAll(list, { colour: true }), std({ map: T.facadeTexture(k), vertexColors: true, roughness: 0.9 }))));
+  if (plainBrick.length) flat.add(shadowy(new THREE.Mesh(C.mergeAll(plainBrick, { colour: true }), std({ map: T.brickTexture(), vertexColors: true, roughness: 0.9, side: THREE.DoubleSide }))));
   const roofMats = {
     slate: std({ map: T.roofTexture('slate'), roughness: 0.75, side: THREE.DoubleSide }),
     pantile: std({ map: T.roofTexture('pantile'), roughness: 0.85, side: THREE.DoubleSide }),
     lead: std({ map: T.roofTexture('lead'), roughness: 0.6, metalness: 0.15, side: THREE.DoubleSide }),
     flat: std({ map: T.roofTexture('slate'), color: '#b9bcc0', roughness: 0.9 }),
   };
-  for (const [k, list] of Object.entries(roofs)) if (list.length) group.add(shadowy(new THREE.Mesh(C.mergeAll(list), roofMats[k])));
+  for (const [k, list] of Object.entries(roofs)) if (list.length) flat.add(shadowy(new THREE.Mesh(C.mergeAll(list), roofMats[k])));
 
   // ---- City walls on their ramparts (cut where the route passes through) ----
   let ccx = 0, ccz = 0;
@@ -477,8 +528,8 @@ export function buildYork(route, data, q) {
     g.computeVertexNormals();
     return g;
   }
-  if (wallParts.length) group.add(shadowy(new THREE.Mesh(C.mergeAll(wallParts), limestone2)));
-  if (rampartParts.length) group.add(receiving(new THREE.Mesh(C.mergeAll(rampartParts), C.groundMaterial({ map: T.grassTexture(), color: '#e4f2c8', roughness: 1, side: THREE.DoubleSide }))));
+  if (wallParts.length) flat.add(shadowy(new THREE.Mesh(C.mergeAll(wallParts), limestone2)));
+  if (rampartParts.length) flat.add(receiving(new THREE.Mesh(C.mergeAll(rampartParts), C.groundMaterial({ map: T.grassTexture(), color: '#e4f2c8', roughness: 1, side: THREE.DoubleSide }))));
   // Merlons (battlements), instanced.
   {
     const m = new THREE.Matrix4(), qq = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
@@ -489,18 +540,19 @@ export function buildYork(route, data, q) {
     const mg = new THREE.BoxGeometry(0.7, 0.85, 1.25).translate(0, 0.42, 0);
     const uv = mg.attributes.uv;
     for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 0.3, uv.getY(i) * 0.22);
-    group.add(C.chunked(mg, limestone, items, { chunk: 250, shadows: q.shadows, maxDistance: 600 }));
+    flat.add(C.chunked(mg, limestone, items, { chunk: 250, shadows: q.shadows, maxDistance: 600 }));
   }
 
   // ---- York Minster and Clifford's Tower ----
-  group.add(minster(q));
-  group.add(cliffordsTower(data, q));
+  flat.add(minster(q));
+  flat.add(cliffordsTower(data, q));
 
   // ---- Bridges: where the route rises over the Ouse ----
   const spans = [];
   let spanStart = null;
   for (let d = 0; d <= route.length; d += 2) {
-    const up = route.elevation(d) > Y0 + 0.25;
+    const bp = route.position(d);
+    const up = route.elevation(d) > Y0 + D(bp.x, bp.z) + 0.35;
     if (up && spanStart == null) spanStart = d;
     if (!up && spanStart != null) {
       spans.push([spanStart, d]);
@@ -584,7 +636,7 @@ export function buildYork(route, data, q) {
     if (blocked(p.x, p.z, 3) || nearWall(p.x, p.z) || inWater(p.x, p.z)) continue;
     streetTrees.push({ x: p.x, z: p.z, y: Y0 + 0.4, kind: 'broad', s: 0.55 + r() * 0.2, rot: r() * 6.3, hue: r() * 0.6 - 0.1, sx: 0.85, sy: 1.25 });
   }
-  group.add(C.trees([...streetTrees, ...treeSpots.slice(0, q.maxTrees)], { shadows: q.shadows, maxDistance: 1200, lod: 200 }));
+  flat.add(C.trees([...streetTrees, ...treeSpots.slice(0, q.maxTrees)], { shadows: q.shadows, maxDistance: 1200, lod: 200 }));
 
   const lamps = [], people = [];
   for (let d = 0; d < route.length; d += 30) {
@@ -647,13 +699,13 @@ export function buildYork(route, data, q) {
       parts.push(C.tint(new THREE.CylinderGeometry(0.022, 0.016, 0.05, 5, 1, true).rotateX(Math.PI * 0.6 - Math.PI / 2).translate(dx, 0.345, dz - 0.045), '#ff9a1f'));
     }
     parts.push(C.tint(new THREE.ConeGeometry(0.1, 0.3, 4, 1, true).translate(0.02, 0.15, 0.04), '#5b8c32'));
-    group.add(C.chunked(C.mergeAll(parts, { colour: true, uv: false }), std({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide }), daffs, { shadows: false, maxDistance: 110, chunk: 70 }));
+    flat.add(C.chunked(C.mergeAll(parts, { colour: true, uv: false }), std({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide }), daffs, { shadows: false, maxDistance: 110, chunk: 70 }));
   }
 
   // Gatehouses ("bars") where the route passes through the walls.
   if (gates.length) {
     const parts = gates.map((g) => gatehouse(route, g.along));
-    group.add(shadowy(new THREE.Mesh(C.mergeAll(parts), limestone)));
+    flat.add(shadowy(new THREE.Mesh(C.mergeAll(parts), limestone)));
   }
 
   // ---- Start/finish and zone arches ----
@@ -663,13 +715,61 @@ export function buildYork(route, data, q) {
     group.add(C.arch(route, s.to, 'FINISH ▸', { width: 2 * ROAD_HALF + 1.4, colour: '#333', height: 6 }));
   }
 
+  layOnRelief(flat, D);
+  group.add(flat);
+
   const update = (t) => {
     waterNormal.offset.set(t * 0.012, t * 0.02);
   };
-  return { group, heightAt: () => Y0, roadHalf: ROAD_HALF, buildingCount: built, update };
+  /** A little more haze distance so the Vale of York reads around the city from the aerial cameras. */
+  const atmosphere = (view) => {
+    const fog = view.scene.fog;
+    if (!fog || !imageryOpts) return;
+    if (fog.far >= view.q.fogFar * 0.8) fog.far = Math.max(fog.far * 1.6, 4200);
+    view.camera.far = Math.max(view.camera.far, Math.min(7000, fog.far * 1.1));
+    view.camera.updateProjectionMatrix();
+    view.sky.scale.setScalar(view.camera.far * 0.9);
+  };
+  return { group, heightAt: (x, z) => Y0 + D(x, z), roadHalf: ROAD_HALF, buildingCount: built, update, atmosphere };
 }
 
 /** A medieval gatehouse ("bar") straddling the route: a tower over an arch, with corner turrets. One geometry. */
+/**
+ * Lays geometry built at street level onto the relief: every vertex (or instance) is raised by D at its
+ * position. York's slopes are a few percent at most, so buildings stay square to the eye and their feet stay
+ * on the ground; within ~15 m of the rivers D is zero, so quays, water and bridges keep their heights.
+ */
+function layOnRelief(root, D) {
+  root.updateMatrixWorld(true);
+  const seen = new Set();
+  const v = new THREE.Vector3(), m4 = new THREE.Matrix4(), pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+  root.traverse((o) => {
+    if (o.isInstancedMesh) {
+      for (let i = 0; i < o.count; i++) {
+        o.getMatrixAt(i, m4);
+        m4.decompose(pos, quat, scl);
+        pos.y += D(pos.x, pos.z);
+        o.setMatrixAt(i, m4.compose(pos, quat, scl));
+      }
+      o.instanceMatrix.needsUpdate = true;
+      o.computeBoundingSphere();
+      if (o.userData.centre) o.userData.centre.copy(o.boundingSphere.center);
+      return;
+    }
+    if (!o.isMesh || seen.has(o.geometry)) return;
+    seen.add(o.geometry);
+    const p = o.geometry.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld);
+      p.setY(i, p.getY(i) + D(v.x, v.z));
+    }
+    p.needsUpdate = true;
+    if (o.userData.relaxNormals || o.geometry.index) o.geometry.computeVertexNormals();
+    o.geometry.computeBoundingSphere();
+    if (o.userData.centre) o.userData.centre.copy(o.geometry.boundingSphere.center).applyMatrix4(o.matrixWorld);
+  });
+}
+
 function gatehouse(route, along) {
   const p = route.position(along);
   const w = 2 * ROAD_HALF + 1.6, depth = 8, side = 4.2, top = 13;
