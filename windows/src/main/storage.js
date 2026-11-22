@@ -49,6 +49,9 @@ export const SETTINGS_DEFAULTS = {
   hrmID: null,
   hrmName: null,
   ftp: 170,
+  /** Heart-rate zones as % of max HR, as on a Garmin. No zones are shown until a max HR is entered. */
+  maxHeartRate: null,
+  hrZonePercents: [50, 60, 70, 80, 90],
   onboarded: false,
 };
 

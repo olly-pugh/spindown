@@ -4,7 +4,7 @@
 // that goes wrong in the 3D world is caught here and never reaches the ride session.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { html, Modal, Stepper, Progress, Select, Toggle } from '../components.js';
-import { useRideControls } from './ride.js';
+import { useRideControls, liveZone } from './ride.js';
 import { linkTitle, isStreaming } from '../ble/trainer.js';
 import * as Format from '../../core/format.js';
 import * as Lakes from '../../core/lakes.js';
@@ -488,12 +488,16 @@ function WorkoutPicker({ app, onChoose, onClose }) {
   </${Modal}>`;
 }
 
-function Results({ app, onRideOn, onAgain, onMenu }) {
+function Results({ app, onRideOn, onAgain, onMenu, onFinish }) {
   const sim = G.sim;
   const board = sim.leaderboard();
   const winner = board[0].time;
   const me = sim.race.playerPlace;
-  return html`<${Modal} title=${`🏁 ${sim.race.preset.name}: ${me ? `you finished ${ordinal(me)}` : 'results'}`} size="wide" hideClose onClose=${onRideOn}>
+  return html`<${Modal} title=${`🏁 ${sim.race.preset.name}: ${me ? `you finished ${ordinal(me)}` : 'results'}`} size="wide" hideClose onClose=${onRideOn} footer=${html`<button class="btn" onClick=${onMenu}>Menu</button>
+      <button class="btn" onClick=${onAgain}>Race again</button>
+      <span class="spacer"></span>
+      ${app.session.phase !== 'idle' ? html`<button class="btn big red" onClick=${onFinish}>■ Finish ride</button>` : null}
+      <button class="btn big green" onClick=${onRideOn}>Keep riding ▸</button>`}>
     <div class="row" style="gap:16px;margin-bottom:10px">
       <div class="card" style="flex:1"><div class="small muted">Your time</div><div style="font-size:28px;font-weight:800" class="num">${Format.duration(sim.player.finishTime ?? 0)}</div></div>
       <div class="card" style="flex:1"><div class="small muted">Place</div><div style="font-size:28px;font-weight:800">${me ? `${ordinal(me)} of ${board.length}` : '—'}</div></div>
@@ -510,11 +514,6 @@ function Results({ app, onRideOn, onAgain, onMenu }) {
         <td class="num muted">${i === 0 ? '' : `+${Format.shortDuration(b.time - winner)}`}</td>
       </tr>`)}</tbody>
     </table>
-    <div class="row" style="justify-content:flex-end;gap:10px;margin-top:14px">
-      <button class="btn" onClick=${onMenu}>Menu</button>
-      <button class="btn" onClick=${onAgain}>Race again</button>
-      <button class="btn primary" onClick=${onRideOn}>Keep riding</button>
-    </div>
   </${Modal}>`;
 }
 
@@ -537,7 +536,7 @@ export function WorldView({ app, openSensors }) {
   panelRef.current = panel;
   const [ready, setReady] = useState(!!G.profile);
   const [failure, setFailure] = useState(G.failure);
-  const { buttons, dialogs } = useRideControls(app);
+  const { buttons, dialogs, finish } = useRideControls(app);
 
   // Load the game profile once.
   useEffect(() => {
@@ -775,7 +774,10 @@ export function WorldView({ app, openSensors }) {
           <div class="hud-grid">
             <div><span class="num">${Format.speedMS(sim.player.v, u)}</span><small>${Format.speedUnit(u)}</small></div>
             <div><span class="num">${Format.rpm(reading?.cadenceRPM)}</span><small>rpm</small></div>
-            <div class=${hr == null ? 'muted' : 'red'}><span class="num">${hr ?? '--'}</span><small>bpm</small></div>
+            ${(() => {
+              const z = liveZone(settings, hr);
+              return html`<div class=${hr == null ? 'muted' : 'red'} title=${z ? `Heart rate zone: ${z.name}` : 'Heart rate'}><span class="num" style=${z?.zone ? { color: z.color } : null}>${hr ?? '--'}</span><small>${z?.zone ? html`bpm <b style=${{ color: z.color }}>Z${z.zone}</b>` : 'bpm'}</small></div>`;
+            })()}
             <div><span class="num">${power == null ? '--' : (power / sim.player.mass).toFixed(1)}</span><small>W/kg</small></div>
           </div>
           ${sim.player.draft > 0.08 ? html`<div class="draft">🌬 Drafting · ${Math.round(sim.player.draft * 100)}% less drag</div>` : null}
@@ -841,7 +843,8 @@ export function WorldView({ app, openSensors }) {
     ${G.showResults && race ? html`<${Results} app=${app}
       onRideOn=${() => { G.showResults = false; setTick((n) => n + 1); }}
       onAgain=${() => startRace(race.preset)}
-      onMenu=${() => { G.showResults = false; setPanel('menu'); }} />` : null}
+      onMenu=${() => { G.showResults = false; setPanel('menu'); }}
+      onFinish=${() => { G.showResults = false; finish(); }} />` : null}
     ${dialogs}
   </div>`;
 }

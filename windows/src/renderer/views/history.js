@@ -5,6 +5,29 @@ import * as Format from '../../core/format.js';
 import { Destinations, destinationName, describeUpload } from '../../core/recorder.js';
 import { GarminConnectClient, StravaClient } from '../../core/services.js';
 import { ExportFormats } from '../../core/fit.js';
+import { timeInZones, zoneBounds, ZONE_COLORS, ZONE_NAMES } from '../../core/hrzones.js';
+
+function TimeInZones({ track, settings }) {
+  const max = settings.get('maxHeartRate');
+  const pcts = settings.get('hrZonePercents');
+  const secs = useMemo(() => (track ? timeInZones(track.samples, max, pcts) : null), [track, max, pcts]);
+  if (!secs) return null;
+  const total = secs.reduce((a, b) => a + b, 0);
+  if (total < 1) return null;
+  const bounds = zoneBounds(max, pcts);
+  const rows = [5, 4, 3, 2, 1].map((z) => ({ z, label: `Zone ${z}`, sub: `${bounds[z - 1].low}–${z === 5 ? max : bounds[z - 1].high - 1} bpm`, color: ZONE_COLORS[z - 1], name: ZONE_NAMES[z - 1], s: secs[z] }));
+  if (secs[0] > 0) rows.push({ z: 0, label: 'Below zone 1', sub: `under ${bounds[0].low} bpm`, color: '#48484a', name: '', s: secs[0] });
+  return html`<${Section} title="Time in heart rate zones" footer=${`Using your zones in Settings (max heart rate ${max} bpm).`}>
+    <div class="card">
+      ${rows.map((r) => html`<div class="zone-bar">
+        <div><div style="font-weight:650">${r.label} <span class="small muted">${r.name}</span></div><div class="small muted num">${r.sub}</div></div>
+        <div class="track"><div style=${{ width: `${(r.s / total) * 100}%`, background: r.color }}></div></div>
+        <div class="num" style="text-align:right">${Format.duration(r.s)}</div>
+        <div class="num muted small" style="text-align:right">${Math.round((r.s / total) * 100)}%</div>
+      </div>`)}
+    </div>
+  </${Section}>`;
+}
 
 const SYMBOL = { garmin: '▲', strava: '🔥' };
 
@@ -130,6 +153,8 @@ export function RideDetail({ app, rideID, compact }) {
         ${charts.hr ? html`<div style="height:10px"></div><${LineChart} points=${charts.hr} color="#ff453a" yLabel="bpm" height=${130} includeZero=${false} />` : null}
       </div>
     </${Section}>` : null}
+
+    <${TimeInZones} track=${track} settings=${settings} />
 
     <${Section} title="Uploads" footer=${record.uploads?.garmin && record.uploads?.strava ? 'If Garmin Connect is linked to Strava, Garmin also forwards this ride there; uploading to both may create a duplicate.' : null}>
       <div class="list">
