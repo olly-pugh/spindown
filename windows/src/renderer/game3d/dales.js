@@ -1,393 +1,716 @@
-// The Yorkshire Dales world: a valley road climbing over a fell, patchwork meadows and pastures divided by
-// dry-stone walls and hawthorn hedges, field barns and gates, woods, Swaledale sheep, a river with a stone
-// packhorse bridge, a tarn, and the village of Thornby with its church, pub, phone box and green. Distant
-// fells ring the horizon.
+// The Yorkshire Dales world: the real Malham loop, built from open data (see scripts/build-dales.mjs).
+//  - Terrain: Environment Agency LIDAR (5 m, then 10 m) near the loop and terrain tiles out to ~7 km, in
+//    square tiles whose detail follows the camera; the road sits in it with cuttings and embankments.
+//  - Ground colour: Sentinel-2 cloudless 2016 imagery (EOX, CC BY 4.0) with close-up detail textures.
+//  - OpenStreetMap: every dry-stone wall, building footprint, wood, single tree, tree row, tarn, beck,
+//    limestone scar, power line and pole, in its real place.
+// Map data © OpenStreetMap contributors (ODbL).
 import * as THREE from 'three';
 import * as C from './common.js';
 import * as T from './textures.js';
 import { RouteField } from '../../core/world/field.js';
-import { fbm, rng, hash2 } from '../../core/world/noise.js';
+import { rng, hash2 } from '../../core/world/noise.js';
+import { nestedTerrain, Raster, terrainMaterial, imageryTexture } from './ground.js';
+import nearImageUrl from './data/dales-near.jpg';
+import farImageUrl from './data/dales-far.jpg';
 
-const ROAD_HALF = 2.9; // tarmac half-width incl. edge lines
+const ROAD_HALF = 2.5; // Malham's lanes are single track: ~5 m of tarmac
+const BED = 14; // half-width of the road bed (verges and the cut or fill slopes) drawn along the road
+const TILE = 640; // terrain tile size (m)
+const LOD_STEPS = [5, 10, 20, 40, 80];
+
 const smoothstep = (a, b, x) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 };
-
-/** Grid lines that are `step` apart between fineMin and fineMax and spread out progressively beyond. */
-function gridAxis(min, max, fineMin, fineMax, step) {
-  const out = [];
-  for (let x = fineMin; x <= fineMax; x += step) out.push(x);
-  let s = step, x = out[out.length - 1];
-  while (x < max) {
-    s = Math.min(s * 1.22, 160);
-    x = Math.min(max, x + s);
-    out.push(x);
+/** Data coords (x east, y north) to world (x, z = −y), flat arrays. */
+const W = (flat) => {
+  const out = new Array(flat.length);
+  for (let i = 0; i < flat.length; i += 2) {
+    out[i] = flat[i];
+    out[i + 1] = -flat[i + 1];
   }
-  s = step;
-  x = fineMin;
-  while (x > min) {
-    s = Math.min(s * 1.22, 160);
-    x = Math.max(min, x - s);
-    out.unshift(x);
+  return out;
+};
+
+// Ground classes in the raster.
+const CLS = { meadow: 1, heath: 2, rock: 3, pavement: 4, scree: 5, wet: 6, scrub: 7, yard: 8, quarry: 9, village: 10, wood: 11, water: 12, grass: 13 };
+
+export function buildDales(route, data, q) {
+  const t0 = performance.now();
+  const group = new THREE.Group();
+  const field = new RouteField(route, { cell: 20, margin: 3000 });
+  const tmp = {};
+  const L = route.length;
+  const r = rng(2024);
+  const levels = ['far', 'mid', 'near'].map((k) => data.terrain[k]).filter(Boolean);
+  const terrain = nestedTerrain(levels, [0, 400, 200]);
+  const dem = terrain.dem;
+  const mid = data.terrain.mid ?? data.terrain.near;
+
+  // ---- Rasters: ground class and water over the detailed area (4 m cells) ----
+  const rx0 = mid.x0, rz0 = -(mid.y0 + (mid.ny - 1) * mid.cell), rx1 = mid.x0 + (mid.nx - 1) * mid.cell, rz1 = -mid.y0;
+  const cls = new Raster(rx0, rz0, rx1, rz1, 4);
+  for (const c of data.cover ?? []) if (CLS[c.c]) cls.fill(W(c.p), CLS[c.c]);
+  for (const w of data.woods ?? []) cls.fill(W(w.p), CLS.wood);
+  for (const c of data.cliffs ?? []) cls.stroke(W(c.p), 5, CLS.rock);
+  const wet = new Raster(rx0, rz0, rx1, rz1, 4);
+  // Lakes and tarns sit flat at their shore level.
+  const lakes = [];
+  for (const w of data.water ?? []) {
+    const ring = W(w.p);
+    if (ring.length < 6) continue;
+    const shore = [];
+    for (let i = 0; i < ring.length; i += 2) shore.push(dem(ring[i], ring[i + 1]));
+    shore.sort((a, b) => a - b);
+    const level = shore[Math.floor(shore.length * 0.15)] - 0.2;
+    if (lakes.length < 250) {
+      lakes.push({ ring, level, name: w.n });
+      wet.fill(ring, lakes.length);
+    }
+  }
+
+  // ---- Height: the DEM, with the road let into it (cuttings and embankments) and lakes kept below water ----
+  const inField = (x, z) => x > field.x0 && z > field.z0 && x < field.x0 + field.nx * field.cell && z < field.z0 + field.nz * field.cell;
+  function heightAt(x, z) {
+    let h = dem(x, z);
+    const lake = wet.get(x, z);
+    if (lake) h = Math.min(h, lakes[lake - 1].level - 0.6);
+    if (inField(x, z)) {
+      field.query(x, z, tmp);
+      const d = tmp.distance;
+      if (d < 70) {
+        const ry = route.elevation(tmp.along) - 0.06;
+        const diff = h - ry;
+        // Batters about 1:1.4, a flat shoulder by the tarmac.
+        const width = Math.min(50, Math.max(3, 1.5 + Math.abs(diff) * 1.4));
+        const t = smoothstep(ROAD_HALF + 0.5, ROAD_HALF + 0.5 + width, d);
+        h = ry + diff * t;
+      }
+    }
+    return h;
+  }
+  group.userData.heightAt = heightAt;
+  const roadDistance = (x, z) => (inField(x, z) ? field.query(x, z, tmp).distance : Infinity);
+
+  // ---- Materials: imagery draped over everything that is ground ----
+  const rectOf = (g) => ({ x0: g.x0, y0: g.y0, x1: g.x1 ?? g.x0 + (g.nx - 1) * g.cell, y1: g.y1 ?? g.y0 + (g.ny - 1) * g.cell });
+  const im = data.imagery ?? {};
+  const wallTex = wallLineTexture(data, im.near ?? rectOf(mid));
+  const ground = terrainMaterial({
+    near: { texture: imageryTexture(nearImageUrl), rect: im.near ?? rectOf(mid) },
+    far: { texture: imageryTexture(farImageUrl), rect: im.far ?? rectOf(data.terrain.far) },
+    walls: { texture: wallTex, rect: im.near ?? rectOf(mid) },
+  }, { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+  const bedMat = ground.clone();
+  bedMat.onBeforeCompile = ground.onBeforeCompile;
+  bedMat.customProgramCacheKey = ground.customProgramCacheKey;
+  bedMat.polygonOffsetFactor = -1;
+  bedMat.polygonOffsetUnits = -1;
+
+  /** Per-vertex ground detail: rock, moor, verge weights from the class raster and the road. */
+  function detailAt(x, z, roadD) {
+    const c = cls.get(x, z);
+    const rock = c === CLS.rock || c === CLS.quarry ? 1 : c === CLS.pavement ? 0.9 : c === CLS.scree ? 0.75 : 0;
+    const moor = c === CLS.heath ? 1 : c === CLS.wet ? 0.8 : c === CLS.scrub ? 0.6 : 0;
+    const verge = roadD < ROAD_HALF + 7 ? 1 - smoothstep(ROAD_HALF + 1, ROAD_HALF + 7, roadD) : 0;
+    return [rock, moor, verge];
+  }
+
+  // ---- Terrain tiles with distance-based detail ----
+  const far = data.terrain.far;
+  const fx0 = Math.ceil(far.x0 / TILE) * TILE, fx1 = Math.floor((far.x0 + (far.nx - 1) * far.cell) / TILE) * TILE;
+  const fz0 = Math.ceil(-(far.y0 + (far.ny - 1) * far.cell) / TILE) * TILE, fz1 = Math.floor(-far.y0 / TILE) * TILE;
+  const tiles = [];
+  const terrainGroup = new THREE.Group();
+  group.add(terrainGroup);
+  const lodScale = q.terrainStep <= 10 ? 1.4 : q.terrainStep >= 16 ? 0.7 : 1;
+  const minLevel = q.terrainStep >= 16 ? 1 : 0;
+  const lodDist = [190, 650, 1500, 3200].map((d) => d * lodScale);
+  for (let tz = fz0; tz < fz1; tz += TILE) {
+    for (let tx = fx0; tx < fx1; tx += TILE) {
+      const cx = tx + TILE / 2, cz = tz + TILE / 2;
+      const rd = roadDistance(cx, cz);
+      tiles.push({ x: tx, z: tz, cx, cz, roadNear: rd < TILE, meshes: [], level: -1 });
+    }
+  }
+
+  function buildTile(tile, level) {
+    const step = LOD_STEPS[level];
+    const n = TILE / step + 1;
+    const N = n + 2; // one extra ring of samples for normals
+    const hs = new Float32Array(N * N);
+    const nearRoad = tile.roadNear;
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        const x = tile.x + (i - 1) * step, z = tile.z + (j - 1) * step;
+        hs[j * N + i] = nearRoad ? heightAt(x, z) : dem(x, z);
+      }
+    }
+    const vcount = n * n + 4 * n;
+    const pos = new Float32Array(vcount * 3), nrm = new Float32Array(vcount * 3), det = new Float32Array(vcount * 3);
+    const sink = Math.min(3, 0.35 + step * 0.04); // keep the mesh under the road bed
+    let v = 0;
+    const put = (x, y, z, i, j) => {
+      const hl = hs[j * N + i - 1], hr = hs[j * N + i + 1], hd = hs[(j - 1) * N + i], hu = hs[(j + 1) * N + i];
+      const nx = hl - hr, nz = hd - hu, ny = 2 * step;
+      const len = Math.hypot(nx, ny, nz);
+      pos[v * 3] = x;
+      pos[v * 3 + 1] = y;
+      pos[v * 3 + 2] = z;
+      nrm[v * 3] = nx / len;
+      nrm[v * 3 + 1] = ny / len;
+      nrm[v * 3 + 2] = nz / len;
+      const rd = nearRoad ? roadDistance(x, z) : Infinity;
+      const d = detailAt(x, z, rd);
+      det[v * 3] = d[0];
+      det[v * 3 + 1] = d[1];
+      det[v * 3 + 2] = d[2];
+      if (rd < BED - step * 0.25) pos[v * 3 + 1] -= sink;
+      v++;
+    };
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) put(tile.x + i * step, hs[(j + 1) * N + i + 1], tile.z + j * step, i + 1, j + 1);
+    // Skirts hanging down from the four edges hide cracks against coarser neighbours.
+    const drop = 1.5 + step * 0.35;
+    const edges = [];
+    for (const [i0, j0, di, dj] of [[0, 0, 1, 0], [n - 1, 0, 0, 1], [n - 1, n - 1, -1, 0], [0, n - 1, 0, -1]]) {
+      const e = [];
+      for (let k = 0; k < n; k++) {
+        const i = i0 + di * k, j = j0 + dj * k;
+        e.push([j * n + i, v]);
+        put(tile.x + i * step, hs[(j + 1) * N + i + 1] - drop, tile.z + j * step, i + 1, j + 1);
+      }
+      edges.push(e);
+    }
+    const idx = [];
+    for (let j = 0; j < n - 1; j++) {
+      for (let i = 0; i < n - 1; i++) {
+        const a = j * n + i, b = a + 1, c = a + n, d = c + 1;
+        idx.push(a, c, b, b, c, d);
+      }
+    }
+    for (const e of edges) {
+      for (let k = 0; k + 1 < e.length; k++) {
+        const [a, a2] = e[k], [b, b2] = e[k + 1];
+        idx.push(a, b, a2, b, b2, a2, a, a2, b, b, a2, b2); // both windings: a skirt is seen from either side
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+    g.setAttribute('detail', new THREE.BufferAttribute(det, 3));
+    g.setIndex(idx);
+    g.computeBoundingSphere();
+    const mesh = new THREE.Mesh(g, ground);
+    mesh.receiveShadow = true;
+    mesh.visible = false;
+    terrainGroup.add(mesh);
+    tile.meshes[level] = mesh;
+    return mesh;
+  }
+
+  // Every tile at the coarsest detail up front (the horizon), finer ones as the camera comes near.
+  for (const t of tiles) buildTile(t, 3);
+  let lastCam = null;
+  function updateTerrain(camera, budget = 3) {
+    if (!camera) return;
+    const cx = camera.position.x, cz = camera.position.z;
+    lastCam = { x: cx, z: cz };
+    const work = [];
+    for (const t of tiles) {
+      const dx = Math.max(0, Math.abs(cx - t.cx) - TILE / 2), dz = Math.max(0, Math.abs(cz - t.cz) - TILE / 2);
+      const d = Math.hypot(dx, dz);
+      let want = 4;
+      for (let k = 0; k < lodDist.length; k++) if (d < lodDist[k]) { want = k; break; }
+      want = Math.max(minLevel, want === 4 ? 3 : want); // level 4 (80 m) is not needed: level 3 is cheap
+      t.want = want;
+      t.d = d;
+      if (!t.meshes[want]) work.push(t);
+    }
+    work.sort((a, b) => a.d - b.d);
+    for (const t of work.slice(0, budget)) buildTile(t, t.want);
+    for (const t of tiles) {
+      // Show the wanted level if built, else the finest built level coarser than... any built level.
+      let show = t.meshes[t.want] ? t.want : -1;
+      if (show < 0) for (let k = t.want + 1; k < LOD_STEPS.length && show < 0; k++) if (t.meshes[k]) show = k;
+      if (show < 0) for (let k = t.want - 1; k >= 0 && show < 0; k--) if (t.meshes[k]) show = k;
+      t.meshes.forEach((m, k) => {
+        if (!m) return;
+        m.visible = k === show;
+        // Free fine meshes well out of range.
+        if (k < 3 && k !== show && t.d > lodDist[k] * 1.8 + 200) {
+          terrainGroup.remove(m);
+          m.geometry.dispose();
+          t.meshes[k] = undefined;
+        }
+      });
+    }
+  }
+
+  // ---- Road bed: verges and cut/fill slopes either side of the tarmac, in the ground material ----
+  {
+    const offs = [-BED, -10, -7, -4.8, -(ROAD_HALF + 1.2), -(ROAD_HALF - 0.3), ROAD_HALF - 0.3, ROAD_HALF + 1.2, 4.8, 7, 10, BED];
+    const chunk = 300;
+    const p = {};
+    for (let from = 0; from < L; from += chunk) {
+      const to = Math.min(L, from + chunk);
+      const pos = [], det = [], idx = [];
+      let rows = 0;
+      for (let d = from; d <= to + 0.01; d += 2, rows++) {
+        route.position(d, 0, p);
+        const ch = Math.cos(p.heading), sh = Math.sin(p.heading);
+        for (const o of offs) {
+          const x = p.x + ch * o, z = p.z + sh * o;
+          const inner = Math.abs(o) < ROAD_HALF;
+          pos.push(x, inner ? p.y - 0.06 : heightAt(x, z), z);
+          const dd = detailAt(x, z, Math.abs(o));
+          det.push(dd[0] * smoothstep(5, 10, Math.abs(o)), dd[1] * smoothstep(5, 10, Math.abs(o)), dd[2]);
+        }
+        if (rows > 0) {
+          const k = offs.length, a0 = (rows - 1) * k, b0 = rows * k;
+          for (let i = 0; i < k - 1; i++) idx.push(a0 + i, a0 + i + 1, b0 + i, a0 + i + 1, b0 + i + 1, b0 + i);
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('detail', new THREE.Float32BufferAttribute(det, 3));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      const m = new THREE.Mesh(g, bedMat);
+      m.receiveShadow = true;
+      group.add(m);
+    }
+  }
+  const road = new THREE.Mesh(C.ribbon(route, { left: -ROAD_HALF, right: ROAD_HALF, lift: 0.04, uvLength: 9 }), C.roadMaterial({ centreLine: false, edgeLines: false, tone: '#6b6a66' }));
+  road.receiveShadow = true;
+  group.add(road);
+
+  // ---- Water: tarns and ponds flat at their shore level, becks as ribbons following the ground ----
+  const waterNormal = T.waterNormalTexture();
+  const waterMat = new THREE.MeshStandardMaterial({ color: '#3d5560', roughness: 0.06, metalness: 0.1, normalMap: waterNormal, normalScale: new THREE.Vector2(0.25, 0.25), envMapIntensity: 1.0 });
+  {
+    const parts = [];
+    for (const lk of lakes) {
+      const contour = [];
+      for (let i = 0; i < lk.ring.length; i += 2) contour.push(new THREE.Vector2(lk.ring[i], lk.ring[i + 1]));
+      if (contour.length < 3) continue;
+      const tris = THREE.ShapeUtils.triangulateShape(contour, []);
+      const pos = [], uv = [];
+      for (const t of tris) {
+        const [a, b, c] = t.map((k) => contour[k]);
+        const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+        for (const pnt of cross > 0 ? [a, c, b] : [a, b, c]) {
+          pos.push(pnt.x, lk.level, pnt.y);
+          uv.push(pnt.x / 14, pnt.y / 14);
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.computeVertexNormals();
+      parts.push(g);
+    }
+    const streamParts = [];
+    for (const s of data.streams ?? []) {
+      const pts = densify(W(s.p), 4);
+      // Only becks that can be seen from the road.
+      let near = false;
+      for (let i = 0; i < pts.length && !near; i += 8) near = roadDistance(pts[i], pts[i + 1]) < 900;
+      if (!near) continue;
+      const half = Math.max(0.6, s.w / 2);
+      const pos = [], uv = [], idx = [];
+      let along = 0;
+      for (let i = 0; i < pts.length; i += 2) {
+        const pi = Math.max(0, i - 2), ni = Math.min(pts.length - 2, i + 2);
+        let dx = pts[ni] - pts[pi], dz = pts[ni + 1] - pts[pi + 1];
+        const len = Math.hypot(dx, dz) || 1;
+        dx /= len;
+        dz /= len;
+        if (i > 0) along += Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
+        for (const o of [-half, half]) {
+          const x = pts[i] - dz * o, z = pts[i + 1] + dx * o;
+          pos.push(x, heightAt(x, z) + 0.2, z);
+          uv.push(o / 4, along / 4);
+        }
+        if (i > 0) {
+          const a = i - 2, b = i;
+          idx.push(a, a + 1, b, a + 1, b + 1, b);
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      streamParts.push(g);
+    }
+    if (parts.length) {
+      const lakesMesh = new THREE.Mesh(C.mergeAll(parts), waterMat);
+      lakesMesh.receiveShadow = true;
+      group.add(lakesMesh);
+    }
+    if (streamParts.length) {
+      // Becks: peaty, shallow and stony, darker and less mirror-like than the tarn.
+      const sm = new THREE.MeshStandardMaterial({ color: '#39423c', roughness: 0.35, metalness: 0, normalMap: waterNormal, normalScale: new THREE.Vector2(0.4, 0.4), polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+      group.add(new THREE.Mesh(C.mergeAll(streamParts), sm));
+    }
+  }
+
+  // ---- Dry-stone walls: every OSM wall near the loop, following the ground ----
+  const sceneryR = q.sceneryRadius;
+  const wallR = sceneryR * 1.9;
+  {
+    const segs = [];
+    const hedgeSegs = [];
+    const add = (list, flatPts, out, maxR) => {
+      for (const w of list) {
+        const pts = densify(W(w), 4);
+        let prev = null;
+        for (let i = 0; i < pts.length; i += 2) {
+          const x = pts[i], z = pts[i + 1];
+          const rd = roadDistance(x, z);
+          if (rd < ROAD_HALF + 0.5 || rd > maxR) {
+            prev = null;
+            continue;
+          }
+          const cur = { x, z, y: heightAt(x, z) };
+          if (prev) out.push({ x1: prev.x, z1: prev.z, y1: prev.y, x2: cur.x, z2: cur.z, y2: cur.y });
+          prev = cur;
+        }
+      }
+      void flatPts;
+    };
+    add(data.walls ?? [], true, segs, wallR);
+    add(data.hedges ?? [], true, hedgeSegs, wallR);
+    group.add(C.linear(segs, 'wall', { shadows: q.shadows, maxDistance: Math.max(700, wallR * 0.9) }));
+    if (hedgeSegs.length) group.add(C.linear(hedgeSegs, 'hedge', { shadows: q.shadows }));
+    group.userData.wallSegments = segs.length;
+  }
+
+  // ---- Buildings: every OSM footprint near the loop, as stone cottages and field barns ----
+  const houses = placeBuildings(data, heightAt, roadDistance, q, sceneryR * 3);
+  group.add(houses);
+  group.userData.buildings = houses.userData.count;
+
+  // ---- Trees: OSM woods (filled), tree rows and single trees, nearest the road first ----
+  {
+    const spots = [];
+    const tryAdd = (x, z, kind, s, pri) => {
+      const rd = roadDistance(x, z);
+      if (rd < ROAD_HALF + 4) return;
+      if (wet.get(x, z)) return;
+      spots.push({ x, z, kind, s, pri: rd + pri });
+    };
+    for (let i = 0; i < (data.trees ?? []).length; i += 2) tryAdd(data.trees[i], -data.trees[i + 1], 'broad', 0.9 + r() * 0.5, -200);
+    for (const row of data.treeRows ?? []) {
+      const pts = densify(W(row), 7);
+      for (let i = 0; i < pts.length; i += 2) tryAdd(pts[i] + (r() - 0.5) * 2, pts[i + 1] + (r() - 0.5) * 2, 'broad', 0.8 + r() * 0.5, -100);
+    }
+    for (const w of data.woods ?? []) {
+      const ring = W(w.p);
+      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      for (let i = 0; i < ring.length; i += 2) {
+        minX = Math.min(minX, ring[i]);
+        maxX = Math.max(maxX, ring[i]);
+        minZ = Math.min(minZ, ring[i + 1]);
+        maxZ = Math.max(maxZ, ring[i + 1]);
+      }
+      const centreD = roadDistance((minX + maxX) / 2, (minZ + maxZ) / 2);
+      if (centreD > 2600) continue;
+      const spacing = centreD < 500 ? 7.5 : centreD < 1200 ? 10 : 14;
+      for (let z = minZ + spacing / 2; z < maxZ; z += spacing) {
+        for (let x = minX + spacing / 2; x < maxX; x += spacing) {
+          const px = x + (r() - 0.5) * spacing * 0.9, pz = z + (r() - 0.5) * spacing * 0.9;
+          if (!pointInRing(px, pz, ring)) continue;
+          const conifer = w.t === 'conifer' || (w.t === 'mixed' && r() < 0.55);
+          tryAdd(px, pz, conifer ? 'conifer' : 'broad', (conifer ? 1.0 : 0.95) + r() * 0.45, 0);
+        }
+      }
+    }
+    spots.sort((a, b) => a.pri - b.pri);
+    const cap = Math.round(q.maxTrees * 1.6);
+    const placements = spots.slice(0, cap).map((s) => ({ x: s.x, z: s.z, y: heightAt(s.x, s.z), kind: s.kind, s: s.s, rot: r() * 6.28, hue: r() - 0.5, sx: 0.85 + r() * 0.3, sy: 0.85 + r() * 0.35 }));
+    group.add(C.trees(placements, { shadows: q.shadows, maxDistance: 2600 }));
+    group.userData.trees = placements.length;
+  }
+
+  // ---- Power: wooden pole lines (11 kV / 33 kV) with sagging wires; steel towers where mapped ----
+  const power = powerLines(data, heightAt, roadDistance, q);
+  group.add(power);
+
+  // ---- Sheep in the fields near the road ----
+  {
+    const sheep = [];
+    const want = Math.round(900 * q.treeDensity);
+    for (let f = 0; f < 400 && sheep.length < want; f++) {
+      const at = r() * L;
+      const p = route.position(at, (r() < 0.5 ? -1 : 1) * (14 + r() * 320));
+      const c = cls.get(p.x, p.z);
+      if (![0, CLS.meadow, CLS.grass, CLS.heath].includes(c) || wet.get(p.x, p.z)) continue;
+      const n = 5 + Math.floor(r() * 14);
+      for (let k = 0; k < n; k++) {
+        const x = p.x + (r() - 0.5) * 45, z = p.z + (r() - 0.5) * 45;
+        const ck = cls.get(x, z);
+        if (![0, CLS.meadow, CLS.grass, CLS.heath].includes(ck) || roadDistance(x, z) < ROAD_HALF + 5) continue;
+        sheep.push({ x, z, y: heightAt(x, z), rot: r() * 6.28, s: r() < 0.2 ? 0.55 + r() * 0.1 : 0.9 + r() * 0.25 });
+      }
+    }
+    group.add(sheepMesh(sheep));
+  }
+
+  // ---- Spectators: the steep ramps of Cove Road and the start in the village ----
+  {
+    const pts = [];
+    const kom = route.segments.find((s) => s.id === 'cove');
+    const add = (from, to, every) => {
+      for (let d = from; d < to; d += every) {
+        for (const s of [-1, 1]) {
+          if (r() < 0.45) continue;
+          const p = route.position(d + r() * every, s * (ROAD_HALF + 0.7 + r() * 0.8));
+          pts.push({ x: p.x, y: heightAt(p.x, p.z), z: p.z, rot: -p.heading + (s > 0 ? Math.PI / 2 : -Math.PI / 2) + (r() - 0.5) * 0.8 });
+        }
+      }
+    };
+    if (kom) add(kom.to - 450, kom.to + 30, 6);
+    add(L - 120, L, 5);
+    add(0, 60, 5);
+    group.add(C.spectators(pts));
+  }
+
+  // ---- Start/finish arch and zone banners ----
+  group.add(C.arch(route, 0, 'SPINDOWN · MALHAM', { width: 2 * ROAD_HALF + 1.6 }));
+  for (const s of route.zones) {
+    group.add(C.arch(route, s.from, s.kind === 'kom' ? `▲ ${s.name.toUpperCase()}` : `⚡ ${s.name.toUpperCase()}`, { width: 2 * ROAD_HALF + 1.6, colour: s.kind === 'kom' ? '#b3261e' : '#0a6cc2' }));
+    group.add(C.arch(route, s.to, 'FINISH ▸', { width: 2 * ROAD_HALF + 1.6, colour: '#333' }));
+  }
+
+  // Warm the terrain detail around the start so the first frame is sharp.
+  const start = route.position(0);
+  updateTerrain({ position: new THREE.Vector3(start.x, start.y, start.z) }, 1e9);
+
+  const update = (t, camera) => {
+    waterNormal.offset.set(t * 0.03, t * 0.012);
+    updateTerrain(camera);
+    // Wires are a pixel wide at any distance, so only draw the ones near enough to really see.
+    if (camera) for (const w of power.userData.wires) w.visible = camera.position.distanceTo(w.geometry.boundingSphere.center) - w.geometry.boundingSphere.radius < 450;
+  };
+  /** Atmosphere for real hills: haze that thickens with distance instead of a wall of fog. */
+  const atmosphere = (view) => {
+    const fog = view.scene.fog;
+    if (!fog) return;
+    const thick = fog.far < view.q.fogFar * 0.8; // overcast or rain
+    fog.near = thick ? fog.near : Math.max(fog.near, 350);
+    fog.far = thick ? fog.far * 1.6 : Math.max(fog.far * 2.4, 6200);
+    view.camera.far = Math.max(view.camera.far, Math.min(9000, fog.far * 1.15));
+    view.camera.updateProjectionMatrix();
+    view.sky.scale.setScalar(view.camera.far * 0.9);
+  };
+  const ms = Math.round(performance.now() - t0);
+  console.log(`[world] Malham built in ${ms} ms: ${tiles.length} terrain tiles, ${group.userData.wallSegments} wall segments, ${group.userData.trees} trees, ${group.userData.buildings} buildings`);
+  return { group, heightAt, roadHalf: ROAD_HALF, update, atmosphere, buildingCount: group.userData.buildings, buildMs: ms, debug: { tiles, lastCam: () => lastCam } };
+}
+
+// ---- Helpers ---------------------------------------------------------------------------------------------
+
+/** Adds points so no segment of a flat [x, z, ...] polyline is longer than `step`. */
+function densify(pts, step) {
+  const out = [pts[0], pts[1]];
+  for (let i = 2; i < pts.length; i += 2) {
+    const ax = pts[i - 2], az = pts[i - 1], bx = pts[i], bz = pts[i + 1];
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / step));
+    for (let k = 1; k <= n; k++) out.push(ax + ((bx - ax) * k) / n, az + ((bz - az) * k) / n);
   }
   return out;
 }
 
-/** A box whose side faces carry a wall texture at `per` metres per repeat. */
-function stoneBox(w, h, d, per = 4) {
-  const g = new THREE.BoxGeometry(w, h, d);
-  const uv = g.attributes.uv;
-  const sizes = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
-  for (let f = 0; f < 6; f++) for (let k = 0; k < 4; k++) uv.setXY(f * 4 + k, (uv.getX(f * 4 + k) * sizes[f][0]) / per, (uv.getY(f * 4 + k) * sizes[f][1]) / per);
+function pointInRing(x, z, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 2; i < ring.length; j = i, i += 2) {
+    const xi = ring[i], zi = ring[i + 1], xj = ring[j], zj = ring[j + 1];
+    if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** Principal-axis rectangle of a footprint ring (flat world [x, z, ...]): centre, long axis, sizes. */
+function orientedRect(ring) {
+  const n = ring.length / 2;
+  let mx = 0, mz = 0;
+  for (let i = 0; i < ring.length; i += 2) {
+    mx += ring[i];
+    mz += ring[i + 1];
+  }
+  mx /= n;
+  mz /= n;
+  // Longest edge direction is the most reliable axis for small, nearly rectangular buildings.
+  let best = 0, ux = 1, uz = 0;
+  for (let i = 0; i < ring.length; i += 2) {
+    const j = (i + 2) % ring.length;
+    const dx = ring[j] - ring[i], dz = ring[j + 1] - ring[i + 1];
+    const len = Math.hypot(dx, dz);
+    if (len > best) [best, ux, uz] = [len, dx / len, dz / len];
+  }
+  const vx = -uz, vz = ux;
+  let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+  for (let i = 0; i < ring.length; i += 2) {
+    const dx = ring[i] - mx, dz = ring[i + 1] - mz;
+    const a = dx * ux + dz * uz, b = dx * vx + dz * vz;
+    a0 = Math.min(a0, a);
+    a1 = Math.max(a1, a);
+    b0 = Math.min(b0, b);
+    b1 = Math.max(b1, b);
+  }
+  const ca = (a0 + a1) / 2, cb = (b0 + b1) / 2;
+  const la = a1 - a0, lb = b1 - b0;
+  const along = la >= lb;
+  return { cx: mx + ux * ca + vx * cb, cz: mz + uz * ca + vz * cb, ax: along ? ux : vx, az: along ? uz : vz, long: Math.max(la, lb), short: Math.min(la, lb) };
+}
+
+/**
+ * OSM building footprints near the road, given to the shared building builder as oriented rectangles (the
+ * real ring is passed along as `footprint`). Houses in Malham are limestone and gritstone under stone-flag or
+ * slate roofs; field barns ("laithes") are rubble stone with stone roofs.
+ */
+function placeBuildings(data, heightAt, roadDistance, q, radius) {
+  const items = [];
+  const stones = ['#f3efe6', '#e9e4d8', '#f7f3ea', '#dedad0', '#ece6da'];
+  for (const b of data.buildings ?? []) {
+    if (b.k === 'ruin') continue;
+    const ring = W(b.p);
+    if (ring.length < 6) continue;
+    const o = orientedRect(ring);
+    if (o.short < 2.2) continue;
+    const rd = roadDistance(o.cx, o.cz);
+    if (rd > radius || rd < ROAD_HALF + 0.8) continue;
+    // Base: down to the lowest corner (the walls reach 0.6 m below it), so nothing floats on a slope.
+    const hs = [];
+    for (let i = 0; i < ring.length; i += 2) hs.push(heightAt(ring[i], ring[i + 1]));
+    hs.push(heightAt(o.cx, o.cz));
+    const lo = Math.min(...hs), hi = Math.max(...hs);
+    const barn = b.k === 'barn';
+    const hsh = hash2(Math.round(o.cx), Math.round(o.cz), 7);
+    items.push({
+      x: o.cx, y: lo + Math.min(0.5, (hi - lo) * 0.3), z: o.cz,
+      rot: Math.atan2(-o.ax, -o.az),
+      w: o.long, d: Math.min(o.short, 14), h: Math.max(barn ? 4.2 : 5, b.h ?? 5.8) + (hi - lo) * 0.3,
+      kind: barn ? 'barn' : b.k === 'chapel' ? 'cottage' : 'cottage',
+      roof: barn || hsh < 0.55 ? 'stone' : 'slate',
+      chimney: !barn,
+      storey: barn ? 5.5 : 2.8,
+      tint: stones[Math.floor(hsh * stones.length)],
+      gableTint: '#e9e3d6',
+      footprint: ring,
+      name: b.n,
+    });
+  }
+  const g = C.buildings(items, { shadows: q.shadows });
+  g.userData.count = items.length;
   return g;
 }
 
-export function buildDales(route, q) {
+/** Wooden poles (and lattice towers) along the OSM power lines, with three sagging conductors. */
+function powerLines(data, heightAt, roadDistance, q) {
   const group = new THREE.Group();
-  const field = new RouteField(route, { cell: 20, margin: 2400 });
-  const course = route.course;
-  const L = route.length;
-  const tmp = {};
-
-  // ---- River: out of a tarn inside the loop, under Thorn Bridge, away down the dale ----
-  const bridgeAt = course.river.at;
-  const bp = route.position(bridgeAt);
-  const across = bp.heading + Math.PI / 2; // perpendicular to the road
-  const dirX = Math.sin(across), dirZ = -Math.cos(across);
-  // Which way is outward (away from the loop centre)?
-  const outward = bp.x * dirX + bp.z * dirZ > 0 ? 1 : -1;
-  const river = [];
-  for (let t = -420; t <= 2600; t += 12) {
-    const s = t * outward;
-    const wiggle = Math.sin(t / 170) * 38 * smoothstep(40, 300, Math.abs(t)) + Math.sin(t / 61) * 7 * smoothstep(20, 120, Math.abs(t));
-    river.push(bp.x + dirX * s + Math.cos(across) * wiggle, bp.z + dirZ * s + Math.sin(across) * wiggle);
-  }
-  const tarn = { x: river[0], z: river[1], r: 95 };
-  const waterLevel = route.elevation(bridgeAt) - 3.6;
-  const riverDistance = (x, z) => {
-    let best = Infinity;
-    for (let i = 0; i < river.length - 2; i += 2) {
-      const ax = river[i], az = river[i + 1], bx = river[i + 2], bz = river[i + 3];
-      const vx = bx - ax, vz = bz - az;
-      const t = Math.max(0, Math.min(1, ((x - ax) * vx + (z - az) * vz) / (vx * vx + vz * vz)));
-      const d = (x - ax - vx * t) ** 2 + (z - az - vz * t) ** 2;
-      if (d < best) best = d;
-    }
-    return Math.sqrt(best);
-  };
-  // Coarse river-distance grid for speed.
-  const rCell = 12, rx0 = bp.x - 3200, rz0 = bp.z - 3200, rn = Math.ceil(6400 / rCell);
-  const rGrid = new Float32Array(rn * rn);
-  for (let j = 0; j < rn; j++) {
-    for (let i = 0; i < rn; i++) {
-      const x = rx0 + i * rCell, z = rz0 + j * rCell;
-      // Cheap reject far from the river's bounding corridor.
-      rGrid[j * rn + i] = riverDistanceFast(x, z);
-    }
-  }
-  function riverDistanceFast(x, z) {
-    const dx = x - bp.x, dz = z - bp.z;
-    const along = dx * dirX * outward + dz * dirZ * outward;
-    if (along < -560 || along > 2700) return 999;
-    const side = Math.abs(dx * Math.cos(across) + dz * Math.sin(across));
-    if (side > 140) return 999;
-    return riverDistance(x, z);
-  }
-  const riverAt = (x, z) => {
-    const fx = (x - rx0) / rCell, fz = (z - rz0) / rCell;
-    const i = Math.floor(fx), j = Math.floor(fz);
-    if (i < 0 || j < 0 || i >= rn - 1 || j >= rn - 1) return 999;
-    const a = rGrid[j * rn + i], b = rGrid[j * rn + i + 1], c = rGrid[(j + 1) * rn + i], d = rGrid[(j + 1) * rn + i + 1];
-    const u = fx - i, v = fz - j;
-    return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
-  };
-
-  // ---- Terrain height ----
-  const village = (along) => {
-    const from = course.village.from, to = course.village.to;
-    return along >= from || along <= to;
-  };
-  function heightAt(x, z) {
-    field.query(x, z, tmp);
-    const roadY = route.elevation(tmp.along);
-    const dist = tmp.distance;
-    const near = smoothstep(ROAD_HALF + 3, 70, dist);
-    const far = smoothstep(60, 700, dist);
-    let h = roadY - 0.35
-      + near * ((fbm(x / 130, z / 130, 3, 11) - 0.5) * 9 + 1.5)
-      + far * ((fbm(x / 520, z / 520, 4, 12) - 0.4) * 120)
-      + smoothstep(900, 2400, dist) * 140 * fbm(x / 900, z / 900, 3, 13);
-    // River channel and tarn.
-    const rd = riverAt(x, z);
-    const td = Math.hypot(x - tarn.x, z - tarn.z);
-    const channel = Math.min(rd - 5, td - tarn.r);
-    if (channel < 40) {
-      const bed = waterLevel - 1.6;
-      const k = smoothstep(0, 40, channel);
-      h = Math.min(h, bed + k * (h - bed));
-      if (channel < 0) h = bed;
-    }
-    // Keep the road itself clear (the bridge spans the channel).
-    if (dist < ROAD_HALF + 2 && Math.abs(tmp.along - bridgeAt) > 14) h = Math.min(h, roadY - 0.3);
-    return h;
-  }
-  group.userData.heightAt = heightAt;
-
-  // ---- Terrain mesh: a fine grid around the loop that coarsens towards the horizon ----
-  const b = route.bounds();
-  const ext = 2300, fine = 380;
-  const step = q.terrainStep;
-  const xs = gridAxis(b.minX - ext, b.maxX + ext, b.minX - fine, b.maxX + fine, step);
-  const zs = gridAxis(b.minZ - ext, b.maxZ + ext, b.minZ - fine, b.maxZ + fine, step);
-  const nx = xs.length, nz = zs.length;
-  const pos = new Float32Array(nx * nz * 3), col = new Float32Array(nx * nz * 3), uv = new Float32Array(nx * nz * 2);
-  const c = new THREE.Color();
-  // Meadows, pastures and a few fields cut for hay: lush layered greens.
-  const pal = ['#86b04f', '#93b958', '#6f9c40', '#a3c15f', '#c4cf74', '#7ba648', '#8eb252', '#a9c463', '#66943c', '#b7c868', '#d2d27e', '#7fae58'].map((x) => C.colour(x));
-  const moor = C.colour('#9a8a5c'), heather = C.colour('#7c5a72'), bank = C.colour('#5f8040'), bracken = C.colour('#8a7a44'), lush = C.colour('#6f9c42');
-  const fieldCell = 150, ang = 0.35, ca = Math.cos(ang), sa = Math.sin(ang);
-  for (let j = 0; j < nz; j++) {
-    for (let i = 0; i < nx; i++) {
-      const x = xs[i], z = zs[j];
+  const poles = [], towers = [];
+  const wires = new Map(); // 400 m cells of conductor segments, shown only near the camera
+  const R = 2400;
+  for (const line of data.power ?? []) {
+    const pts = W(line.p);
+    const steel = line.k === 'line';
+    const tops = [];
+    for (let i = 0; i < pts.length; i += 2) {
+      const x = pts[i], z = pts[i + 1];
+      const pi = Math.max(0, i - 2), ni = Math.min(pts.length - 2, i + 2);
+      const heading = Math.atan2(pts[ni] - pts[pi], pts[ni + 1] - pts[pi + 1]);
+      const near = roadDistance(x, z) < R;
       const y = heightAt(x, z);
-      const k = j * nx + i;
-      pos[k * 3] = x;
-      pos[k * 3 + 1] = y;
-      pos[k * 3 + 2] = z;
-      uv[k * 2] = x / 7;
-      uv[k * 2 + 1] = z / 7;
-      // Patchwork fields: tint by field cell; rough moorland higher up; darker and lusher near water.
-      const u = (x * ca + z * sa) / fieldCell, v = (-x * sa + z * ca) / (fieldCell * 0.8);
-      c.copy(pal[Math.floor(hash2(Math.floor(u), Math.floor(v), 5) * pal.length)]);
-      c.lerp(lush, 0.35 * fbm(x / 60, z / 60, 2, 21));
-      const high = smoothstep(200, 250, y + 14 * (fbm(x / 90, z / 90, 2, 3) - 0.5));
-      c.lerp(moor, high * 0.85).lerp(bracken, high * 0.5 * fbm(x / 55, z / 55, 2, 7)).lerp(heather, high * 0.55 * smoothstep(0.45, 0.7, fbm(x / 70, z / 70, 3, 9)));
-      const wet = 1 - smoothstep(0, 25, Math.min(riverAt(x, z) - 5, Math.hypot(x - tarn.x, z - tarn.z) - tarn.r));
-      c.lerp(bank, wet * 0.7);
-      const jitter = 0.92 + 0.16 * fbm(x / 9, z / 9, 2, 4);
-      col[k * 3] = c.r * jitter;
-      col[k * 3 + 1] = c.g * jitter;
-      col[k * 3 + 2] = c.b * jitter;
+      const h = steel ? 26 : 8.6;
+      tops.push({ x, y: y + h, z, heading, near });
+      if (!near) continue;
+      (steel ? towers : poles).push({ x, y, z, rot: heading });
     }
-  }
-  const index = new Uint32Array((nx - 1) * (nz - 1) * 6);
-  let ii = 0;
-  for (let j = 0; j < nz - 1; j++) {
-    for (let i = 0; i < nx - 1; i++) {
-      const a = j * nx + i, b2 = a + 1, cc = a + nx, d = cc + 1;
-      index[ii++] = a;
-      index[ii++] = cc;
-      index[ii++] = b2;
-      index[ii++] = b2;
-      index[ii++] = cc;
-      index[ii++] = d;
-    }
-  }
-  const tg = new THREE.BufferGeometry();
-  tg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  tg.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  tg.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  tg.setIndex(new THREE.BufferAttribute(index, 1));
-  tg.computeVertexNormals();
-  // The vertex colours already carry the green; the texture (drawn green) is lightened so it adds grain, not hue.
-  const terrain = new THREE.Mesh(tg, C.groundMaterial({ map: T.grassTexture('pale'), vertexColors: true, roughness: 0.97, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2 }));
-  terrain.receiveShadow = true;
-  group.add(terrain);
-
-  // ---- Road, verges and the bridge ----
-  const road = new THREE.Mesh(C.ribbon(route, { left: -ROAD_HALF, right: ROAD_HALF, lift: 0.04, uvLength: 9 }), C.roadMaterial({ centreLine: true }));
-  road.receiveShadow = true;
-  group.add(road);
-  const vergeMat = C.groundMaterial({ map: T.grassTexture('pale'), color: '#86ad50', roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
-  const verges = [];
-  for (const [l, r] of [[-ROAD_HALF - 2.0, -ROAD_HALF + 0.05], [ROAD_HALF - 0.05, ROAD_HALF + 2.0]]) {
-    verges.push(C.ribbon(route, { left: l, right: r, lift: 0.0, uvLength: 7, uvAcross: 0.3, heightAt: (x, z, d) => Math.max(route.elevation(d) - 0.12, Math.min(route.elevation(d) + 0.25, heightAt(x, z) + 0.04)) }));
-  }
-  const verge = new THREE.Mesh(C.mergeAll(verges), vergeMat);
-  verge.receiveShadow = true;
-  group.add(verge);
-
-  // Thorn Bridge: a humped stone bridge with a single arch and low parapets.
-  const stone = new THREE.MeshStandardMaterial({ map: T.stoneWallTexture({ tone: 'rubble' }), roughness: 0.95, side: THREE.DoubleSide });
-  {
-    const parts = [];
-    for (const s of [-1, 1]) {
-      const o = s * (ROAD_HALF + 0.35);
-      parts.push(C.routeWall(route, { lateral: o - 0.22, from: bridgeAt - 17, to: bridgeAt + 17, step: 1, bottom: (d, y) => y - 0.2, top: (d, y) => y + 0.95, uvLength: 4, uvHeight: 4 }));
-      parts.push(C.routeWall(route, { lateral: o + 0.22, from: bridgeAt - 17, to: bridgeAt + 17, step: 1, bottom: (d, y) => y - 0.6, top: (d, y) => y + 0.95, uvLength: 4, uvHeight: 4 }));
-      parts.push(C.ribbon(route, { left: o - 0.26, right: o + 0.26, lift: 0.95, from: bridgeAt - 17, to: bridgeAt + 17, step: 1, uvLength: 4, uvAcross: 0.12 }));
-    }
-    // The body: a slab across the channel with a round arch through it.
-    const span = 30, depth = 2 * ROAD_HALF + 1.2, tall = bp.y - (waterLevel - 2);
-    const shape = new THREE.Shape();
-    shape.moveTo(-span / 2, 0);
-    shape.lineTo(-span / 2, tall - 0.15);
-    shape.lineTo(span / 2, tall - 0.15);
-    shape.lineTo(span / 2, 0);
-    shape.lineTo(4.6, 0);
-    shape.absarc(0, 1.9, 4.6, 0, Math.PI, false);
-    shape.lineTo(-span / 2, 0);
-    const body = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, curveSegments: 16 }).translate(0, 0, -depth / 2);
-    const buv = body.attributes.uv;
-    for (let i = 0; i < buv.count; i++) buv.setXY(i, buv.getX(i) / 4, buv.getY(i) / 4);
-    // The extrusion's x runs along the road, its z across it.
-    body.rotateY(Math.PI / 2 - bp.heading);
-    body.translate(bp.x, waterLevel - 2, bp.z);
-    parts.push(body);
-    const bridge = new THREE.Mesh(C.mergeAll(parts), stone);
-    bridge.castShadow = q.shadows;
-    bridge.receiveShadow = true;
-    group.add(bridge);
-  }
-
-  // ---- Water: the river ribbon and the tarn ----
-  const waterNormal = T.waterNormalTexture();
-  const waterMat = new THREE.MeshStandardMaterial({ color: '#4f7078', roughness: 0.07, metalness: 0.1, normalMap: waterNormal, normalScale: new THREE.Vector2(0.2, 0.2), envMapIntensity: 1.1 });
-  const riverGeo = C.polylineRibbon(river, 13, waterLevel, 12);
-  const tarnGeo = new THREE.CircleGeometry(tarn.r + 6, 48).rotateX(-Math.PI / 2).translate(tarn.x, waterLevel + 0.01, tarn.z);
-  {
-    const tuv = tarnGeo.attributes.uv, tp = tarnGeo.attributes.position;
-    for (let i = 0; i < tuv.count; i++) tuv.setXY(i, tp.getX(i) / 12, tp.getZ(i) / 12);
-  }
-  const water = new THREE.Mesh(C.mergeAll([riverGeo, tarnGeo]), waterMat);
-  water.receiveShadow = true;
-  group.add(water);
-
-  // ---- Walls and hedges: along the road and across the fields ----
-  const r = rng(2024);
-  const roadWalls = [], fieldWalls = [], hedges = [], gates = [];
-  const roadside = (s) => {
-    let prev = null;
-    const at = (d) => {
-      const p = route.position(d, s * (ROAD_HALF + 2.4));
-      return { x: p.x, z: p.z, y: heightAt(p.x, p.z), heading: p.heading };
-    };
-    for (let d = 0; d < L; d += 5) {
-      const inVillage = village(d) || Math.abs(d - bridgeAt) < 24;
-      if (inVillage) {
-        prev = null;
-        continue;
-      }
-      const list = route.elevation(d) > 190 || hash2(Math.floor(d / 400), s, 8) < 0.6 ? roadWalls : hedges;
-      const p = at(d);
-      const gate = hash2(Math.floor(d / 60), s, 3) < 0.16 && d % 60 < 5 && prev; // a field gate
-      if (gate) {
-        const a = at(d - 1.9), b2 = at(d + 1.9);
-        list.push({ x1: prev.x, z1: prev.z, y1: prev.y, x2: a.x, z2: a.z, y2: a.y });
-        gates.push({ x: p.x, y: (a.y + b2.y) / 2, z: p.z, rot: -p.heading });
-        prev = b2;
-        continue;
-      }
-      if (prev) list.push({ x1: prev.x, z1: prev.z, y1: prev.y, x2: p.x, z2: p.z, y2: p.y });
-      prev = p;
-    }
-  };
-  roadside(-1);
-  roadside(1);
-  // Field boundaries on a rotated grid, out to the quality radius.
-  const radius = q.sceneryRadius;
-  for (const [axisU, spacing] of [[true, fieldCell], [false, fieldCell * 0.8]]) {
-    for (let line = -40; line <= 40; line++) {
-      const off = line * spacing;
-      let prev = null;
-      for (let t = -4000; t <= 4000; t += 6) {
-        const u = axisU ? off : t, v = axisU ? t : off;
-        const x = u * ca - v * sa, z = u * sa + v * ca;
-        field.query(x, z, tmp);
-        const ok = tmp.distance > ROAD_HALF + 9 && tmp.distance < radius && riverAt(x, z) > 9 && Math.hypot(x - tarn.x, z - tarn.z) > tarn.r + 8 && !(village(tmp.along) && tmp.distance < 60);
-        if (!ok) {
-          prev = null;
-          continue;
+    const arm = steel ? 5 : 0.85;
+    for (let i = 0; i + 1 < tops.length; i++) {
+      const a = tops[i], b = tops[i + 1];
+      if (!a.near && !b.near) continue;
+      const span = Math.hypot(b.x - a.x, b.z - a.z);
+      if (span > 600) continue;
+      const sag = Math.min(4, 0.25 + span * span * 0.00012);
+      for (const o of steel ? [-arm, 0, arm] : [-arm, 0, arm]) {
+        const ax = a.x + Math.cos(a.heading) * o, az = a.z - Math.sin(a.heading) * o;
+        const bx = b.x + Math.cos(b.heading) * o, bz = b.z - Math.sin(b.heading) * o;
+        const yo = o === 0 && !steel ? 0.35 : 0;
+        const n = Math.max(4, Math.ceil(span / 12));
+        for (let k = 0; k < n; k++) {
+          const t0 = k / n, t1 = (k + 1) / n;
+          const y0 = a.y + yo + (b.y - a.y) * t0 - sag * 4 * t0 * (1 - t0), y1 = a.y + yo + (b.y - a.y) * t1 - sag * 4 * t1 * (1 - t1);
+          const key = `${Math.floor((ax + bx) / 800)},${Math.floor((az + bz) / 800)}`;
+          if (!wires.has(key)) wires.set(key, []);
+          wires.get(key).push(ax + (bx - ax) * t0, y0, az + (bz - az) * t0, ax + (bx - ax) * t1, y1, az + (bz - az) * t1);
         }
-        const y = heightAt(x, z);
-        if (prev) (y > 185 ? fieldWalls : hash2(line, axisU ? 1 : 2, 6) < 0.45 ? hedges : fieldWalls).push({ x1: prev.x, z1: prev.z, y1: prev.y, x2: x, z2: z, y2: y });
-        prev = { x, z, y };
       }
     }
   }
-  group.add(C.linear([...roadWalls, ...fieldWalls], 'wall', { shadows: q.shadows }));
-  group.add(C.linear(hedges, 'hedge', { shadows: q.shadows }));
-  group.add(gateMesh(gates, q));
+  // Pole: a creosoted wooden pole with a crossarm and three insulators on top.
+  const wood = '#4a3d30';
+  const poleGeo = C.mergeAll([
+    C.tint(new THREE.CylinderGeometry(0.11, 0.15, 9.2, 7).translate(0, 4.4, 0), wood),
+    C.tint(new THREE.BoxGeometry(2.0, 0.12, 0.12).translate(0, 8.45, 0), wood),
+    ...[-0.85, 0, 0.85].map((x) => C.tint(new THREE.CylinderGeometry(0.05, 0.07, 0.3, 6).translate(x, x === 0 ? 9.05 : 8.66, 0), '#c8c2b0')),
+  ], { colour: true, uv: false });
+  const towerGeo = C.mergeAll([
+    ...[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => C.tint(new THREE.CylinderGeometry(0.12, 0.18, 26, 4).translate(0, 13, 0).rotateZ(sx * 0.07).rotateX(-sz * 0.07).translate(sx * 1.4, 0, sz * 1.4), '#8d9398')),
+    C.tint(new THREE.BoxGeometry(10.5, 0.35, 0.35).translate(0, 22, 0), '#8d9398'),
+    C.tint(new THREE.BoxGeometry(7, 0.3, 0.3).translate(0, 25.5, 0), '#8d9398'),
+    C.tint(new THREE.ConeGeometry(1.2, 4, 4).translate(0, 28, 0), '#8d9398'),
+  ], { colour: true, uv: false });
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
+  const up = new THREE.Vector3(0, 1, 0), qq = new THREE.Quaternion();
+  const toItems = (list) => list.map((p) => ({ matrix: new THREE.Matrix4().compose(new THREE.Vector3(p.x, p.y - 0.3, p.z), qq.setFromAxisAngle(up, p.rot).clone(), new THREE.Vector3(1, 1, 1)) }));
+  if (poles.length) group.add(C.chunked(poleGeo, mat, toItems(poles), { shadows: q.shadows, maxDistance: 1400, chunk: 400 }));
+  if (towers.length) group.add(C.chunked(towerGeo, mat, toItems(towers), { shadows: q.shadows, maxDistance: 4000, chunk: 600 }));
+  const wireMat = new THREE.LineBasicMaterial({ color: '#3a3a38', transparent: true, opacity: 0.6 });
+  group.userData.wires = [];
+  for (const list of wires.values()) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(list, 3));
+    g.computeBoundingSphere();
+    const lines = new THREE.LineSegments(g, wireMat);
+    group.add(lines);
+    group.userData.wires.push(lines);
+  }
+  group.userData.poles = poles.length;
+  return group;
+}
 
-  // ---- Trees: boundary trees, woods, riverside ----
-  const placements = [];
-  const tryTree = (x, z, kind, s) => {
-    field.query(x, z, tmp);
-    if (tmp.distance < ROAD_HALF + 6) return;
-    if (riverAt(x, z) < 8 || Math.hypot(x - tarn.x, z - tarn.z) < tarn.r + 4) return;
-    if (village(tmp.along) && tmp.distance < 45) return;
-    const tall = kind === 'broad' && r() < 0.3;
-    placements.push({ x, z, y: heightAt(x, z), kind, s, rot: r() * 6.28, hue: r() - 0.5, sx: tall ? 0.7 + r() * 0.15 : 0.9 + r() * 0.35, sy: tall ? 1.2 + r() * 0.3 : 0.85 + r() * 0.3 });
-  };
-  for (const seg of hedges) if (r() < 0.2) tryTree(seg.x1 + (r() - 0.5) * 2, seg.z1 + (r() - 0.5) * 2, 'broad', 0.8 + r() * 0.6);
-  for (let w = 0; w < 26; w++) {
-    const at = r() * L;
-    const p = route.position(at, (r() < 0.5 ? -1 : 1) * (40 + r() * (radius * 0.7)));
-    const conifer = route.elevation(at) > 180 && r() < 0.7;
-    const rad = 40 + r() * 110;
-    const n = Math.floor(rad * rad * 0.004 * q.treeDensity);
-    for (let k = 0; k < n; k++) {
-      const a = r() * 6.28, d = Math.sqrt(r()) * rad;
-      tryTree(p.x + Math.cos(a) * d, p.z + Math.sin(a) * d, conifer ? 'conifer' : 'broad', 0.8 + r() * 0.7);
+/**
+ * The dry-stone wall network drawn into a texture over the detailed area, so walls still read on distant
+ * hillsides where the 3D walls are not drawn.
+ */
+function wallLineTexture(data, rect) {
+  const size = 2048;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  g.fillStyle = '#000';
+  g.fillRect(0, 0, size, size);
+  const sx = size / (rect.x1 - rect.x0), sy = size / (rect.y1 - rect.y0);
+  g.strokeStyle = '#fff';
+  g.lineWidth = Math.max(1, 1.1 * sx);
+  g.lineCap = 'round';
+  g.beginPath();
+  for (const w of data.walls ?? []) {
+    for (let i = 0; i < w.length; i += 2) {
+      const px = (w[i] - rect.x0) * sx, py = (rect.y1 - w[i + 1]) * sy;
+      if (i === 0) g.moveTo(px, py);
+      else g.lineTo(px, py);
     }
   }
-  for (let i = 0; i < river.length; i += 6) if (r() < 0.6 * q.treeDensity) tryTree(river[i] + (r() - 0.5) * 30, river[i + 1] + (r() - 0.5) * 30, 'broad', 0.9 + r() * 0.6);
-  // Scattered single trees.
-  for (let k = 0; k < 900 * q.treeDensity; k++) {
-    const at = r() * L;
-    const p = route.position(at, (r() < 0.5 ? -1 : 1) * (12 + r() * radius));
-    if (r() < 0.5) tryTree(p.x, p.z, route.elevation(at) > 205 && r() < 0.5 ? 'conifer' : 'broad', 0.7 + r() * 0.8);
-  }
-  group.add(C.trees(placements.slice(0, q.maxTrees), { shadows: q.shadows }));
-
-  // ---- Sheep: flocks in the fields ----
-  const sheep = [];
-  for (let f = 0; f < 46; f++) {
-    const at = r() * L;
-    const p = route.position(at, (r() < 0.5 ? -1 : 1) * (16 + r() * 220));
-    const n = 6 + Math.floor(r() * 16);
-    for (let k = 0; k < n; k++) {
-      const x = p.x + (r() - 0.5) * 50, z = p.z + (r() - 0.5) * 50;
-      field.query(x, z, tmp);
-      if (tmp.distance < ROAD_HALF + 5 || riverAt(x, z) < 8 || (village(tmp.along) && tmp.distance < 40)) continue;
-      sheep.push({ x, z, y: heightAt(x, z), rot: r() * 6.28, s: r() < 0.2 ? 0.55 + r() * 0.1 : 0.9 + r() * 0.25 });
-    }
-  }
-  group.add(sheepMesh(sheep));
-
-  // ---- Field barns: the stone barns that dot every dale ----
-  {
-    const barns = [];
-    for (let k = 0; k < 40 && barns.length < 14; k++) {
-      const at = 500 + r() * (L - 1100);
-      const side = r() < 0.5 ? -1 : 1;
-      const p = route.position(at, side * (26 + r() * 110));
-      if (riverAt(p.x, p.z) < 25 || Math.hypot(p.x - tarn.x, p.z - tarn.z) < tarn.r + 20) continue;
-      if (field.query(p.x, p.z, tmp).distance < 22) continue;
-      const y = Math.min(heightAt(p.x - 4, p.z), heightAt(p.x + 4, p.z), heightAt(p.x, p.z - 4), heightAt(p.x, p.z + 4));
-      barns.push({ x: p.x, y: y + 0.1, z: p.z, rot: -p.heading + (r() - 0.5) * 0.5, w: 8 + r() * 3, d: 5.5 + r(), h: 4.6 + r() * 0.8, kind: 'barn', roof: 'stone', chimney: false, storey: 5.5, tint: ['#f1e8d8', '#ffffff', '#e6dccb'][k % 3], gableTint: '#e9e0d0' });
-    }
-    group.add(C.buildings(barns, { shadows: q.shadows }));
-  }
-
-  // ---- Thornby village ----
-  group.add(buildVillage(route, heightAt, q, course));
-
-  // ---- Start/finish arch, zone banners ----
-  group.add(C.arch(route, 0, 'SPINDOWN · THORNBY', { width: 2 * ROAD_HALF + 1.2 }));
-  for (const s of route.zones) {
-    group.add(C.arch(route, s.from, s.kind === 'kom' ? `▲ ${s.name.toUpperCase()}` : `⚡ ${s.name.toUpperCase()}`, { width: 2 * ROAD_HALF + 1.2, colour: s.kind === 'kom' ? '#b3261e' : '#0a6cc2' }));
-    group.add(C.arch(route, s.to, 'FINISH ▸', { width: 2 * ROAD_HALF + 1.2, colour: '#333' }));
-  }
-
-  // ---- Distant fells ----
-  group.add(fells(route, heightAt));
-
-  const update = (t) => {
-    waterNormal.offset.set(t * 0.03, t * 0.012);
-  };
-  return { group, heightAt, roadHalf: ROAD_HALF, update };
+  g.stroke();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.NoColorSpace;
+  t.anisotropy = 8;
+  return t;
 }
 
 /** Swaledale sheep: woolly bodies, black faces with pale muzzles, ears and thin black legs. */
@@ -417,219 +740,4 @@ function sheepMesh(list) {
     return { matrix: new THREE.Matrix4().compose(new THREE.Vector3(sh.x, sh.y - 0.03, sh.z), q, new THREE.Vector3(sh.s, sh.s, sh.s)) };
   });
   return C.chunked(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }), items, { shadows: true, maxDistance: 420, chunk: 150 });
-}
-
-/** Wooden five-bar field gates hung between stone gateposts. */
-function gateMesh(list, q) {
-  const wood = '#9a8468', post = '#a39b89';
-  const parts = [];
-  for (const s of [-1, 1]) parts.push(C.tint(new THREE.BoxGeometry(0.3, 1.45, 0.3).translate(0, 0.62, s * 1.85), post));
-  for (let k = 0; k < 5; k++) parts.push(C.tint(new THREE.BoxGeometry(0.05, 0.09, 3.4).translate(0, 0.22 + k * 0.23, 0), wood));
-  for (const s of [-1, 1]) parts.push(C.tint(new THREE.BoxGeometry(0.07, 1.12, 0.09).translate(0, 0.66, s * 1.66), wood));
-  parts.push(C.tint(new THREE.BoxGeometry(0.045, 0.08, 3.5).rotateX(0.28).translate(0, 0.68, 0), wood));
-  const geo = C.mergeAll(parts, { colour: true, uv: false });
-  const qq = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-  const items = list.map((g) => {
-    qq.setFromAxisAngle(up, g.rot);
-    return { matrix: new THREE.Matrix4().compose(new THREE.Vector3(g.x, g.y, g.z), qq, new THREE.Vector3(1, 1, 1)) };
-  });
-  return C.chunked(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }), items, { shadows: q.shadows, maxDistance: 350, chunk: 200 });
-}
-
-function buildVillage(route, heightAt, q, course) {
-  const g = new THREE.Group();
-  const r = rng(51);
-  const items = [];
-  const L = route.length;
-  const stones = ['#ffffff', '#f3ead9', '#e9decb', '#f8f1e4', '#ded5c4', '#efe4d0'];
-  const washes = ['#ffffff', '#f6efdc', '#efe6d2', '#e6ecea'];
-  const place = (d, side, w, depth, h, kind, roof, extra = {}) => {
-    const lateral = side * (ROAD_HALF + 3.4 + depth / 2);
-    const p = route.position(d, lateral);
-    const y = Math.min(route.elevation(d), heightAt(p.x, p.z)) - 0.2;
-    items.push({ x: p.x, y, z: p.z, rot: -p.heading, w, d: depth, h, kind, roof, ...extra });
-    return p;
-  };
-  // Terraced cottages lining the street through the village, both sides, with gaps for lanes.
-  for (const side of [-1, 1]) {
-    let d = course.village.from - L + 20;
-    while (d < course.village.to - 20) {
-      const w = 6.5 + r() * 4;
-      const special = side === -1 && Math.abs(d - 170) < 30 ? 'church' : side === 1 && d > 56 && d < 86 ? 'pub' : null;
-      if (!special && r() > 0.1) {
-        const render = r() > 0.8;
-        const tint = render ? washes[Math.floor(r() * washes.length)] : stones[Math.floor(r() * stones.length)];
-        place(d + w / 2, side, w, 6.5 + r() * 1.5, r() < 0.25 ? 8.2 : 5.5, render ? 'render' : 'cottage', r() < 0.6 ? 'stone' : 'slate', { tint, gableTint: render ? '#d9d2c4' : tint });
-      }
-      d += w + (r() < 0.18 ? 6 + r() * 10 : 0.05);
-    }
-  }
-  // The pub.
-  place(71, 1, 13, 8, 6.0, 'render', 'slate', { tint: '#fbf6ea', gableTint: '#e4ddcf' });
-  g.add(C.buildings(items, { shadows: q.shadows }));
-
-  // Flagged pavements along the village street.
-  const from = course.village.from - L + 10, to = course.village.to - 10;
-  const paves = [];
-  for (const s of [-1, 1]) {
-    paves.push(C.ribbon(route, { left: s > 0 ? ROAD_HALF : -ROAD_HALF - 3.5, right: s > 0 ? ROAD_HALF + 3.5 : -ROAD_HALF, lift: 0.07, from, to, uvLength: 3, uvAcross: 1.1 }));
-  }
-  const pave = new THREE.Mesh(C.mergeAll(paves), new THREE.MeshStandardMaterial({ map: T.pavingTexture(), color: '#e8e2d6', roughness: 0.95, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }));
-  pave.receiveShadow = true;
-  g.add(pave);
-
-  // Church: nave with lancet windows and a battlemented west tower, set back on the left.
-  const stoneMat = new THREE.MeshStandardMaterial({ map: T.stoneWallTexture({ tone: 'rubble' }), roughness: 0.95, side: THREE.DoubleSide });
-  const cp = route.position(170, -(ROAD_HALF + 20));
-  const cy = heightAt(cp.x, cp.z) - 0.3;
-  const church = new THREE.Group();
-  const nave = new THREE.Mesh(C.facadeRing([-4.5, -11, 4.5, -11, 4.5, 11, -4.5, 11], -0.5, 7.5, '#e9e0cf', { storey: 7 }), new THREE.MeshStandardMaterial({ map: T.facadeTexture('church'), vertexColors: true, roughness: 0.95 }));
-  church.add(nave);
-  const roof = C.roofPrism({ cx: 0, cz: 0, ax: 0, az: 1, la: 11, lb: 4.5, y: 7, rh: 4.6, gableTint: '#ffffff' });
-  church.add(new THREE.Mesh(roof.slopes, new THREE.MeshStandardMaterial({ map: T.roofTexture('stone'), roughness: 0.85, side: THREE.DoubleSide })));
-  const stoneParts = [roof.gables, stoneBox(6, 19.5, 6).translate(0, 9.25, 13.5), stoneBox(6.5, 0.4, 6.5).translate(0, 19, 13.5)];
-  for (const [x, z] of [[-2.7, 10.8], [2.7, 10.8], [-2.7, 16.2], [2.7, 16.2], [0, 10.8], [0, 16.2], [-2.7, 13.5], [2.7, 13.5]]) stoneParts.push(stoneBox(1.0, 1.1, 1.0).translate(x, 19.7, z));
-  for (const [x, z] of [[-2.9, 10.6], [2.9, 10.6], [-2.9, 16.4], [2.9, 16.4]]) stoneParts.push(new THREE.ConeGeometry(0.45, 1.6, 4).translate(x, 21, z));
-  church.add(new THREE.Mesh(C.mergeAll(stoneParts), stoneMat));
-  const clock = new THREE.Mesh(new THREE.CircleGeometry(0.95, 24), new THREE.MeshStandardMaterial({ map: clockTexture(), roughness: 0.6 }));
-  clock.position.set(0, 15, 16.56);
-  church.add(clock);
-  const louvre = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 2.4), new THREE.MeshStandardMaterial({ color: '#2a2622', roughness: 1 }));
-  louvre.position.set(0, 11.2, 16.53);
-  church.add(louvre);
-  church.position.set(cp.x, cy, cp.z);
-  church.rotation.y = -cp.heading + Math.PI / 2;
-  church.traverse((o) => { if (o.isMesh) { o.castShadow = q.shadows; o.receiveShadow = true; } });
-  g.add(church);
-
-  // The pub's hanging sign on a post.
-  const signTex = T.textTexture('THE BLACK SHEEP', { width: 512, height: 160, bg: '#1c2b1f', fg: '#f3e3b0', font: '700 46px Georgia, serif' });
-  const sp = route.position(63, ROAD_HALF + 2.9);
-  const sy = route.elevation(63);
-  const signPost = new THREE.Group();
-  const dark = new THREE.MeshStandardMaterial({ color: '#1d1d1b', roughness: 0.6 });
-  signPost.add(new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 3.8, 8).translate(0, 1.9, 0), dark));
-  signPost.add(new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.06, 0.06).translate(0.7, 3.6, 0), dark));
-  signPost.add(new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.62, 0.06).translate(0.8, 3.2, 0), [dark, dark, dark, dark, new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.7 }), new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.7 })]));
-  signPost.position.set(sp.x, sy, sp.z);
-  signPost.rotation.y = -sp.heading + Math.PI / 2;
-  signPost.traverse((o) => { if (o.isMesh) o.castShadow = q.shadows; });
-  g.add(signPost);
-
-  // Red phone box and pillar box on the green.
-  const red = '#c8102e';
-  const pb = route.position(L - 120, -(ROAD_HALF + 2.4));
-  const boxParts = [
-    C.tint(new THREE.BoxGeometry(0.92, 2.3, 0.92).translate(0, 1.15, 0), red),
-    C.tint(new THREE.BoxGeometry(1.0, 0.1, 1.0).translate(0, 2.35, 0), red),
-    C.tint(new THREE.SphereGeometry(0.62, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.35, 1).translate(0, 2.4, 0), red),
-  ];
-  for (let k = 0; k < 4; k++) {
-    // Glazing on each face: three columns of small panes.
-    const pane = C.tint(new THREE.PlaneGeometry(0.62, 1.45).translate(0, 1.3, 0.465), '#27323a');
-    const bars = [];
-    for (let j = 1; j < 6; j++) bars.push(C.tint(new THREE.PlaneGeometry(0.62, 0.03).translate(0, 0.6 + j * 0.24, 0.468), red));
-    for (const x of [-0.14, 0.14]) bars.push(C.tint(new THREE.PlaneGeometry(0.03, 1.45).translate(x, 1.3, 0.468), red));
-    boxParts.push(...[pane, ...bars].map((x) => x.rotateY((k * Math.PI) / 2)));
-    boxParts.push(C.tint(new THREE.PlaneGeometry(0.6, 0.14).translate(0, 2.17, 0.465).rotateY((k * Math.PI) / 2), '#f3efe2'));
-  }
-  const phone = new THREE.Mesh(C.mergeAll(boxParts, { colour: true, uv: false }), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4 }));
-  phone.position.set(pb.x, route.elevation(L - 120) + 0.07, pb.z);
-  phone.rotation.y = -pb.heading;
-  phone.castShadow = q.shadows;
-  g.add(phone);
-  const pst = route.position(L - 112, -(ROAD_HALF + 2.2));
-  const pillar = new THREE.Mesh(C.mergeAll([
-    C.tint(new THREE.CylinderGeometry(0.24, 0.24, 1.3, 14).translate(0, 0.75, 0), red),
-    C.tint(new THREE.CylinderGeometry(0.27, 0.27, 0.1, 14).translate(0, 0.05, 0), '#18181a'),
-    C.tint(new THREE.CylinderGeometry(0.1, 0.29, 0.16, 14).translate(0, 1.48, 0), red),
-    C.tint(new THREE.BoxGeometry(0.03, 0.035, 0.2).translate(0.235, 1.15, 0), '#18181a'),
-  ], { colour: true, uv: false }), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4 }));
-  pillar.position.set(pst.x, route.elevation(L - 112) + 0.07, pst.z);
-  pillar.rotation.y = -pst.heading + Math.PI;
-  pillar.castShadow = q.shadows;
-  g.add(pillar);
-
-  // Fingerposts at the landmarks.
-  const postMat = new THREE.MeshStandardMaterial({ color: '#f2efe6', roughness: 0.8 });
-  for (const m of route.landmarks) {
-    const fp = route.position(m.at + 12, ROAD_HALF + 1.5);
-    const fg = new THREE.Group();
-    fg.add(new THREE.Mesh(C.mergeAll([new THREE.CylinderGeometry(0.055, 0.065, 2.5, 8).translate(0, 1.25, 0), new THREE.SphereGeometry(0.09, 8, 6).translate(0, 2.55, 0), new THREE.CylinderGeometry(0.1, 0.1, 0.5, 8).translate(0, 0.25, 0)]), postMat));
-    const plate = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.26, 0.04), new THREE.MeshStandardMaterial({ map: T.textTexture(m.name.toUpperCase(), { width: 512, height: 96, bg: '#f2efe6', fg: '#1a1a1a', font: '700 40px Arial' }) }));
-    plate.position.set(0.72, 2.2, 0);
-    fg.add(plate);
-    fg.position.set(fp.x, heightAt(fp.x, fp.z), fp.z);
-    fg.rotation.y = -fp.heading + Math.PI / 2;
-    fg.traverse((o) => { if (o.isMesh) o.castShadow = q.shadows; });
-    g.add(fg);
-  }
-  return g;
-}
-
-function clockTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 128;
-  const g = c.getContext('2d');
-  g.fillStyle = '#1e2a44';
-  g.fillRect(0, 0, 128, 128);
-  g.strokeStyle = '#e6c85a';
-  g.lineWidth = 5;
-  g.beginPath();
-  g.arc(64, 64, 56, 0, Math.PI * 2);
-  g.stroke();
-  g.lineWidth = 4;
-  for (let k = 0; k < 12; k++) {
-    const a = (k / 12) * Math.PI * 2;
-    g.beginPath();
-    g.moveTo(64 + Math.cos(a) * 42, 64 + Math.sin(a) * 42);
-    g.lineTo(64 + Math.cos(a) * 52, 64 + Math.sin(a) * 52);
-    g.stroke();
-  }
-  g.lineWidth = 6;
-  g.beginPath();
-  g.moveTo(64, 64);
-  g.lineTo(64 + 24, 64 - 14);
-  g.moveTo(64, 64);
-  g.lineTo(64 - 8, 64 - 44);
-  g.stroke();
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-
-/** A ring of big, fogged fells on the horizon: green flanks rising to brown and heather tops. */
-function fells(route, heightAt) {
-  const b = route.bounds();
-  const cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2;
-  const g = [];
-  const r = rng(808);
-  const low = C.colour('#7f9c58'), mid = C.colour('#8c8a5a'), top = C.colour('#7a6a66');
-  const c = new THREE.Color();
-  for (let i = 0; i < 26; i++) {
-    const a = (i / 26) * Math.PI * 2 + r() * 0.2;
-    const dist = 4200 + r() * 1400;
-    const m = new THREE.IcosahedronGeometry(1, 3);
-    const p = m.attributes.position;
-    const cols = new Float32Array(p.count * 3);
-    for (let k = 0; k < p.count; k++) {
-      const x = p.getX(k), y = p.getY(k), z = p.getZ(k);
-      const n = 0.75 + 0.5 * fbm(x * 2 + i, z * 2, 3, 77);
-      const yy = Math.max(-0.2, y) * n;
-      p.setXYZ(k, x * n, yy, z * n);
-      const t = Math.min(1, Math.max(0, yy * 1.15 + 0.25 * (fbm(x * 6 + i, z * 6, 2, 5) - 0.5)));
-      c.copy(low).lerp(mid, smoothstep(0.25, 0.6, t)).lerp(top, smoothstep(0.6, 0.95, t));
-      cols[k * 3] = c.r;
-      cols[k * 3 + 1] = c.g;
-      cols[k * 3 + 2] = c.b;
-    }
-    m.setAttribute('color', new THREE.BufferAttribute(cols, 3));
-    const w = 700 + r() * 900, h = 260 + r() * 360;
-    m.scale(w, h, w * (0.7 + r() * 0.5));
-    m.translate(cx + Math.sin(a) * dist, heightAt(cx, cz) - 60, cz - Math.cos(a) * dist);
-    g.push(m);
-  }
-  const geo = C.mergeAll(g, { colour: true, uv: false });
-  geo.computeVertexNormals();
-  return new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }));
 }

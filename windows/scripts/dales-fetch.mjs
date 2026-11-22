@@ -16,6 +16,114 @@ const TILE_URL = (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/ter
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ---- Environment Agency LIDAR ---------------------------------------------------------------------
+// LIDAR Composite DTM 1 m (bare earth) for England, Open Government Licence v3.0:
+// © Environment Agency copyright and/or database right. Fetched through the EA's open WCS in WGS84 lat/lon,
+// resampled by the server to the requested pixel size, as uncompressed float32 TIFFs.
+const LIDAR_WCS = 'https://environment.data.gov.uk/spatialdata/lidar-composite-digital-terrain-model-dtm-1m/wcs';
+const LIDAR_COVERAGE = '13787b9a-26a4-4775-8523-806d13af58fc__Lidar_Composite_Elevation_DTM_1m';
+
+/** Minimal TIFF reader for the WCS output: one band of float32, strips or tiles, no compression. */
+export function readFloatTiff(buf) {
+  const le = buf.toString('ascii', 0, 2) === 'II';
+  const u16 = (o) => (le ? buf.readUInt16LE(o) : buf.readUInt16BE(o));
+  const u32 = (o) => (le ? buf.readUInt32LE(o) : buf.readUInt32BE(o));
+  const f32 = (o) => (le ? buf.readFloatLE(o) : buf.readFloatBE(o));
+  const ifd = u32(4);
+  const tags = {};
+  const size = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 11: 4, 12: 8, 16: 8 };
+  for (let i = 0; i < u16(ifd); i++) {
+    const e = ifd + 2 + i * 12;
+    const tag = u16(e), type = u16(e + 2), count = u32(e + 4);
+    if (![256, 257, 259, 273, 278, 322, 323, 324, 339, 258].includes(tag)) continue;
+    const off = size[type] * count <= 4 ? e + 8 : u32(e + 8);
+    const vals = [];
+    for (let k = 0; k < count; k++) vals.push(type === 3 ? u16(off + k * 2) : u32(off + k * 4));
+    tags[tag] = vals;
+  }
+  const w = tags[256][0], h = tags[257][0];
+  if ((tags[259]?.[0] ?? 1) !== 1 || tags[258]?.[0] !== 32 || tags[339]?.[0] !== 3) throw new Error('unsupported TIFF (want uncompressed float32)');
+  const data = new Float32Array(w * h);
+  if (tags[324]) {
+    const tw = tags[322][0], th = tags[323][0], across = Math.ceil(w / tw);
+    tags[324].forEach((off, t) => {
+      const tx = (t % across) * tw, ty = Math.floor(t / across) * th;
+      for (let y = 0; y < th && ty + y < h; y++) for (let x = 0; x < tw && tx + x < w; x++) data[(ty + y) * w + tx + x] = f32(off + (y * tw + x) * 4);
+    });
+  } else {
+    const rps = tags[278]?.[0] ?? h;
+    let k = 0;
+    tags[273].forEach((off, s) => {
+      const n = Math.min(rps, h - s * rps) * w;
+      for (let i = 0; i < n; i++) data[k++] = f32(off + i * 4);
+    });
+  }
+  return { w, h, data };
+}
+
+/**
+ * LIDAR heights over a lat/lon box at about `metres` per pixel, fetched in tiles (cached under
+ * cacheDir/lidar). `at(lat, lon)` is bilinear, or NaN where there is no data (open water, gaps).
+ */
+export class Lidar {
+  constructor(cacheDir) {
+    this.dir = path.join(cacheDir, 'lidar');
+    this.rasters = [];
+  }
+
+  async fetch({ s, w, n, e }, metres, maxPx = 1400) {
+    const kx = Math.cos((((s + n) / 2) * Math.PI) / 180) * 111320, ky = 110540;
+    const W = ((e - w) * kx) / metres, H = ((n - s) * ky) / metres;
+    const nx = Math.ceil(W / maxPx), ny = Math.ceil(H / maxPx);
+    let fetched = 0;
+    for (let j = 0; j < ny; j++) {
+      for (let i = 0; i < nx; i++) {
+        const box = { s: s + ((n - s) * j) / ny, n: s + ((n - s) * (j + 1)) / ny, w: w + ((e - w) * i) / nx, e: w + ((e - w) * (i + 1)) / nx };
+        const px = Math.round(W / nx), py = Math.round(H / ny);
+        const file = path.join(this.dir, `dtm_${[box.s, box.w, box.n, box.e].map((v) => v.toFixed(5)).join('_')}_${px}x${py}.tif`);
+        if (!fs.existsSync(file)) {
+          const url = `${LIDAR_WCS}?service=WCS&version=2.0.1&request=GetCoverage&coverageId=${LIDAR_COVERAGE}&subset=Lat(${box.s},${box.n})&subset=Long(${box.w},${box.e})&subsettingCrs=http://www.opengis.net/def/crs/EPSG/0/4326&outputCrs=http://www.opengis.net/def/crs/EPSG/0/4326&scaleSize=i(${px}),j(${py})&format=image/tiff`;
+          for (let attempt = 0; ; attempt++) {
+            try {
+              const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(300_000) });
+              const type = res.headers.get('content-type') || '';
+              if (!res.ok || !type.includes('tiff')) throw new Error(`HTTP ${res.status} ${type} ${(await res.text()).slice(0, 200)}`);
+              fs.mkdirSync(this.dir, { recursive: true });
+              fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+              fetched++;
+              break;
+            } catch (err) {
+              if (attempt >= 3) throw new Error(`LIDAR: ${err.message}`);
+              await sleep(5000);
+            }
+          }
+        }
+        const t = readFloatTiff(fs.readFileSync(file));
+        for (let k = 0; k < t.data.length; k++) if (!(t.data[k] > -100 && t.data[k] < 3000)) t.data[k] = NaN;
+        this.rasters.push({ s: box.s, n: box.n, west: box.w, east: box.e, nx: t.w, ny: t.h, data: t.data });
+      }
+    }
+    console.log(`LIDAR ${metres} m: ${nx * ny} tiles (${fetched} downloaded)`);
+  }
+
+  at(lat, lon) {
+    // Finest raster first (they are fetched finest first).
+    for (const r of this.rasters) {
+      if (lat < r.s || lat > r.n || lon < r.west || lon > r.east) continue;
+      // Pixel-is-area: pixel (i, j) has its centre at (west + (i+0.5)·dx, n − (j+0.5)·dy).
+      const x = ((lon - r.west) / (r.east - r.west)) * r.nx - 0.5, y = ((r.n - lat) / (r.n - r.s)) * r.ny - 0.5;
+      const i = Math.max(0, Math.min(r.nx - 2, Math.floor(x))), j = Math.max(0, Math.min(r.ny - 2, Math.floor(y)));
+      const u = Math.min(1, Math.max(0, x - i)), v = Math.min(1, Math.max(0, y - j));
+      const a = r.data[j * r.nx + i], b = r.data[j * r.nx + i + 1], c = r.data[(j + 1) * r.nx + i], d = r.data[(j + 1) * r.nx + i + 1];
+      const h = (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+      if (Number.isFinite(h)) return h;
+      // Near a gap: the nearest valid corner.
+      for (const q of [a, b, c, d]) if (Number.isFinite(q)) return q;
+    }
+    return NaN;
+  }
+}
+
 const WMS = 'https://tiles.maps.eox.at/wms';
 const R_EARTH = 6378137;
 const mercX = (lon) => (R_EARTH * lon * Math.PI) / 180;

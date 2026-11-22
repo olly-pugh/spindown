@@ -74,8 +74,8 @@ export class WorldScene {
     this.envTarget = null;
   }
 
-  /** Builds a world. route from worlds.js; yorkData for York. Returns stats for diagnostics. */
-  setWorld(route, yorkData) {
+  /** Builds a world. route from worlds.js; data: the map data for that world. Returns stats for diagnostics. */
+  setWorld(route, data) {
     if (this.world) {
       this.scene.remove(this.world.group);
       disposeTree(this.world.group);
@@ -83,7 +83,7 @@ export class WorldScene {
     const t0 = performance.now();
     T.setDetail(this.q.texDetail ?? 1);
     this.route = route;
-    this.world = route.world === 'york' ? buildYork(route, yorkData, this.q) : buildDales(route, this.q);
+    this.world = route.world === 'york' ? buildYork(route, data, this.q) : buildDales(route, data, this.q);
     this.scene.add(this.world.group);
     // Power-up tokens at the spots.
     for (const t of this.tokens) this.scene.remove(t);
@@ -135,6 +135,7 @@ export class WorldScene {
     const fogColour = new THREE.Color(overcast ? '#b1b8be' : t.fog);
     this.scene.fog = new THREE.Fog(fogColour, this.q.fogNear * (weather === 'rain' ? 0.5 : 1), this.q.fogFar * (weather === 'rain' ? 0.45 : overcast ? 0.7 : 1));
     this.scene.background = null;
+    this.world?.atmosphere?.(this); // per-world haze and draw distance (the Dales' distant fells)
     // Rain streaks near the camera.
     if (this.rain) {
       this.scene.remove(this.rain);
@@ -287,7 +288,7 @@ export class WorldScene {
   /** Spins power-up tokens; hides the one the player just took until they come round again. */
   updateTokens(sim, dt) {
     this.time += dt;
-    this.world?.update?.(this.time);
+    this.world?.update?.(this.time, this.camera);
     const skyU = this.sky.material.uniforms;
     if (skyU.time) skyU.time.value = this.time;
     const lapPos = sim.route.wrap(sim.player.d);

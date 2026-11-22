@@ -16,6 +16,9 @@ await build({
   target: 'chrome130',
   outfile: path.join(dist, 'renderer.js'),
   sourcemap: 'linked',
+  // Aerial imagery ships as files next to the bundle (imported as their URL).
+  loader: { '.jpg': 'file' },
+  assetNames: 'assets/[name]-[hash]',
   logLevel: 'warning',
 });
 

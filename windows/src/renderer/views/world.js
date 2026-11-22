@@ -91,7 +91,7 @@ function ensureScene(routeId) {
   }
   const r = route(routeId);
   if (G.scene.route !== r) {
-    G.scene.setWorld(r, yorkData);
+    G.scene.setWorld(r, r.world === 'york' ? yorkData : dalesData);
     G.scene.setAtmosphere(G.profile.settings.timeOfDay, G.profile.settings.weather);
   }
   return r;

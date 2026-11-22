@@ -10,11 +10,12 @@
 //
 // The loop: Malham village -> Cove Road (the climb past Malham Cove) -> Henside Road across the limestone
 // plateau south of Malham Tarn -> the lane to Street Gate -> down Malham Rakes -> Finkle Street -> Malham.
-// Map data © OpenStreetMap contributors, ODbL. Terrain: Mapzen Terrain Tiles on AWS.
+// Map data © OpenStreetMap contributors, ODbL. Terrain: Environment Agency LIDAR Composite DTM (Open Government
+// Licence v3.0) near the loop, Mapzen Terrain Tiles on AWS beyond. Imagery: Sentinel-2 cloudless 2016, EOX, CC BY 4.0.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { overpass, Terrarium, sentinelImage } from './dales-fetch.mjs';
+import { overpass, Terrarium, Lidar, sentinelImage } from './dales-fetch.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CACHE_DIR = path.join(root, 'scripts/dales-cache');
@@ -27,7 +28,7 @@ const ORIGIN = { lat: 54.075, lon: -2.16 };
 // woods, water, landcover, power lines, masts, places).
 const DETAIL = { s: 54.049, w: -2.205, n: 54.106, e: -2.122 };
 const FAR = { s: 54.02, w: -2.27, n: 54.135, e: -2.05 };
-const FINE_CELL = 10, FINE_MARGIN = 1400, COARSE_CELL = 40;
+const NEAR_CELL = 5, NEAR_MARGIN = 600, FINE_CELL = 10, FINE_MARGIN = 1400, COARSE_CELL = 40;
 
 function osmQuery() {
   const d = `(${DETAIL.s},${DETAIL.w},${DETAIL.n},${DETAIL.e})`;
@@ -277,16 +278,6 @@ const num = (v) => {
   const m = String(v).replace(',', '.').match(/-?\d+(\.\d+)?/);
   return m ? parseFloat(m[0]) : NaN;
 };
-
-/** Terrain height (m) at local coordinates, from the z14 tiles where loaded, else z12. */
-function demAt(x, y) {
-  const [lat, lon] = unproject(x, y);
-  try {
-    return fine.at(lat, lon);
-  } catch {
-    return coarse.at(lat, lon);
-  }
-}
 
 const els = osm.elements;
 
@@ -561,6 +552,34 @@ for (let i = 0; i < RN; i++) {
   }
 }
 
+// ---- Terrain sources: EA LIDAR (1 m DTM, resampled) near the loop, Terrarium tiles beyond ----
+const rb = RP.reduce((b, p) => ({ x0: Math.min(b.x0, p[0]), y0: Math.min(b.y0, p[1]), x1: Math.max(b.x1, p[0]), y1: Math.max(b.y1, p[1]) }), { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity });
+const inset = (r, m) => ({ x0: r.x0 + m, y0: r.y0 + m, x1: r.x1 - m, y1: r.y1 - m });
+const clampRect = (r, to) => ({ x0: Math.max(r.x0, to.x0), y0: Math.max(r.y0, to.y0), x1: Math.min(r.x1, to.x1), y1: Math.min(r.y1, to.y1) });
+const nearRect = clampRect(inset(rb, -NEAR_MARGIN), inset(DRECT, 40));
+const midRect = clampRect(inset(rb, -FINE_MARGIN), inset(DRECT, 30));
+const latLonBox = (r, pad = 0) => {
+  const [s, w] = unproject(r.x0 - pad, r.y0 - pad), [n, e] = unproject(r.x1 + pad, r.y1 + pad);
+  return { s, w, n, e };
+};
+const lidar = new Lidar(CACHE_DIR);
+await lidar.fetch(latLonBox(nearRect, 30), 2.5); // finest first: at() takes the first raster that covers a point
+await lidar.fetch(latLonBox(midRect, 30), 5);
+let lidarMisses = 0;
+
+/** Terrain height (m) at local coordinates: LIDAR where there is some, else the terrain tiles. */
+function demAt(x, y) {
+  const [lat, lon] = unproject(x, y);
+  const h = lidar.at(lat, lon);
+  if (Number.isFinite(h)) return h;
+  lidarMisses++;
+  try {
+    return fine.at(lat, lon);
+  } catch {
+    return coarse.at(lat, lon);
+  }
+}
+
 // ---- Road height: the DEM along the road, bridged over becks, smoothed to a rideable profile ----
 const bridgeLines = [];
 {
@@ -594,7 +613,7 @@ function smoothClosed(arr, sigma) {
     return s / sw;
   });
 }
-const elev = smoothClosed(raw, 12 / rs.step);
+const elev = smoothClosed(raw, 8 / rs.step);
 // What the game's Route does on top (two ±20 m moving averages), for the stats below.
 let gameElev = elev;
 for (let pass = 0; pass < 2; pass++) {
@@ -619,16 +638,17 @@ for (let i = 0; i < RN; i++) {
 // ---------------------------------------------------------------------------------------------
 // Heightmaps
 
-const rb = RP.reduce((b, p) => ({ x0: Math.min(b.x0, p[0]), y0: Math.min(b.y0, p[1]), x1: Math.max(b.x1, p[0]), y1: Math.max(b.y1, p[1]) }), { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity });
-
-function grid(rect, cell) {
+/** A heightmap over a rectangle; each sample averages `taps`×`taps` points across its cell (a box filter). */
+function grid(rect, cell, taps = 1) {
   const x0 = Math.ceil(rect.x0 / cell) * cell, y0 = Math.ceil(rect.y0 / cell) * cell;
   const nx = Math.floor((rect.x1 - x0) / cell) + 1, ny = Math.floor((rect.y1 - y0) / cell) + 1;
   const a = new Int16Array(nx * ny);
   let min = Infinity, max = -Infinity;
   for (let j = 0; j < ny; j++) {
     for (let i = 0; i < nx; i++) {
-      const h = demAt(x0 + i * cell, y0 + j * cell);
+      let h = 0;
+      for (let ty = 0; ty < taps; ty++) for (let tx = 0; tx < taps; tx++) h += demAt(x0 + i * cell + ((tx + 0.5) / taps - 0.5) * cell, y0 + j * cell + ((ty + 0.5) / taps - 0.5) * cell);
+      h /= taps * taps;
       a[j * nx + i] = Math.round(h * 10);
       min = Math.min(min, h);
       max = Math.max(max, h);
@@ -636,18 +656,13 @@ function grid(rect, cell) {
   }
   return { x0, y0, nx, ny, cell, min: r1(min), max: r1(max), data: Buffer.from(a.buffer).toString('base64') };
 }
-const inset = (r, m) => ({ x0: r.x0 + m, y0: r.y0 + m, x1: r.x1 - m, y1: r.y1 - m });
-const fineRect = {
-  x0: Math.max(rb.x0 - FINE_MARGIN, DRECT.x0 + 30), y0: Math.max(rb.y0 - FINE_MARGIN, DRECT.y0 + 30),
-  x1: Math.min(rb.x1 + FINE_MARGIN, DRECT.x1 - 30), y1: Math.min(rb.y1 + FINE_MARGIN, DRECT.y1 - 30),
-};
-const terrain = { fine: grid(fineRect, FINE_CELL), coarse: grid(inset(FRECT, 60), COARSE_CELL) };
+const terrain = { near: grid(nearRect, NEAR_CELL, 2), mid: grid(midRect, FINE_CELL, 2), far: grid(inset(FRECT, 60), COARSE_CELL) };
 
 // ---------------------------------------------------------------------------------------------
 // Aerial imagery (Sentinel-2 cloudless 2016, EOX, CC BY 4.0): a sharp image over the fine heightmap and a
 // wider one out to the horizon, saved as JPEGs next to the JSON. Each covers a local rectangle {x0,y0,x1,y1}.
 const imagery = { credit: 'Sentinel-2 cloudless 2016 by EOX IT Services GmbH (contains modified Copernicus Sentinel data 2016), CC BY 4.0' };
-for (const [key, rect, mpp] of [['near', terrain.fine, 9.5546], ['far', terrain.coarse, 19.1093]]) {
+for (const [key, rect, mpp] of [['near', terrain.mid, 9.5546], ['far', terrain.far, 19.1093]]) {
   const r = { x0: rect.x0, y0: rect.y0, x1: rect.x0 + (rect.nx - 1) * rect.cell, y1: rect.y0 + (rect.ny - 1) * rect.cell };
   const [s, w] = unproject(r.x0, r.y0), [n, e] = unproject(r.x1, r.y1);
   const img = await sentinelImage({ s, w, n, e }, mpp, CACHE_DIR);
@@ -867,7 +882,7 @@ const names = [];
 
 const routePts = [...RP, RP[0]];
 const out = {
-  attribution: 'Map data © OpenStreetMap contributors (ODbL). Terrain: Mapzen Terrain Tiles on AWS.',
+  attribution: 'Map data © OpenStreetMap contributors (ODbL). Terrain: Environment Agency LIDAR Composite DTM (© Environment Agency copyright and/or database right, Open Government Licence v3.0) and Mapzen Terrain Tiles on AWS. Imagery: Sentinel-2 cloudless 2016 by EOX IT Services GmbH (contains modified Copernicus Sentinel data 2016), CC BY 4.0.',
   origin: ORIGIN,
   bounds: { minX: r1(FRECT.x0), minY: r1(FRECT.y0), maxX: r1(FRECT.x1), maxY: r1(FRECT.y1) },
   route: {
@@ -906,7 +921,7 @@ console.log(`  route: ${Math.round(rs.length)} m, ${RN} samples, ${crossings} se
 console.log(`  streets: ${streets.map((s) => `${s.n ?? '(lane)'} ${s.from}–${s.to}`).join(' -> ')}`);
 console.log(`  imagery: near ${imagery.near.w}×${imagery.near.h} (${imagery.near.kb} KB), far ${imagery.far.w}×${imagery.far.h} (${imagery.far.kb} KB)`);
 console.log(`  bridges on the route: ${bridgeLines.length}`);
-console.log(`  terrain: fine ${terrain.fine.nx}×${terrain.fine.ny} @${FINE_CELL} m (${terrain.fine.min}–${terrain.fine.max} m), coarse ${terrain.coarse.nx}×${terrain.coarse.ny} @${COARSE_CELL} m (${terrain.coarse.min}–${terrain.coarse.max} m)`);
+console.log(`  terrain: ${Object.entries(terrain).map(([k, g]) => `${k} ${g.nx}×${g.ny} @${g.cell} m (${g.min}–${g.max} m)`).join(", ")}; ${lidarMisses} samples outside LIDAR`);
 console.log(`  walls ${walls.length} (${Math.round(walls.reduce((s, w) => s + polyLength(unflat(w)), 0) / 1000)} km), hedges ${hedges.length}, buildings ${buildings.length}, woods ${woods.length}, trees ${trees.length / 2}, water ${water.length}, streams ${streams.length}, cover ${cover.length}, cliffs ${cliffs.length}, roads ${otherRoads.length}, power lines ${powerLines.length}, poles/towers ${towers.length / 3}, masts ${masts.length}, names ${names.length}`);
 if (crossings) console.warn('  WARNING: the loop crosses itself');
 if (json.length > 4 * 1024 * 1024) console.warn('  WARNING: output exceeds 4 MB');
