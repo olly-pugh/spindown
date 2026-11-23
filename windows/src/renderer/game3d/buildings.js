@@ -15,18 +15,19 @@
 // (textures.facadeTexture). Roofs, gables and chimney stacks are always drawn; chimney pots are instanced.
 import * as THREE from 'three';
 import * as C from './common.js';
-import { Cells } from './archgeo.js';
-import { L, TILES, FACADE_KINDS, SIGN_PAINTS, materials } from './archtex.js';
+import { Cells, Writer } from './archgeo.js';
+import { L, TILES, FACADE_LAYER, SIGN_PAINTS, materials } from './archtex.js';
+import { isYorkLandmark, bar, wallTower } from './landmarks.js';
 import * as T from './textures.js';
 import { hash2 } from '../../core/world/noise.js';
 
 const CELL = 120;
-const FAR_TILES = new Array(FACADE_KINDS.length).fill(0);
+const BG_CELL = 320;
 const DEG = Math.PI / 180;
 
 /** Near-detail distance by quality (metres from the camera to a chunk). */
 export function nearDistance(q) {
-  return q.shadows ? (q.shadowSize >= 4096 ? 340 : 230) : 130;
+  return q.shadows ? (q.shadowSize >= 4096 ? 260 : 165) : 105;
 }
 
 const lin = (hex) => new THREE.Color(hex);
@@ -1035,7 +1036,7 @@ function farWall(W, b, e) {
   const len = e.len;
   if (len < 0.05) return;
   W.wallFrame(e.ax, e.az, e.bx, e.bz, b.y);
-  W.setLayer(FACADE_KINDS.indexOf(b.st.far)).colour(b.tint);
+  W.setLayer(FACADE_LAYER[b.st.far]).colour(b.tint);
   W.aoH = 2.4;
   let ua, ub;
   if (len < 2.6 || e.party > 0.6) {
@@ -1060,10 +1061,11 @@ function farWall(W, b, e) {
 
 // ---- Roofs ------------------------------------------------------------------------------------------------
 
-function roofRect(A, b) {
+function roofRect(A, b, N = null) {
   const r = b.roof, st = b.st;
   const yE = b.y + b.eaves;
   A.frame(r.cx, yE, r.cz, r.ux, r.uz);
+  if (N) N.frame(r.cx, yE, r.cz, r.ux, r.uz);
   const tan = Math.tan(r.pitch);
   const rise = r.rise;
   const oe = st.overhang, ov = st.coped ? 0 : st.overhang * 0.7;
@@ -1082,24 +1084,25 @@ function roofRect(A, b) {
   A.quad([A1, he, -D], [A0, he, -D], [r0, rise, 0], [r1, rise, 0], [-A1, 0, -A0, 0, -r0, sl, -r1, sl]);
   if (hipR) A.tri([A1, he, D], [A1, he, -D], [R, rise, 0], [-D, 0, D, 0, 0, Math.hypot(A1 - R, rise - he)]);
   if (hipL) A.tri([A0, he, -D], [A0, he, D], [-R, rise, 0], [-D, 0, D, 0, 0, Math.hypot(R - A0, rise - he)]);
-  // Eaves: fascia and soffit along both sides.
+  // Eaves (near only): fascia and soffit along both sides, and black gutters.
   const fd = 0.16;
-  A.setLayer(L.PAINT).colour(st === STYLE.cottage || st === STYLE.barn ? P.dalesStone : P.white, 0.92);
-  for (const sg of [1, -1]) {
-    const d = sg * D;
-    if (sg > 0) A.quad([A0, he - fd, d], [A1, he - fd, d], [A1, he, d], [A0, he, d], [A0, 0, A1, 0, A1, fd, A0, fd]);
-    else A.quad([A1, he - fd, d], [A0, he - fd, d], [A0, he, d], [A1, he, d], [A0, 0, A1, 0, A1, fd, A0, fd]);
-    const dw = sg * lb;
-    A.colour(P.white, 0.55);
-    if (sg > 0) A.quad([A1, he - fd, d], [A0, he - fd, d], [A0, he - fd, dw], [A1, he - fd, dw], [A0, 0, A1, 0, A1, oe, A0, oe]);
-    else A.quad([A0, he - fd, d], [A1, he - fd, d], [A1, he - fd, dw], [A0, he - fd, dw], [A0, 0, A1, 0, A1, oe, A0, oe]);
-    A.colour(P.white, 0.92);
-  }
-  // Gutters: black half-rounds along the eaves.
-  A.setLayer(L.PAINT).colour(P.iron);
-  if (st !== STYLE.barn) {
-    A.box(A0, A1, he - 0.12, he + 0.02, D, D + 0.13, 1 | 16 | 32 | 4 | 8);
-    A.box(A0, A1, he - 0.12, he + 0.02, -D - 0.13, -D, 2 | 16 | 32 | 4 | 8);
+  if (N) {
+    N.setLayer(L.PAINT).colour(st === STYLE.cottage || st === STYLE.barn ? P.dalesStone : P.white, 0.92);
+    for (const sg of [1, -1]) {
+      const d = sg * D;
+      if (sg > 0) N.quad([A0, he - fd, d], [A1, he - fd, d], [A1, he, d], [A0, he, d], [A0, 0, A1, 0, A1, fd, A0, fd]);
+      else N.quad([A1, he - fd, d], [A0, he - fd, d], [A0, he, d], [A1, he, d], [A0, 0, A1, 0, A1, fd, A0, fd]);
+      const dw = sg * lb;
+      N.colour(P.white, 0.55);
+      if (sg > 0) N.quad([A1, he - fd, d], [A0, he - fd, d], [A0, he - fd, dw], [A1, he - fd, dw], [A0, 0, A1, 0, A1, oe, A0, oe]);
+      else N.quad([A0, he - fd, d], [A1, he - fd, d], [A1, he - fd, dw], [A0, he - fd, dw], [A0, 0, A1, 0, A1, oe, A0, oe]);
+      N.colour(P.white, 0.92);
+    }
+    N.setLayer(L.PAINT).colour(P.iron);
+    if (st !== STYLE.barn) {
+      N.box(A0, A1, he - 0.12, he + 0.02, D, D + 0.13, 1 | 16 | 32 | 4 | 8);
+      N.box(A0, A1, he - 0.12, he + 0.02, -D - 0.13, -D, 2 | 16 | 32 | 4 | 8);
+    }
   }
   // Gable ends: wall triangles, verges (bargeboards or coping with kneelers).
   for (const [sg, end] of [[-1, r.ends[0]], [1, r.ends[1]]]) {
@@ -1134,8 +1137,9 @@ function roofRect(A, b) {
         const s0 = Math.min(x, x - sg * 0.55), s1 = Math.max(x, x - sg * 0.55);
         A.box(s0 + (sg > 0 ? 0.08 : -0.08), s1 + (sg > 0 ? 0.08 : -0.08), -0.25, 0.32, side > 0 ? lb - 0.4 : -lb - 0.08, side > 0 ? lb + 0.08 : -lb + 0.4);
       }
-    } else {
-      // Verge: the slate edge and a bargeboard for timber and Victorian gables.
+    } else if (N) {
+      // Verge (near only): the slate edge and a bargeboard for timber and Victorian gables.
+      const A = N;
       const bh = st === STYLE.timber || st === STYLE.victorian ? 0.3 : 0.14;
       A.setLayer(L.PAINT).colour(st === STYLE.timber ? b.timber : P.white, st === STYLE.timber ? 1 : 0.9);
       for (const side of [1, -1]) {
@@ -1154,7 +1158,11 @@ function roofRect(A, b) {
       }
     }
   }
-  // Ridge tiles (and hip tiles).
+  // Ridge tiles (and hip tiles); not worth drawing on buildings only ever seen from afar.
+  if (!N) {
+    A.uo = 0;
+    return;
+  }
   const ridgeLayer = b.roofLayer === L.STONESLATE ? L.ASHLAR : b.roofLayer === L.SLATE ? L.PANTILE : b.roofLayer;
   A.setLayer(ridgeLayer);
   if (ridgeLayer === L.ASHLAR) A.colour(P.dalesStone, 0.8);
@@ -1220,7 +1228,7 @@ function segmentsCross(a, b, c, d) {
 }
 
 /** Slopes rising from every wall (with eaves overhang) to a flat lead top: blocks and awkward plans. */
-function roofInset(A, b) {
+function roofInset(A, b, N = null) {
   const st = b.st;
   const tan = Math.tan(b.roof.pitch);
   let d = Math.min(4.2, b.obb.lb * 0.75);
@@ -1247,23 +1255,31 @@ function roofInset(A, b) {
     const sl = Math.hypot(d + oe, rise - he);
     A.quad([a[0], he, a[1]], [c[0], he, c[1]], [ic[0], rise, ic[1]], [ia[0], rise, ia[1]], [0, 0, len, 0, len - d, sl, d, sl]);
   }
-  // Fascia and soffit.
-  A.setLayer(L.PAINT).colour(P.white, 0.9);
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    const a = outer[i], c = outer[j];
-    const len = Math.hypot(c[0] - a[0], c[1] - a[1]);
-    A.quad([a[0], he - 0.16, a[1]], [c[0], he - 0.16, c[1]], [c[0], he, c[1]], [a[0], he, a[1]], [0, 0, len, 0, len, 0.16, 0, 0.16]);
-    const w = b.pts[i], x = b.pts[j];
-    A.colour(P.white, 0.55);
-    A.quad([c[0], he - 0.16, c[1]], [a[0], he - 0.16, a[1]], [w[0], he - 0.16, w[1]], [x[0], he - 0.16, x[1]], [0, 0, len, 0, len, 0.3, 0, 0.3]);
-    A.colour(P.white, 0.9);
+  // Fascia and soffit (near only).
+  if (N) {
+    N.frame(0, yE, 0, 1, 0);
+    N.setLayer(L.PAINT).colour(P.white, 0.9);
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      const a = outer[i], c = outer[j];
+      const len = Math.hypot(c[0] - a[0], c[1] - a[1]);
+      N.quad([a[0], he - 0.16, a[1]], [c[0], he - 0.16, c[1]], [c[0], he, c[1]], [a[0], he, a[1]], [0, 0, len, 0, len, 0.16, 0, 0.16]);
+      const w = b.pts[i], x = b.pts[j];
+      N.colour(P.white, 0.55);
+      N.quad([c[0], he - 0.16, c[1]], [a[0], he - 0.16, a[1]], [w[0], he - 0.16, w[1]], [x[0], he - 0.16, x[1]], [0, 0, len, 0, len, 0.3, 0, 0.3]);
+      N.colour(P.white, 0.9);
+    }
   }
   // Flat lead top.
-  A.setLayer(L.LEAD).setColour(0.8, 0.82, 0.82);
+  A.setLayer(L.LEAD).setColour(0.55, 0.57, 0.57);
   const flat = [];
   for (const p of inner) flat.push(p[0], p[1]);
   A.flat(flat, rise, true);
+  b.roofTop = yE + rise;
+  if (!N) {
+    A.uo = 0;
+    return;
+  }
   // Hip tiles along the corners.
   const ridgeLayer = b.roofLayer === L.SLATE ? L.PANTILE : b.roofLayer;
   A.setLayer(ridgeLayer);
@@ -1290,7 +1306,10 @@ function roofFlat(A, b) {
   const yE = b.y + b.eaves;
   const par = b.st.eaves === 'parapet' || b.st === STYLE.civic ? 0.9 : 0.55;
   A.frame(0, yE, 0, 1, 0);
-  A.setLayer(L.LEAD).setColour(0.62, 0.64, 0.64);
+  // Felt on the flat roofs of modern blocks; lead on the older ones.
+  A.setLayer(b.st === STYLE.modern ? L.DARK : L.LEAD);
+  if (b.st === STYLE.modern) A.setColour(3.2, 3.2, 3.3);
+  else A.setColour(0.5, 0.52, 0.52);
   const flat = [];
   for (const p of b.pts) flat.push(p[0], p[1]);
   A.flat(flat, par * 0.3, true);
@@ -1328,8 +1347,9 @@ function parapet(A, b, yE, par, edges = null) {
 // ---- Chimneys ---------------------------------------------------------------------------------------------
 
 /** A brick stack with oversailing courses and a cement cap, pots on top (instanced elsewhere). */
-function stack(A, b, x, z, ux, uz, wl, ws, base, top, pots, layer = null) {
+function stack(A, b, x, z, ux, uz, wl, ws, base, top, pots, layer = null, N = b.nearWriter) {
   A.frame(x, base, z, ux, uz);
+  if (N) N.frame(x, base, z, ux, uz);
   const h = top - base;
   A.setLayer(layer ?? (b.st.wall === L.RENDER ? (b.st.far === 'render' && b.inside ? L.BRICK : L.RUBBLE) : b.st.wall));
   if (b.st.wall === L.RENDER && !b.inside) A.setLayer(L.RUBBLE);
@@ -1337,14 +1357,21 @@ function stack(A, b, x, z, ux, uz, wl, ws, base, top, pots, layer = null) {
   A.uo = b.hash * 3;
   A.box(-wl / 2, wl / 2, 0, h, -ws / 2, ws / 2, 1 | 2 | 4 | 8 | 16);
   if (b.st !== STYLE.cottage && b.st !== STYLE.dalesRender) {
-    A.box(-wl / 2 - 0.05, wl / 2 + 0.05, h - 0.42, h - 0.33, -ws / 2 - 0.05, ws / 2 + 0.05, 1 | 2 | 4 | 8 | 16 | 32);
-    A.box(-wl / 2 - 0.08, wl / 2 + 0.08, h - 0.24, h - 0.14, -ws / 2 - 0.08, ws / 2 + 0.08, 1 | 2 | 4 | 8 | 16 | 32);
+    if (N) {
+      N.setLayer(A.layer).colour(b.stackTint ?? b.tint);
+      N.uo = A.uo;
+      N.box(-wl / 2 - 0.05, wl / 2 + 0.05, h - 0.42, h - 0.33, -ws / 2 - 0.05, ws / 2 + 0.05, 1 | 2 | 4 | 8 | 16 | 32);
+      N.box(-wl / 2 - 0.08, wl / 2 + 0.08, h - 0.24, h - 0.14, -ws / 2 - 0.08, ws / 2 + 0.08, 1 | 2 | 4 | 8 | 16 | 32);
+      N.uo = 0;
+    }
   } else {
     A.setLayer(L.ASHLAR).colour(P.dalesStone);
     A.box(-wl / 2 - 0.07, wl / 2 + 0.07, h - 0.14, h, -ws / 2 - 0.07, ws / 2 + 0.07, 1 | 2 | 4 | 8 | 16 | 32);
   }
-  A.setLayer(L.ASHLAR).colour(P.cement, 0.9);
-  A.box(-wl / 2 + 0.03, wl / 2 - 0.03, h, h + 0.07, -ws / 2 + 0.03, ws / 2 - 0.03, 1 | 2 | 4 | 8 | 16);
+  if (N) {
+    A.setLayer(L.ASHLAR).colour(P.cement, 0.9);
+    A.box(-wl / 2 + 0.03, wl / 2 - 0.03, h, h + 0.07, -ws / 2 + 0.03, ws / 2 - 0.03, 1 | 2 | 4 | 8 | 16);
+  }
   A.uo = 0;
   if (pots) {
     const n = Math.max(1, Math.min(8, Math.round(wl / 0.36)));
@@ -1509,7 +1536,9 @@ function finishStyle(b, ctx) {
  */
 export function buildingSet(list, ctx) {
   const q = ctx.q;
+  const t0 = performance.now();
   const mats = materials(q.texDetail ?? 1);
+  const t1 = performance.now();
   const bs = [];
   list.forEach((src) => {
     const b = makeBuilding(src, bs.length);
@@ -1565,37 +1594,46 @@ export function buildingSet(list, ctx) {
     b.detail = ctx.detail ? ctx.detail(b) : true;
   }
   const R = nearDistance(q);
+  // Buildings by the route are in small cells that swap between near detail and painted facades; the rest of
+  // the city, only ever seen from a distance, is in big cells (fewer draw calls).
   const cells = new Cells(CELL, TILES);
-  cells.tilesFor = (set) => (set === 'far' || set === 'bg' ? FAR_TILES : TILES);
+  const bgCells = new Cells(BG_CELL, TILES);
+  const roofW = new Writer(TILES); // a detail building's roof goes into both its near and its far mesh
   const pots = [];
   // Roof tops first, so shared stacks can clear the taller of two neighbouring roofs.
   for (const b of bs) if (b.roof?.type === 'rect') b.roofTop = b.y + b.eaves + b.roof.rise;
   for (const b of bs) {
-    const A = cells.writer(b.cx, b.cz, 'always');
-    if (b.roof.type === 'rect') roofRect(A, b);
-    else if (b.roof.type === 'inset') roofInset(A, b);
+    const N = b.detail ? cells.writer(b.cx, b.cz, 'near') : null;
+    const A = b.detail ? roofW : bgCells.writer(b.cx, b.cz, 'bg');
+    if (b.detail) roofW.clear();
+    b.nearWriter = N;
+    if (b.roof.type === 'rect') roofRect(A, b, N);
+    else if (b.roof.type === 'inset') roofInset(A, b, N);
     else roofFlat(A, b);
     chimneys(A, b, pots, bs);
+    b.nearWriter = null;
     if (b.detail) {
-      const Wn = cells.writer(b.cx, b.cz, 'near');
-      for (const e of b.edges) nearWall(Wn, b, e, ctx);
-      dormers(Wn, b);
-      const Wf = cells.writer(b.cx, b.cz, 'far');
-      for (const e of b.edges) farWall(Wf, b, e);
+      for (const e of b.edges) nearWall(N, b, e, ctx);
+      dormers(N, b);
+      const F = cells.writer(b.cx, b.cz, 'far');
+      for (const e of b.edges) farWall(F, b, e);
+      N.append(roofW);
+      F.append(roofW);
     } else {
-      const Wb = cells.writer(b.cx, b.cz, 'bg');
-      for (const e of b.edges) farWall(Wb, b, e);
+      for (const e of b.edges) farWall(A, b, e);
     }
   }
   const group = new THREE.Group();
-  cells.build(group, {
-    always: { material: mats.surface, shadows: q.shadows },
+  const sets = {
     near: { material: mats.surface, shadows: q.shadows, near: R },
-    far: { material: mats.facade, shadows: false, far: R },
-    bg: { material: mats.facade, shadows: q.shadows },
-  });
+    far: { material: mats.surface, shadows: false, far: R },
+    bg: { material: mats.surface, shadows: q.shadows },
+  };
+  cells.build(group, sets);
+  bgCells.build(group, sets);
   if (pots.length) group.add(potMesh(pots, q));
   group.userData.buildings = bs.length;
+  console.log(`[gp] buildings: ${bs.length}, textures ${Math.round(t1 - t0)} ms, geometry ${Math.round(performance.now() - t1)} ms`);
   return { group, buildings: bs };
 }
 
@@ -1610,7 +1648,7 @@ function potMesh(pots, q) {
     s.set(1, p.s * (p.tall ? 1.6 : 1), 1);
     return { matrix: m.clone().compose(new THREE.Vector3(p.x, p.y, p.z), qq, s), colour: p.c };
   });
-  return C.chunked(geo, mat, items, { chunk: CELL, shadows: false, maxDistance: q.shadows ? 380 : 220 });
+  return C.chunked(geo, mat, items, { chunk: 260, shadows: false, maxDistance: q.shadows ? 340 : 200 });
 }
 
 /**
@@ -1645,7 +1683,38 @@ export function pushBehind(ring, nearest, minDist, maxPush = 4) {
 export function cityBuildings(list, ctx) {
   const roadHalf = ctx.roadHalf ?? 3.6;
   const detailR = ctx.detailRadius ?? (ctx.q.shadows ? 80 : 50);
-  return buildingSet(list.map((b) => ({ ...b, y: b.y ?? ctx.y ?? 0 })), {
+  const y0 = ctx.y ?? 0;
+  // The bars and wall towers are landmarks with their own builders.
+  let ccx = 0, ccz = 0;
+  const rr = ctx.routeRing ?? [];
+  for (let i = 0; i < rr.length; i += 2) {
+    ccx += rr[i];
+    ccz += rr[i + 1];
+  }
+  if (rr.length) {
+    ccx /= rr.length / 2;
+    ccz /= rr.length / 2;
+  }
+  const special = new THREE.Group();
+  const bars = [];
+  const rest = [];
+  for (const b of list) {
+    if (b.n && isYorkLandmark(b.n)) {
+      const isBar = / Bar$/.test(b.n);
+      special.add(isBar ? bar(b.ring, b.n, { y0, q: ctx.q, walls: ctx.walls, centre: [ccx, ccz] }) : wallTower(b.ring, b.n, { y0, q: ctx.q }));
+      if (isBar) {
+        let x = 0, z = 0;
+        for (let i = 0; i < b.ring.length; i += 2) {
+          x += b.ring[i];
+          z += b.ring[i + 1];
+        }
+        bars.push([x / (b.ring.length / 2), z / (b.ring.length / 2)]);
+      }
+      continue;
+    }
+    rest.push({ ...b, y: b.y ?? y0 });
+  }
+  const res = buildingSet(rest, {
     q: ctx.q,
     roads: ctx.roads,
     inside: ctx.inside,
@@ -1656,6 +1725,10 @@ export function cityBuildings(list, ctx) {
       return d < detailR;
     },
   });
+  res.group.add(special);
+  /** Is there a mapped bar within r metres of point p ({x, z})? */
+  res.nearBar = (p, r) => bars.some(([x, z]) => Math.hypot(x - p.x, z - p.z) < r);
+  return res;
 }
 
 // ---- Dales villages (common.buildings items) --------------------------------------------------------------

@@ -251,6 +251,27 @@ export class Writer {
     }
   }
 
+  /** Appends everything another writer holds (same layers). */
+  append(o) {
+    if (!o.nv) return;
+    this.grow(o.nv, o.ni);
+    const v0 = this.nv;
+    this.pos.set(o.pos.subarray(0, o.nv * 3), v0 * 3);
+    this.nrm.set(o.nrm.subarray(0, o.nv * 3), v0 * 3);
+    this.uv.set(o.uv.subarray(0, o.nv * 2), v0 * 2);
+    this.col.set(o.col.subarray(0, o.nv * 3), v0 * 3);
+    this.lay.set(o.lay.subarray(0, o.nv), v0);
+    for (let i = 0; i < o.ni; i++) this.idx[this.ni + i] = o.idx[i] + v0;
+    this.nv += o.nv;
+    this.ni += o.ni;
+  }
+
+  /** Forgets what has been written (keeps the buffers). */
+  clear() {
+    this.nv = 0;
+    this.ni = 0;
+  }
+
   get empty() {
     return this.nv === 0;
   }

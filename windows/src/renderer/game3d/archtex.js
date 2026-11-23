@@ -64,9 +64,9 @@ const from = (tex) => (g) => g.drawImage(tex.image, 0, 0, 512, 512);
 // tile: metres per repeat (0 = uv given directly, 0…1 over the element). rough/metal: PBR. glass: alpha is glass.
 const DEFS = [];
 export const L = {};
-function def(key, tile, rough, metal, glass, draw) {
+function def(key, tile, rough, metal, glass, draw, reflect = 1.3) {
   L[key] = DEFS.length;
-  DEFS.push({ key, tile, rough, metal, glass, draw });
+  DEFS.push({ key, tile, rough, metal, glass, draw, reflect });
 }
 
 // Roofs.
@@ -74,7 +74,7 @@ def('SLATE', 2.4, 0.62, 0, false, () => from(T.roofTexture('slate')));
 def('PANTILE', 2.4, 0.8, 0, false, () => from(T.roofTexture('pantile')));
 def('PLAINTILE', 2.4, 0.85, 0, false, () => plainTiles);
 def('STONESLATE', 2.4, 0.92, 0, false, () => stoneSlates);
-def('LEAD', 2.4, 0.5, 0.25, false, () => from(T.roofTexture('lead')));
+def('LEAD', 2.4, 0.6, 0.08, false, () => from(T.roofTexture('lead')));
 // Walling.
 def('BRICK', 4, 0.9, 0, false, () => (g) => brickwork(g, GEORGIAN_BRICK));
 def('BRICK2', 4, 0.88, 0, false, () => (g) => brickwork(g, VICTORIAN_BRICK));
@@ -98,15 +98,22 @@ def('SASH6', 0, 0.05, 0, true, () => (g) => sashes(g, 3, 2));
 def('SASH2', 0, 0.05, 0, true, () => (g) => sashes(g, 2, 1));
 def('SASH1', 0, 0.05, 0, true, () => (g) => sashes(g, 1, 1));
 def('CASEMENT', 0, 0.08, 0, true, () => casements);
-def('LEADED', 0, 0.2, 0, true, () => leaded);
+def('LEADED', 0, 0.3, 0, true, () => leaded, 0.5);
 def('SHOP', 0, 0.05, 0, true, () => shopGlass);
 def('FAN', 0, 0.08, 0, true, () => fanlight);
-def('LANCET', 0, 0.25, 0, true, () => lancets);
-def('ROSE', 0, 0.25, 0, true, () => roseWindow);
-def('WESTWIN', 0, 0.25, 0, true, () => westWindow);
-def('EASTWIN', 0, 0.25, 0, true, () => eastWindow);
+def('LANCET', 0, 0.5, 0, true, () => lancets, 0);
+def('ROSE', 0, 0.5, 0, true, () => roseWindow, 0);
+def('WESTWIN', 0, 0.5, 0, true, () => westWindow, 0);
+def('EASTWIN', 0, 0.5, 0, true, () => eastWindow, 0);
 def('LOUVRE', 0, 0.9, 0, false, () => louvres);
 def('MODERN', 0, 0.04, 0.1, true, () => modernGlass);
+// Whole painted facades (textures.facadeTexture, 8 m × 12 m) for distant buildings, squeezed into square layers.
+export const FACADE_KINDS = ['brick', 'brick2', 'render', 'stone', 'shop', 'timber', 'church', 'office', 'cottage', 'barn'];
+export const FACADE_LAYER = {};
+for (const k of FACADE_KINDS) {
+  FACADE_LAYER[k] = DEFS.length;
+  def(`FACADE_${k}`, 0, 0.9, 0, false, () => (g) => g.drawImage(T.facadeTexture(k).image, 0, 0, 512, 512));
+}
 
 export const LAYER_COUNT = DEFS.length;
 export const TILES = DEFS.map((d) => d.tile);
@@ -920,16 +927,16 @@ function applyFrames(key, img) {
         const u = x / S, v = y / S; // v down from the top; the pointed head is the top ~40%
         let frame = u < 0.025 || u > 0.975 || v > 0.99;
         const lu = (u * lights) % 1;
-        if (!frame && v > 0.42) frame = lu < 0.06 || lu > 0.94 || Math.abs(v - 0.71) < 0.008;
+        if (!frame && v > 0.42) frame = lu < 0.04 || lu > 0.96 || Math.abs(v - 0.71) < 0.006;
         if (!frame && v <= 0.42) {
           if (key === 'WESTWIN') {
             // Two great reticulated arcs and the heart between them.
             const hx = (u - 0.5) / 0.22, hy = (v - 0.2) / 0.2;
             const heart = (hx * hx + hy * hy - 1) ** 3 - hx * hx * (-hy) ** 3;
             frame = Math.abs(heart) < 0.06 || Math.abs(Math.hypot((u - 0.27) * 2, (v - 0.4) * 2.4) - 0.42) < 0.02 || Math.abs(Math.hypot((u - 0.73) * 2, (v - 0.4) * 2.4) - 0.42) < 0.02;
-            if (!frame) frame = Math.abs(((u * 16) % 1) - 0.5) > 0.46 && v > 0.32;
+            if (!frame) frame = Math.abs(((u * 16) % 1) - 0.5) > 0.47 && v > 0.34;
           } else {
-            frame = lu < 0.05 || lu > 0.95 || Math.abs(((v * 18) % 1) - 0.5) > 0.44;
+            frame = lu < 0.035 || lu > 0.965 || Math.abs(((v * 12) % 1) - 0.5) > 0.47;
           }
         }
         if (frame) {
@@ -980,51 +987,19 @@ export function surfaceArray(detail = 1) {
   return tex;
 }
 
-/** The far-facade texture array: whole painted facades (textures.facadeTexture) for distant buildings. */
-export const FACADE_KINDS = ['brick', 'brick2', 'render', 'stone', 'shop', 'timber', 'church', 'office', 'cottage', 'barn'];
-let facadeBuilt = null;
-export function facadeArray(detail = 1) {
-  const w = Math.max(64, Math.round(512 * detail)), h = Math.round(w * 1.5);
-  if (facadeBuilt && facadeBuilt.w === w) return facadeBuilt.tex;
-  const n = FACADE_KINDS.length;
-  const data = new Uint8Array(w * h * 4 * n);
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  const g = c.getContext('2d', { willReadFrequently: true });
-  FACADE_KINDS.forEach((k, li) => {
-    g.clearRect(0, 0, w, h);
-    g.drawImage(T.facadeTexture(k).image, 0, 0, w, h);
-    const img = g.getImageData(0, 0, w, h);
-    const row = w * 4, base = li * w * h * 4;
-    for (let y = 0; y < h; y++) data.set(img.data.subarray(y * row, (y + 1) * row), base + (h - 1 - y) * row);
-  });
-  const tex = new THREE.DataArrayTexture(data, w, h, n);
-  tex.format = THREE.RGBAFormat;
-  tex.type = THREE.UnsignedByteType;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.magFilter = THREE.LinearFilter;
-  tex.minFilter = THREE.LinearMipmapLinearFilter;
-  tex.generateMipmaps = true;
-  tex.anisotropy = 4;
-  tex.needsUpdate = true;
-  facadeBuilt = { w, tex };
-  return tex;
-}
-
 /**
  * A standard material that reads its colour from a texture array by the per-vertex `layer` attribute, with
  * roughness/metalness per layer and glass layers (alpha = glass) taking the vertex colour only on the frame.
  */
 export function layeredMaterial(arrayTex, { pbr = null, ...params } = {}) {
   const n = arrayTex.image.depth;
-  const table = new Float32Array(n * 3);
+  const table = new Float32Array(n * 4);
   for (let i = 0; i < n; i++) {
     const d = pbr ? pbr[i] : null;
-    table[i * 3] = d?.rough ?? 0.9;
-    table[i * 3 + 1] = d?.metal ?? 0;
-    table[i * 3 + 2] = d?.glass ? 1 : 0;
+    table[i * 4] = d?.rough ?? 0.9;
+    table[i * 4 + 1] = d?.metal ?? 0;
+    table[i * 4 + 2] = d?.glass ? 1 : 0;
+    table[i * 4 + 3] = d?.glass ? d.reflect ?? 1.3 : 0;
   }
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, ...params });
   m.onBeforeCompile = (shader) => {
@@ -1034,11 +1009,12 @@ export function layeredMaterial(arrayTex, { pbr = null, ...params } = {}) {
       .replace('#include <common>', '#include <common>\nattribute float layer;\nvarying vec3 vLUv;')
       .replace('#include <uv_vertex>', '#include <uv_vertex>\n\tvLUv = vec3( uv, layer );');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\nuniform highp sampler2DArray layerMap;\nuniform float layerPBR[${n * 3}];\nvarying vec3 vLUv;`)
+      .replace('#include <common>', `#include <common>\nuniform highp sampler2DArray layerMap;\nuniform float layerPBR[${n * 4}];\nvarying vec3 vLUv;`)
       .replace('#include <map_fragment>', `
         int li = int( vLUv.z + 0.5 );
         vec4 lTex = texture( layerMap, vec3( vLUv.xy, float( li ) ) );
-        float lGlass = layerPBR[ li * 3 + 2 ] * lTex.a;
+        float lGlass = layerPBR[ li * 4 + 2 ] * lTex.a;
+        float lReflect = layerPBR[ li * 4 + 3 ] * lTex.a;
         diffuseColor.rgb *= lTex.rgb;
       `)
       .replace('#include <color_fragment>', `
@@ -1046,10 +1022,10 @@ export function layeredMaterial(arrayTex, { pbr = null, ...params } = {}) {
           diffuseColor.rgb *= mix( vColor.rgb, vec3( 1.0 ), lGlass );
         #endif
       `)
-      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = mix( 0.75, layerPBR[ li * 3 ], layerPBR[ li * 3 + 2 ] > 0.5 ? lTex.a : 1.0 );')
-      .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = layerPBR[ li * 3 + 1 ] * ( layerPBR[ li * 3 + 2 ] > 0.5 ? lTex.a : 1.0 );')
+      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = mix( 0.75, layerPBR[ li * 4 ], layerPBR[ li * 4 + 2 ] > 0.5 ? lTex.a : 1.0 );')
+      .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = layerPBR[ li * 4 + 1 ] * ( layerPBR[ li * 4 + 2 ] > 0.5 ? lTex.a : 1.0 );')
       // Glass reflects the sky more strongly than a plain dielectric would show at this exposure.
-      .replace('#include <lights_fragment_maps>', '#include <lights_fragment_maps>\n\tradiance *= 1.0 + 1.3 * lGlass;');
+      .replace('#include <lights_fragment_maps>', '#include <lights_fragment_maps>\n\tradiance *= 1.0 + lReflect;');
   };
   m.customProgramCacheKey = () => `arch-layers-${n}-${pbr ? 'pbr' : 'flat'}`;
   return m;
@@ -1061,10 +1037,6 @@ export function materials(detail = 1) {
   const key = Math.round(512 * detail);
   if (mats && mats.key === key) return mats;
   const surf = surfaceArray(detail);
-  mats = {
-    key,
-    surface: layeredMaterial(surf, { pbr: DEFS }),
-    facade: layeredMaterial(facadeArray(detail), {}),
-  };
+  mats = { key, surface: layeredMaterial(surf, { pbr: DEFS }) };
   return mats;
 }
