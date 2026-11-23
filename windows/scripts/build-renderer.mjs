@@ -20,6 +20,7 @@ await build({
   loader: { '.jpg': 'file' },
   assetNames: 'assets/[name]-[hash]',
   logLevel: 'warning',
+  loader: { '.bin': 'binary', '.jpg': 'dataurl', '.png': 'dataurl' },
 });
 
 for (const f of ['index.html', 'styles.css']) fs.copyFileSync(path.join(root, 'src/renderer', f), path.join(dist, f));

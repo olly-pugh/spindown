@@ -1,0 +1,275 @@
+{
+ "skin:m": {
+  "src": "skins/young_caucasian_male/young_lightskinned_male_diffuse.png",
+  "rect": [
+   0,
+   0,
+   512,
+   512
+  ]
+ },
+ "skin:f": {
+  "src": "skins/young_caucasian_female/young_lightskinned_female_diffuse.png",
+  "rect": [
+   512,
+   0,
+   512,
+   512
+  ]
+ },
+ "skin:o": {
+  "src": "skins/old_caucasian_male/old_lightskinned_male_diffuse.png",
+  "rect": [
+   1024,
+   0,
+   512,
+   512
+  ]
+ },
+ "male_casualsuit06": {
+  "src": "clothes/male_casualsuit06/male_casualsuit06_diffuse.png",
+  "rect": [
+   1536,
+   0,
+   512,
+   512
+  ]
+ },
+ "male_casualsuit05": {
+  "src": "clothes/male_casualsuit05/male_casualsuit05_diffuse.png",
+  "rect": [
+   0,
+   512,
+   512,
+   512
+  ]
+ },
+ "male_worksuit01": {
+  "src": "clothes/male_worksuit01/male_worksuit01_diffuse.png",
+  "rect": [
+   512,
+   512,
+   512,
+   512
+  ]
+ },
+ "male_casualsuit03": {
+  "src": "clothes/male_casualsuit03/male_casualsuit03_diffuse.png",
+  "rect": [
+   1024,
+   512,
+   512,
+   512
+  ]
+ },
+ "female_casualsuit01": {
+  "src": "clothes/female_casualsuit01/female_casualsuit01_diffuse.png",
+  "rect": [
+   1536,
+   512,
+   512,
+   512
+  ],
+  "logo": true
+ },
+ "female_elegantsuit01": {
+  "src": "clothes/female_elegantsuit01/female_elegantsuit01_diffuse.png",
+  "rect": [
+   0,
+   1024,
+   512,
+   512
+  ]
+ },
+ "female_sportsuit01": {
+  "src": "clothes/female_sportsuit01/female_sportsuit01_diffuse.png",
+  "rect": [
+   512,
+   1024,
+   512,
+   512
+  ]
+ },
+ "male_casualsuit04": {
+  "src": "clothes/male_casualsuit04/male_casualsuit04_diffuse.png",
+  "rect": [
+   1024,
+   1024,
+   512,
+   512
+  ],
+  "logo": true
+ },
+ "female_casualsuit02": {
+  "src": "clothes/female_casualsuit02/female_casualsuit02_diffuse.png",
+  "rect": [
+   1536,
+   1024,
+   512,
+   512
+  ],
+  "logo": true
+ },
+ "male_casualsuit02": {
+  "src": "clothes/male_casualsuit02/male_casualsuit02_diffuse.png",
+  "rect": [
+   0,
+   1536,
+   512,
+   512
+  ],
+  "logo": true
+ },
+ "short02": {
+  "src": "hair/short02/short02_diffuse.png",
+  "rect": [
+   512,
+   1536,
+   256,
+   256
+  ],
+  "alpha": true
+ },
+ "short04": {
+  "src": "hair/short04/short04_diffuse.png",
+  "rect": [
+   768,
+   1536,
+   256,
+   256
+  ],
+  "alpha": true
+ },
+ "short01": {
+  "src": "hair/short01/short01_diffuse.png",
+  "rect": [
+   512,
+   1792,
+   256,
+   256
+  ],
+  "alpha": true
+ },
+ "ponytail01": {
+  "src": "hair/ponytail01/ponytail01_diffuse.png",
+  "rect": [
+   768,
+   1792,
+   256,
+   256
+  ],
+  "alpha": true
+ },
+ "long01": {
+  "src": "hair/long01/long01_diffuse.png",
+  "rect": [
+   1024,
+   1536,
+   256,
+   256
+  ],
+  "alpha": true
+ },
+ "bob02": {
+  "src": "hair/bob02/bob02_diffuse.png",
+  "rect": [
+   1280,
+   1536,
+   256,
+   256
+  ],
+  "alpha": true
+ },
+ "afro01": {
+  "src": "hair/afro01/afro_diffuse.png",
+  "rect": [
+   1024,
+   1792,
+   256,
+   256
+  ],
+  "alpha": true
+ },
+ "short03": {
+  "src": "hair/short03/short03_diffuse.png",
+  "rect": [
+   1280,
+   1792,
+   256,
+   256
+  ],
+  "alpha": true
+ },
+ "shoes02": {
+  "src": "clothes/shoes02/shoes02_diffuse.png",
+  "rect": [
+   1536,
+   1536,
+   256,
+   256
+  ]
+ },
+ "shoes03": {
+  "src": "clothes/shoes03/shoes03_diffuse.png",
+  "rect": [
+   1792,
+   1536,
+   256,
+   256
+  ]
+ },
+ "shoes04": {
+  "src": "clothes/shoes04/shoes04_diffuse.png",
+  "rect": [
+   1536,
+   1792,
+   256,
+   256
+  ]
+ },
+ "shoes05": {
+  "src": "clothes/shoes05/shoes05_diffuse.png",
+  "rect": [
+   1792,
+   1792,
+   256,
+   256
+  ]
+ },
+ "shoes01": {
+  "src": "clothes/shoes01/shoes01_diffuse.png",
+  "rect": [
+   0,
+   2048,
+   256,
+   256
+  ]
+ },
+ "eyes": {
+  "src": "eyes/materials/brown_eye.png",
+  "rect": [
+   256,
+   2048,
+   256,
+   256
+  ]
+ },
+ "fedora01": {
+  "src": "clothes/fedora01/fedora_diffuse.png",
+  "rect": [
+   0,
+   2304,
+   256,
+   256
+  ]
+ },
+ "flag": {
+  "src": "@flag",
+  "rect": [
+   256,
+   2304,
+   256,
+   256
+  ]
+ }
+}

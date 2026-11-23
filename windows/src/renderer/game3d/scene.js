@@ -6,7 +6,7 @@ import { RiderModel } from './rider.js';
 import { buildDales } from './dales.js';
 import { buildYork } from './york.js';
 import * as C from './common.js';
-import { CROWD_TIME } from './crowd.js';
+import { CROWD_TIME, CROWD_CAMERA, setCrowdDetail } from './crowd.js';
 import * as T from './textures.js';
 import { POWERUPS } from '../../core/world/content.js';
 
@@ -88,6 +88,7 @@ export class WorldScene {
     }
     const t0 = performance.now();
     T.setDetail(this.q.texDetail ?? 1);
+    setCrowdDetail(this.qualityName);
     this.route = route;
     this.world = route.world === 'york' ? buildYork(route, data, this.q) : buildDales(route, data, this.q);
     this.scene.add(this.world.group);
@@ -185,7 +186,7 @@ export class WorldScene {
           this.scene.remove(model.root);
           model.dispose();
         }
-        model = new RiderModel(r.kit, { ghost: r.isGhost, shadows: this.q.shadows, skin: skinFor(r.id), hair: hairFor(r.id) });
+        model = new RiderModel(r.kit, { ghost: r.isGhost, shadows: this.q.shadows, skin: skinFor(r.id), hair: hairFor(r.id), body: bodyFor(r) });
         model.kitKey = kitKey(r.kit);
         this.riders.set(r.id, model);
         this.scene.add(model.root);
@@ -203,8 +204,10 @@ export class WorldScene {
     const near = [...this.riders.values()].filter((m) => m.root.visible)
       .map((m) => [m, m.root.position.distanceToSquared(cam)])
       .sort((a, b) => a[1] - b[1]);
-    const limit = this.qualityName === 'low' ? 0 : this.qualityName === 'high' ? 10 : 6;
-    near.forEach(([m, d2], i) => m.setDetail(i < limit && d2 < 28 * 28));
+    // Low: the nearest two riders (your own among them) get the middle level at most.
+    const low = this.qualityName === 'low';
+    const limit = low ? 2 : this.qualityName === 'high' ? 10 : 6;
+    near.forEach(([m, d2], i) => m.setDetail(i < limit && d2 < 28 * 28, low ? Infinity : Math.sqrt(d2) * (this.qualityName === 'high' ? 0.7 : 1)));
     for (const [id, model] of this.riders) {
       if (!seen.has(id)) {
         this.scene.remove(model.root);
@@ -268,6 +271,9 @@ export class WorldScene {
     // Keep the camera above the ground (Dales slopes).
     const ground = this.world.heightAt(want.x, want.z);
     if (want.y < ground + 0.8) want.y = ground + 0.8;
+    // A camera cut: show and hide scenery chunks for the new view this frame (the crowd picks each person's
+    // level of detail from the camera, so stale chunk visibility would leave nearby people missing).
+    if (!this.camInit) this.cullTimer = 0;
     const k = this.camInit ? 1 - Math.exp(-dt * (mode === 'first' ? 30 : 6)) : 1;
     this.camPos.lerp(want, k);
     this.camLook.lerp(look, this.camInit ? 1 - Math.exp(-dt * 10) : 1);
@@ -302,6 +308,7 @@ export class WorldScene {
   updateTokens(sim, dt) {
     this.time += dt;
     CROWD_TIME.value = this.time;
+    CROWD_CAMERA.value.copy(this.camera.position);
     this.world?.update?.(this.time, this.camera);
     const skyU = this.sky.material.uniforms;
     if (skyU.time) skyU.time.value = this.time;
@@ -383,6 +390,11 @@ function skinFor(id) {
   return SKINS[id % SKINS.length];
 }
 const HAIR = ['#3a2718', '#7a5632', '#c9a066', '#1d1a18', '#9a9a9a', '#5a3a22', '#a65e2e'];
+/** About a third of the other riders are women; your own rider (and your ghost) stays as it is. */
+function bodyFor(r) {
+  if (r.isPlayer || r.isGhost) return 'm';
+  return (r.id * 7 + 3) % 10 < 3 ? 'f' : 'm';
+}
 function hairFor(id) {
   return HAIR[(id * 3 + 1) % HAIR.length];
 }
