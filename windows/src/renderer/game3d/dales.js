@@ -12,6 +12,8 @@ import * as T from './textures.js';
 import { RouteField } from '../../core/world/field.js';
 import { rng, hash2 } from '../../core/world/noise.js';
 import { nestedTerrain, Raster, terrainMaterial, imageryTexture } from './ground.js';
+import { Scars } from './cliffs.js';
+import { limestoneFaceMaterial } from './nature.js';
 import nearImageUrl from './data/dales-near.jpg';
 import farImageUrl from './data/dales-far.jpg';
 
@@ -120,6 +122,11 @@ export function buildDales(route, data, q) {
     return [rock, moor, verge];
   }
 
+  // ---- Limestone faces from the 1 m LIDAR (cliffs.js): the terrain is cut away in their 20 m cells ----
+  const scars = new Scars(data.scars, { roadDistance, q, detailAt, ground, rock: limestoneFaceMaterial() });
+  const SCAR_LEVEL = 2; // tiles drawn at this detail or finer show the 3D faces (and have their cells cut out)
+  const apronOut = {};
+
   // ---- Terrain tiles with distance-based detail ----
   const far = data.terrain.far;
   const fx0 = Math.ceil(far.x0 / TILE) * TILE, fx1 = Math.floor((far.x0 + (far.nx - 1) * far.cell) / TILE) * TILE;
@@ -134,8 +141,97 @@ export function buildDales(route, data, q) {
     for (let tx = fx0; tx < fx1; tx += TILE) {
       const cx = tx + TILE / 2, cz = tz + TILE / 2;
       const rd = roadDistance(cx, cz);
-      tiles.push({ x: tx, z: tz, cx, cz, roadNear: rd < TILE, meshes: [], level: -1 });
+      tiles.push({ x: tx, z: tz, cx, cz, roadNear: rd < TILE, meshes: [], level: -1, scarCells: null, scar: null });
     }
+  }
+  {
+    // Which tiles hold cliff cells.
+    const across = Math.round((fx1 - fx0) / TILE);
+    const list = data.scars?.cells ?? [];
+    for (let i = 0; i < list.length; i += 2) {
+      const x = list[i] * scars.cell + scars.cell / 2, z = list[i + 1] * scars.cell + scars.cell / 2;
+      const ti = Math.floor((x - fx0) / TILE), tj = Math.floor((z - fz0) / TILE);
+      const t = tiles[tj * across + ti];
+      if (!t || ti < 0 || ti >= across) continue;
+      (t.scarCells ??= []).push(list[i], list[i + 1]);
+    }
+  }
+
+  /** The 2 m ground under a tile's cliff cells, pushed down out of sight under the faces (see cliffs.js). */
+  function buildApron(tile) {
+    const C = scars.cell, S = 2, M = C / S + 1;
+    const cellSet = new Set();
+    for (let i = 0; i < tile.scarCells.length; i += 2) cellSet.add(`${tile.scarCells[i]},${tile.scarCells[i + 1]}`);
+    const pos = [], det = [], nrm = [], idx = [];
+    const base = tile.roadNear ? heightAt : dem;
+    const hOf = (x, z) => scars.adjust(x, z, base(x, z), apronOut).y;
+    for (let i = 0; i < tile.scarCells.length; i += 2) {
+      const cx = tile.scarCells[i], cz = tile.scarCells[i + 1];
+      const x0 = cx * C, z0 = cz * C;
+      // Heights with a ring of extra samples for normals.
+      const N = M + 2;
+      const hs = new Float32Array(N * N);
+      for (let b = 0; b < N; b++) for (let a = 0; a < N; a++) hs[b * N + a] = hOf(x0 + (a - 1) * S, z0 + (b - 1) * S);
+      const v0 = pos.length / 3;
+      for (let b = 0; b < M; b++) {
+        for (let a = 0; a < M; a++) {
+          const x = x0 + a * S, z = z0 + b * S;
+          const h = hs[(b + 1) * N + a + 1];
+          pos.push(x, h, z);
+          const nx = hs[(b + 1) * N + a] - hs[(b + 1) * N + a + 2], nz = hs[b * N + a + 1] - hs[(b + 2) * N + a + 1], ny = 2 * S;
+          const l = Math.hypot(nx, ny, nz);
+          nrm.push(nx / l, ny / l, nz / l);
+          const rd = tile.roadNear ? roadDistance(x, z) : Infinity;
+          const d = detailAt(x, z, rd);
+          det.push(d[0], d[1], d[2]);
+        }
+      }
+      for (let b = 0; b < M - 1; b++) {
+        for (let a = 0; a < M - 1; a++) {
+          const p = v0 + b * M + a;
+          idx.push(p, p + M, p + 1, p + 1, p + M, p + M + 1);
+        }
+      }
+      // Skirts on edges facing ordinary terrain.
+      const sides = [[0, -1, (k) => k, M], [0, 1, (k) => (M - 1) * M + k, M], [-1, 0, (k) => k * M, M], [1, 0, (k) => k * M + M - 1, M]];
+      for (const [dx, dz, at] of sides) {
+        if (cellSet.has(`${cx + dx},${cz + dz}`)) continue;
+        const s0 = pos.length / 3;
+        for (let k = 0; k < M; k++) {
+          const v = v0 + at(k);
+          pos.push(pos[v * 3], pos[v * 3 + 1] - 3, pos[v * 3 + 2]);
+          nrm.push(nrm[v * 3], nrm[v * 3 + 1], nrm[v * 3 + 2]);
+          det.push(det[v * 3], det[v * 3 + 1], det[v * 3 + 2]);
+        }
+        for (let k = 0; k + 1 < M; k++) {
+          const a = v0 + at(k), b = v0 + at(k + 1), a2 = s0 + k, b2 = s0 + k + 1;
+          idx.push(a, b, a2, b, b2, a2, a, a2, b, b, a2, b2);
+        }
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+    g.setAttribute('detail', new THREE.Float32BufferAttribute(det, 3));
+    g.setIndex(idx);
+    g.computeBoundingSphere();
+    const m = new THREE.Mesh(g, ground);
+    m.receiveShadow = true;
+    return m;
+  }
+
+  /** A tile's limestone: the apron and the rock faces with their caps (built when first needed). */
+  function buildScar(tile) {
+    const parts = [];
+    if (tile.scarCells) parts.push(buildApron(tile));
+    const faces = scars.buildTile(tile.x, tile.z, tile.x + TILE, tile.z + TILE);
+    if (faces) parts.push(faces.face, ...(faces.cap ? [faces.cap] : []));
+    const g = new THREE.Group();
+    for (const p of parts) g.add(p);
+    g.visible = false;
+    terrainGroup.add(g);
+    tile.scar = g;
+    return g;
   }
 
   function buildTile(tile, level) {
@@ -186,10 +282,25 @@ export function buildDales(route, data, q) {
       edges.push(e);
     }
     const idx = [];
+    // Cells holding a limestone face are cut out (at every detail level up to SCAR_LEVEL); the apron and the 3D
+    // face fill them. Their edges get skirts, like the tile's own edges.
+    const holes = level <= SCAR_LEVEL && tile.scarCells ? new Uint8Array((n - 1) * (n - 1)) : null;
+    if (holes) {
+      for (let j = 0; j < n - 1; j++) for (let i = 0; i < n - 1; i++) holes[j * (n - 1) + i] = scars.isCliffCell(tile.x + (i + 0.5) * step, tile.z + (j + 0.5) * step) ? 1 : 0;
+    }
+    const isHole = (i, j) => holes && i >= 0 && j >= 0 && i < n - 1 && j < n - 1 && holes[j * (n - 1) + i] === 1;
+    const holeSkirts = [];
     for (let j = 0; j < n - 1; j++) {
       for (let i = 0; i < n - 1; i++) {
         const a = j * n + i, b = a + 1, c = a + n, d = c + 1;
+        if (isHole(i, j)) continue;
         idx.push(a, c, b, b, c, d);
+        if (holes) {
+          if (isHole(i, j - 1)) holeSkirts.push([a, b]);
+          if (isHole(i, j + 1)) holeSkirts.push([c, d]);
+          if (isHole(i - 1, j)) holeSkirts.push([a, c]);
+          if (isHole(i + 1, j)) holeSkirts.push([b, d]);
+        }
       }
     }
     for (const e of edges) {
@@ -198,10 +309,34 @@ export function buildDales(route, data, q) {
         idx.push(a, b, a2, b, b2, a2, a, a2, b, b, a2, b2); // both windings: a skirt is seen from either side
       }
     }
+    let posA = pos, nrmA = nrm, detA = det;
+    if (holeSkirts.length) {
+      // Extra vertices hanging under each hole edge.
+      const extra = holeSkirts.length * 2;
+      posA = new Float32Array(pos.length + extra * 3);
+      nrmA = new Float32Array(nrm.length + extra * 3);
+      detA = new Float32Array(det.length + extra * 3);
+      posA.set(pos);
+      nrmA.set(nrm);
+      detA.set(det);
+      let w = vcount;
+      for (const [a, b] of holeSkirts) {
+        for (const s of [a, b]) {
+          for (let k = 0; k < 3; k++) {
+            posA[w * 3 + k] = pos[s * 3 + k] - (k === 1 ? drop + 2 : 0);
+            nrmA[w * 3 + k] = nrm[s * 3 + k];
+            detA[w * 3 + k] = det[s * 3 + k];
+          }
+          w++;
+        }
+        const a2 = w - 2, b2 = w - 1;
+        idx.push(a, b, a2, b, b2, a2, a, a2, b, b, a2, b2);
+      }
+    }
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
-    g.setAttribute('detail', new THREE.BufferAttribute(det, 3));
+    g.setAttribute('position', new THREE.BufferAttribute(posA, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(nrmA, 3));
+    g.setAttribute('detail', new THREE.BufferAttribute(detA, 3));
     g.setIndex(idx);
     g.computeBoundingSphere();
     const mesh = new THREE.Mesh(g, ground);
@@ -209,6 +344,8 @@ export function buildDales(route, data, q) {
     mesh.visible = false;
     terrainGroup.add(mesh);
     tile.meshes[level] = mesh;
+    // A tile with its cliff cells cut out needs its faces ready before it is first shown.
+    if (holes && !tile.scar) buildScar(tile);
     return mesh;
   }
 
@@ -268,6 +405,8 @@ export function buildDales(route, data, q) {
           t.meshes[k] = undefined;
         }
       });
+      // The limestone faces go with the detailed meshes that have their cells cut out.
+      if (t.scar) t.scar.visible = show >= 0 && show <= SCAR_LEVEL && !!t.scarCells;
     }
   }
 
@@ -335,8 +474,22 @@ export function buildDales(route, data, q) {
       parts.push(g);
     }
     const streamParts = [];
+    // Becks, split where they would run down a rock face (Malham Beck "flows" over the Cove in the map data: in
+    // fact it rises from the foot of it).
+    const pieces = [];
     for (const s of data.streams ?? []) {
-      const pts = densify(W(s.p), 4);
+      const all = densify(W(s.p), 4);
+      let cur = [];
+      for (let i = 0; i < all.length; i += 2) {
+        if (scars.underFace(all[i], all[i + 1])) {
+          if (cur.length >= 4) pieces.push({ p: cur, w: s.w });
+          cur = [];
+        } else cur.push(all[i], all[i + 1]);
+      }
+      if (cur.length >= 4) pieces.push({ p: cur, w: s.w });
+    }
+    for (const s of pieces) {
+      const pts = s.p;
       // Only becks that can be seen from the road.
       let near = false;
       for (let i = 0; i < pts.length && !near; i += 8) near = roadDistance(pts[i], pts[i + 1]) < 900;
@@ -422,7 +575,7 @@ export function buildDales(route, data, q) {
     const tryAdd = (x, z, kind, s, pri) => {
       const rd = roadDistance(x, z);
       if (rd < ROAD_HALF + 4) return;
-      if (wet.get(x, z)) return;
+      if (wet.get(x, z) || scars.underFace(x, z)) return;
       spots.push({ x, z, kind, s, pri: rd + pri });
     };
     for (let i = 0; i < (data.trees ?? []).length; i += 2) tryAdd(data.trees[i], -data.trees[i + 1], 'broad', 0.9 + r() * 0.5, -200);
