@@ -257,7 +257,11 @@ export function buildBike(kit, bones, detail = 'near', fit = null) {
   const htTop = V(0, 0.872, -0.414), htBot = V(0, 0.715, -0.462);
   const seatDir = V(0, Math.sin(THREE.MathUtils.degToRad(73.5)), Math.cos(THREE.MathUtils.degToRad(73.5)));
   const onSeat = (y) => BB.clone().addScaledVector(seatDir, (y - BB.y) / seatDir.y);
-  const cluster = onSeat(0.8), stayTop = onSeat(0.69);
+  const steel = kit.bike?.id === 'tourer', gravel = kit.bike?.id === 'gravel';
+  // Steel: a level top tube to a high seat cluster, the stays meeting there; aero: sloping, dropped stays.
+  const cluster = onSeat(steel ? 0.858 : 0.8), stayTop = steel ? onSeat(0.845) : onSeat(0.69);
+  /** A frame tube's section: the aero profile, or a round steel tube of radius r. */
+  const sec = (prof, r) => (steel ? () => [r, r, 1] : prof);
   const dropR = REAR.clone().add(V(0.064, 0, 0)), dropL = REAR.clone().add(V(-0.064, 0, 0));
   const forkR = FRONT.clone().add(V(0.052, 0, 0)), forkL = FRONT.clone().add(V(-0.052, 0, 0));
   // Decal rows in the atlas: v ranges (flipY false: v = y / H).
@@ -265,14 +269,14 @@ export function buildBike(kit, bones, detail = 'near', fit = null) {
 
   // ---- Frame tubes ----
   // Head tube: tall, deeper at the bottom (tapered steerer), aero section.
-  add(aeroTube([htBot.clone().add(V(0, -0.02, -0.006)), htBot.clone().lerp(htTop, 0.5), htTop.clone().add(V(0, 0.012, 0.004))], (u) => [0.025 - 0.004 * u, 0.041 - 0.007 * u, 0.5], { rings: 6, radial: RAD }), paint, PAINT);
+  add(aeroTube([htBot.clone().add(V(0, -0.02, -0.006)), htBot.clone().lerp(htTop, 0.5), htTop.clone().add(V(0, 0.012, 0.004))], sec((u) => [0.025 - 0.004 * u, 0.041 - 0.007 * u, 0.5], 0.0185), { rings: 6, radial: RAD }), paint, PAINT);
   // Down tube: deep aerofoil, flaring into the head tube and the bottom bracket. Logo along its side.
   add(aeroTube([htBot.clone().add(V(0, 0.01, 0.01)), htBot.clone().lerp(BB, 0.35).add(V(0, 0, 0.004)), htBot.clone().lerp(BB, 0.7), BB.clone().add(V(0, 0.035, -0.035))],
-    (u) => [0.0225 + 0.008 * Math.max(0, (u - 0.75) * 4) + 0.006 * Math.max(0, (0.15 - u) * 6.7), 0.035 + 0.006 * Math.max(0, (u - 0.8) * 5) + 0.004 * Math.max(0, (0.2 - u) * 5), 0.4],
+    sec((u) => [0.0225 + 0.008 * Math.max(0, (u - 0.75) * 4) + 0.006 * Math.max(0, (0.15 - u) * 6.7), 0.035 + 0.006 * Math.max(0, (u - 0.8) * 5) + 0.004 * Math.max(0, (0.2 - u) * 5), 0.4], 0.0165),
     { rings: RINGS, radial: RAD, lead: V(0, 0.3, -1).normalize(), uv: (u, x, y) => [x > 0 ? 0.92 - 0.88 * u : 0.04 + 0.88 * u, logoRow[0] + (logoRow[1] - logoRow[0]) * (0.5 - 0.42 * y)] }), paint, PAINT, bones.frame, 'keep');
   // Top tube: slopes down to the seat cluster, flattened, wider at the head tube.
   add(aeroTube([htTop.clone().add(V(0, -0.022, 0.012)), htTop.clone().lerp(cluster, 0.5).add(V(0, 0.004, 0)), cluster.clone().add(V(0, 0.004, -0.01))],
-    (u) => [0.02 - 0.004 * u, 0.0205 - 0.003 * u, 0.75], { rings: Math.round(10 * R), radial: RAD, lead: V(0, 1, 0),
+    sec((u) => [0.02 - 0.004 * u, 0.0205 - 0.003 * u, 0.75], 0.0145), { rings: Math.round(10 * R), radial: RAD, lead: V(0, 1, 0),
       // A small wordmark near the seat cluster on each side (the text fills a quarter of the tube's length).
       uv: (u, x, y) => {
         const t = (u - 0.62) / 0.3;
@@ -281,7 +285,7 @@ export function buildBike(kit, bones, detail = 'near', fit = null) {
       } }), paint, PAINT, bones.frame, 'keep');
   // Seat tube: aero, curving round the rear wheel near the bottom bracket.
   const stMid = onSeat(0.45).add(V(0, 0, 0.012));
-  add(aeroTube([BB.clone().add(V(0, 0.02, 0.012)), stMid, onSeat(0.62), cluster.clone().add(V(0, 0.02, 0))], (u) => [0.019, 0.031 - 0.007 * u, 0.45], { rings: Math.round(12 * R), radial: RAD }), paint, PAINT);
+  add(aeroTube([BB.clone().add(V(0, 0.02, 0.012)), stMid, onSeat(0.62), cluster.clone().add(V(0, 0.02, 0))], sec((u) => [0.019, 0.031 - 0.007 * u, 0.45], 0.0145), { rings: Math.round(12 * R), radial: RAD }), paint, PAINT);
   // Bottom bracket shell.
   add(new THREE.CylinderGeometry(0.03, 0.03, 0.086, Math.round(16 * R)).rotateZ(Math.PI / 2).translate(BB.x, BB.y, BB.z), paint, PAINT);
   add(new THREE.SphereGeometry(0.036, Math.round(12 * R), Math.round(8 * R)).scale(1.05, 1.0, 1.15).translate(BB.x, BB.y + 0.012, BB.z - 0.01), paint, PAINT);
@@ -289,16 +293,16 @@ export function buildBike(kit, bones, detail = 'near', fit = null) {
     // Chain stays: deep at the bottom bracket, tapering to the dropout.
     const dr = s > 0 ? dropR : dropL;
     add(aeroTube([BB.clone().add(V(0.038 * s, -0.004, 0.025)), BB.clone().lerp(dr, 0.5).add(V(0.018 * s, -0.008, 0)), dr.clone().add(V(0, 0.004, -0.012))],
-      (u) => [0.011 - 0.003 * u, 0.019 - 0.008 * u, 0.7], { rings: Math.round(10 * R), radial: Math.round(10 * R), lead: V(0, 1, 0) }), second, PAINT);
+      sec((u) => [0.011 - 0.003 * u, 0.019 - 0.008 * u, 0.7], 0.0095), { rings: Math.round(10 * R), radial: Math.round(10 * R), lead: V(0, 1, 0) }), second, PAINT);
     // Dropped seat stays: thin aero, meeting the seat tube below the top tube.
     add(aeroTube([stayTop.clone().add(V(0.016 * s, 0.0, 0.006)), stayTop.clone().lerp(dr, 0.45).add(V(0.034 * s, 0, 0)), dr.clone().add(V(0, 0.014, 0.0))],
-      (u) => [0.0085, 0.013 - 0.003 * u, 0.6], { rings: Math.round(10 * R), radial: Math.round(10 * R) }), second, PAINT);
+      sec((u) => [0.0085, 0.013 - 0.003 * u, 0.6], 0.0078), { rings: Math.round(10 * R), radial: Math.round(10 * R) }), second, PAINT);
     // Dropout.
     add(boxAt(0.008, 0.036, 0.034, dr.clone().add(V(0, 0.006, 0))), second, PAINT);
     // Fork blades: wide fore-aft, from the crown to the axle.
     const fk = s > 0 ? forkR : forkL;
     add(aeroTube([htBot.clone().add(V(0.034 * s, -0.03, -0.004)), htBot.clone().lerp(fk, 0.5).add(V(0.008 * s, 0, -0.008)), fk.clone().add(V(0, 0.012, 0.004))],
-      (u) => [0.011 - 0.002 * u, 0.027 - 0.01 * u, 0.45], { rings: Math.round(10 * R), radial: Math.round(10 * R) }), second, PAINT);
+      sec((u) => [0.011 - 0.002 * u, 0.027 - 0.01 * u, 0.45], 0.0105), { rings: Math.round(10 * R), radial: Math.round(10 * R) }), second, PAINT);
   }
   // Fork crown, integrated with the head tube.
   add(new THREE.SphereGeometry(0.04, Math.round(14 * R), Math.round(8 * R)).scale(1.15, 0.55, 0.95).translate(htBot.x, htBot.y - 0.03, htBot.z - 0.002), paint, PAINT);
@@ -307,7 +311,8 @@ export function buildBike(kit, bones, detail = 'near', fit = null) {
   add(new THREE.SphereGeometry(0.02, Math.round(10 * R), Math.round(6 * R)).scale(1.4, 1, 1.2).translate(stayTop.x, stayTop.y, stayTop.z + 0.004), paint, PAINT);
   // Seat post: aero (D-shaped), carbon, up the seat tube line to the saddle clamp.
   const clamp = onSeat(SADDLE.y - 0.045);
-  add(aeroTube([cluster.clone().add(V(0, 0.01, 0)), clamp], () => [0.0135, 0.02, 0.4], { rings: 3, radial: Math.round(12 * R) }), carbon, CARBON);
+  if (steel) add(roundTube([cluster.clone().add(V(0, 0.01, 0)), clamp], 0.0136, { rings: 2, radial: Math.round(12 * R) }), alloy, METAL);
+  else add(aeroTube([cluster.clone().add(V(0, 0.01, 0)), clamp], () => [0.0135, 0.02, 0.4], { rings: 3, radial: Math.round(12 * R) }), carbon, CARBON);
   add(boxAt(0.03, 0.022, 0.05, clamp.clone().add(V(0, 0.014, 0.004))), black, SATIN);
 
   // ---- Saddle: narrow nose, wide flat tail, a central relief channel; rails beneath ----
@@ -380,16 +385,21 @@ export function buildBike(kit, bones, detail = 'near', fit = null) {
     const put = (g, colour, surf, uvKeep) => W.push(part(g.translate(at.x, at.y, at.z), colour, surf, bone, uvKeep ? 'keep' : undefined));
     const seg = detail === 'near' ? 56 : detail === 'mid' ? 30 : 18;
     // Tyre: round section with a sidewall label band (atlas row 3).
-    const tyreR = 0.0125, tyreC = FIT.WHEEL_R - tyreR;
-    const tyreProf = [];
+    const tyreR = gravel ? 0.0185 : 0.0125, tyreC = FIT.WHEEL_R - tyreR;
     const TP = detail === 'near' ? 12 : detail === 'mid' ? 8 : 6;
-    for (let k = 0; k <= TP; k++) {
-      const a = -Math.PI / 2 + (k / TP) * Math.PI * 2 * 0.999;
-      tyreProf.push([tyreC + Math.cos(a) * tyreR * 0.95, Math.sin(a) * tyreR]);
-    }
-    put(lathe(tyreProf, seg), '#161616', RUBBER);
+    // Profile arc from angle a0 to a1 (0 = the tread, +-pi/2 the sidewalls' widest points), slightly flattened.
+    const arc = (a0, a1, n) => Array.from({ length: n + 1 }, (_, k) => {
+      const a = a0 + ((a1 - a0) * k) / n;
+      return [tyreC + Math.cos(a) * tyreR * 0.95, Math.sin(a) * tyreR];
+    });
+    if (gravel) {
+      // Dark tread over the crown, tan skinwalls round the sides (two lathes sharing their edge rings).
+      const t = 0.95;
+      put(lathe(arc(-t, t, Math.max(3, TP / 2)), seg), '#161616', RUBBER);
+      put(lathe(arc(t, 2 * Math.PI - t, TP), seg), '#a5835a', RUBBER);
+    } else put(lathe(arc(-Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * 0.999, TP), seg), '#161616', RUBBER);
     // Rim: brake track to the spoke bed, a blunt U (toroidal) section. Decals on the sidewalls.
-    const rOut = FIT.WHEEL_R - 0.021, rIn = rOut - depth;
+    const rOut = FIT.WHEEL_R - (gravel ? 0.033 : 0.021), rIn = rOut - depth;
     const half = deep ? 0.0135 : 0.0105;
     const rimProf = [[rOut, -half * 0.86], [rOut - depth * 0.15, -half], [rOut - depth * 0.6, -half * 0.96], [rIn + depth * 0.12, -half * 0.72], [rIn, -half * 0.3], [rIn - 0.002, 0], [rIn, half * 0.3], [rIn + depth * 0.12, half * 0.72], [rOut - depth * 0.6, half * 0.96], [rOut - depth * 0.15, half], [rOut, half * 0.86]];
     if (deep) put(rimUV(lathe(rimProf, seg), rOut, rIn, [0.5, 0.75]), gold ? '#e5c76b' : '#ffffff', gold ? ALLOY : CARBON, true);
