@@ -6,7 +6,7 @@
 //
 // Three levels of detail, chosen per person in the vertex shader from the camera distance: the clothed, textured
 // figures within 16 m (5-8k triangles), a 1.5k-triangle body coloured from the outfit to 55 m, and a
-// 440-triangle one beyond. Instanced in chunks with distance culling: a few draw calls for hundreds of people.
+// 440-triangle one beyond (9 and 40 m on low graphics, 22 and 70 m on high). Instanced in chunks with distance culling: a few draw calls for hundreds of people.
 import * as THREE from 'three';
 import crowdBin from './people/crowd.bin';
 import atlasUrl from './people/crowd-atlas.jpg';
@@ -17,6 +17,13 @@ import { unpack } from './people/pack.js';
 export const CROWD_TIME = { value: 0 };
 /** Camera position (world), set by the scene each frame: each person picks their level of detail from it. */
 export const CROWD_CAMERA = { value: new THREE.Vector3() };
+/** Where the levels of detail change (m), by graphics quality; shared by every crowd material. */
+const RANGES = { low: [9, 40], medium: [16, 55], high: [22, 70] };
+const LOD_NEAR = { value: 16 }, LOD_FAR = { value: 55 };
+/** Call before building a world: the crowd's level-of-detail ranges for this quality ('low'|'medium'|'high'). */
+export function setCrowdDetail(quality) {
+  [LOD_NEAR.value, LOD_FAR.value] = RANGES[quality] ?? RANGES.medium;
+}
 
 const TOPS = ['#24479c', '#b33a3a', '#34704a', '#e0ac1a', '#6a7076', '#ece6d4', '#7a4a8e', '#127c90', '#cf6a12', '#32485a', '#d65f8c', '#8a5a34', '#1d7f46', '#f2f2f2', '#c8102e', '#1b1b1d', '#5b7fb5'];
 const BOTTOMS = ['#26324a', '#33343a', '#5a4e44', '#46597a', '#1f2328', '#6b6f73', '#3d3a36', '#7a6a52'];
@@ -81,7 +88,7 @@ function variantStats(name) {
 function patchVertex(sh, variant, lod) {
   const d = crowdData();
   const [rate, bounce] = MOTION[variant.arms] ?? MOTION.down;
-  Object.assign(sh.uniforms, { uTime: CROWD_TIME, uCam: CROWD_CAMERA, uRate: { value: rate }, uBounce: { value: bounce }, uAtlas: { value: d.atlas } });
+  Object.assign(sh.uniforms, { uTime: CROWD_TIME, uCam: CROWD_CAMERA, uNear: LOD_NEAR, uFar: LOD_FAR, uRate: { value: rate }, uBounce: { value: bounce }, uAtlas: { value: d.atlas } });
   const near = lod === 'near';
   sh.vertexShader = sh.vertexShader
     .replace('#include <common>', `#include <common>
@@ -91,12 +98,13 @@ function patchVertex(sh, variant, lod) {
       attribute vec4 iMisc; // phase, energy, tint trousers, spare
       uniform float uTime, uRate, uBounce;
       uniform vec3 uCam;
+      uniform float uNear, uFar;
       float crowdBlend() { return 0.5 + 0.5 * sin(uTime * uRate * (0.85 + 0.3 * iMisc.y) + iMisc.x); }
-      // Level of detail per person: the near figure inside ${NEAR} m, the light one beyond.
+      // Level of detail per person: the clothed figure inside uNear, the light body to uFar, the lightest beyond.
       float crowdHide() {
       #ifdef USE_INSTANCING
         float camDist = distance((modelMatrix * vec4(instanceMatrix[3].xyz, 1.0)).xyz, uCam);
-        return ${lod === 'near' ? `step(${NEAR}.0, camDist)` : lod === 'far' ? `1.0 - step(${NEAR}.0, camDist) * (1.0 - step(${FAR}.0, camDist))` : `1.0 - step(${FAR}.0, camDist)`};
+        return ${lod === 'near' ? 'step(uNear, camDist)' : lod === 'far' ? '1.0 - step(uNear, camDist) * (1.0 - step(uFar, camDist))' : '1.0 - step(uFar, camDist)'};
       #else
         return 0.0;
       #endif
@@ -194,8 +202,6 @@ function rng(seed) {
   return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
 }
 
-const NEAR = 16; // metres: clothed, textured people inside this, light ones beyond
-const FAR = 55; // and the lightest beyond this
 const CHUNK = 24;
 
 /** points: [{x, y, z, rot}] (rot faces them across the road). Returns a Group of culled, chunked instances. */
@@ -252,7 +258,7 @@ export function crowd(points, { shadows = true, maxDistance = 300 } = {}) {
       return m;
     });
     // Each level is drawn only for chunks that can hold someone in its range; the shader picks per person.
-    const [mn, mf, mv] = meshes;
+    const [mn, mf, mv] = meshes, NEAR = LOD_NEAR.value, FAR = LOD_FAR.value;
     mn.userData.maxDistance = NEAR + mn.userData.radius;
     mn.userData.minDistance = 0;
     mf.userData.maxDistance = FAR + mf.userData.radius;

@@ -6,7 +6,7 @@ import { RiderModel } from './rider.js';
 import { buildDales } from './dales.js';
 import { buildYork } from './york.js';
 import * as C from './common.js';
-import { CROWD_TIME, CROWD_CAMERA } from './crowd.js';
+import { CROWD_TIME, CROWD_CAMERA, setCrowdDetail } from './crowd.js';
 import * as T from './textures.js';
 import { POWERUPS } from '../../core/world/content.js';
 
@@ -83,6 +83,7 @@ export class WorldScene {
     }
     const t0 = performance.now();
     T.setDetail(this.q.texDetail ?? 1);
+    setCrowdDetail(this.qualityName);
     this.route = route;
     this.world = route.world === 'york' ? buildYork(route, yorkData, this.q) : buildDales(route, this.q);
     this.scene.add(this.world.group);
@@ -197,8 +198,10 @@ export class WorldScene {
     const near = [...this.riders.values()].filter((m) => m.root.visible)
       .map((m) => [m, m.root.position.distanceToSquared(cam)])
       .sort((a, b) => a[1] - b[1]);
-    const limit = this.qualityName === 'low' ? 0 : this.qualityName === 'high' ? 10 : 6;
-    near.forEach(([m, d2], i) => m.setDetail(i < limit && d2 < 28 * 28, Math.sqrt(d2) * (this.qualityName === 'high' ? 0.7 : 1)));
+    // Low: the nearest two riders (your own among them) get the middle level at most.
+    const low = this.qualityName === 'low';
+    const limit = low ? 2 : this.qualityName === 'high' ? 10 : 6;
+    near.forEach(([m, d2], i) => m.setDetail(i < limit && d2 < 28 * 28, low ? Infinity : Math.sqrt(d2) * (this.qualityName === 'high' ? 0.7 : 1)));
     for (const [id, model] of this.riders) {
       if (!seen.has(id)) {
         this.scene.remove(model.root);
