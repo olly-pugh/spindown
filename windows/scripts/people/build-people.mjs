@@ -275,7 +275,7 @@ function buildRider({ shape = RIDER_SHAPE, body = 'm', proxyFile = 'proxymeshes/
   // Landmarks in the rest pose for the kit shader.
   const R = (n, k = 'head') => restBones[n][k];
   const landmarks = {
-    shoulderR: R('upperarm01.R'), elbowR: R('lowerarm01.R'), wristR: R('wrist.R'),
+    shoulderR: R('upperarm01.R'), elbowR: R('lowerarm01.R'), wristR: R('wrist.R'), knuckleR: R('finger3-1.R'),
     hipR: R('upperleg01.R'), kneeR: R('lowerleg01.R'), ankleR: R('foot.R'),
     neck: R('neck01'), chest: R('spine02'), waist: R('spine04'), pelvis: R('spine05'), headTop: R('head', 'tail'),
   };

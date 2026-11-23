@@ -76,6 +76,10 @@ export function kitMaterial(kit, skin, landmarks, { beard = 0, hair = '#3a2718' 
   // Logo colour: the accent if it contrasts with the body, else white or near black.
   const lum = (c) => c.r * 0.3 + c.g * 0.59 + c.b * 0.11;
   const logo = Math.abs(lum(accent) - lum(body)) > 0.15 ? accent.clone() : lum(body) > 0.4 ? new THREE.Color('#151515') : new THREE.Color('#f4f4f4');
+  // Socks: white mostly, black or the accent on some kits; fingerless mitts on some riders.
+  const h = [...`${J.id}${skin}`].reduce((a, ch) => (a * 37 + ch.charCodeAt(0)) >>> 0, 3);
+  const sockColour = new THREE.Color(['#f1f1ee', '#f1f1ee', '#f1f1ee', '#151517', J.accent, '#f1f1ee', '#151517'][h % 7]);
+  const gloves = (h >> 4) % 3 === 0;
   const uniforms = {
     uSkin: { value: tex },
     uSkinMean: skinMean(tex),
@@ -86,7 +90,9 @@ export function kitMaterial(kit, skin, landmarks, { beard = 0, hair = '#3a2718' 
     uAccent: { value: accent },
     uLogoCol: { value: logo },
     uShorts: { value: new THREE.Color('#141518') },
-    uSock: { value: new THREE.Color('#f1f1ee') },
+    uSock: { value: sockColour },
+    uGloves: { value: gloves ? 1 : 0 },
+    uKnuckle: { value: v3(L.knuckleR ?? L.wristR) },
     uPattern: { value: PATTERNS[J.pattern] ?? 0 },
     uBeard: { value: beard },
     uHairCol: { value: new THREE.Color(hair) },
@@ -120,7 +126,8 @@ export function kitMaterial(kit, skin, landmarks, { beard = 0, hair = '#3a2718' 
         uniform vec3 uSkinMean, uSkinTone, uBody, uSleeve, uAccent, uLogoCol, uShorts, uSock;
         uniform float uPattern, uBeard;
         uniform vec3 uHairCol;
-        uniform vec3 uShoulder, uWrist, uHip, uAnkle, uNeck, uWaist;
+        uniform vec3 uShoulder, uWrist, uHip, uAnkle, uNeck, uWaist, uKnuckle;
+        uniform float uGloves;
         varying vec3 vRest;
         varying vec4 vKit;
         varying vec2 vSkinUv;
@@ -221,13 +228,22 @@ export function kitMaterial(kit, skin, landmarks, { beard = 0, hair = '#3a2718' 
           sc = mix(sc, vec3(0.45), sideStripe);
           // Socks: white with an accent stripe at the top.
           vec3 sk = mix(uSock, uAccent, band(sockTop + 0.015, sockTop + 0.035, legT));
+          // Fingerless mitts: from just above the wrist to the middle of the first finger bones.
+          float mitt = 0.0;
+          if (uGloves > 0.5) {
+            vec3 KW = uKnuckle - uWrist;
+            float handT = dot(q - uWrist, KW) / dot(KW, KW);
+            mitt = aastep(0.5, handW) * aastep(-0.35, handT) * (1.0 - aastep(1.3, handT));
+            mitt = max(mitt, onArm * aastep(0.985, armT) * (1.0 - aastep(0.5, handW)) * aastep(0.3, handW + 0.3));
+          }
           // ---- Compose ----
           vec3 col = skinCol;
           float sockM = sock * onLeg;
           col = mix(col, sk, sockM);
           col = mix(col, sc, shorts);
           col = mix(col, jc, jersey);
-          isKit = clamp(jersey + shorts + sockM, 0.0, 1.0);
+          col = mix(col, mix(vec3(0.03), uAccent, band(-0.36, -0.28, dot(q - uWrist, uKnuckle - uWrist) / dot(uKnuckle - uWrist, uKnuckle - uWrist)) * 0.8), mitt);
+          isKit = clamp(jersey + shorts + sockM + mitt, 0.0, 1.0);
           kitRough = mix(0.5, mix(0.56, 0.4, shorts), isKit);
           kitRough = mix(kitRough, 0.85, sockM);
           kitRough = mix(kitRough, 0.35, logo * jersey);
@@ -283,6 +299,6 @@ export function kitMaterial(kit, skin, landmarks, { beard = 0, hair = '#3a2718' 
           totalEmissiveRadiance += diffuseColor.rgb * kitSheen * fres * 0.18;
         }`);
   };
-  m.customProgramCacheKey = () => 'spindown-kit-v4';
+  m.customProgramCacheKey = () => 'spindown-kit-v5';
   return m;
 }
