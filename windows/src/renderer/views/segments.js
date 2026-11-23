@@ -64,6 +64,24 @@ const CSS = `
 .segs .spark { width: 100%; height: 70px; display: block; }
 .segs .legend { font-size: 13px; color: var(--muted); margin: 8px 4px 0; }
 .ride-segs td.name { font-weight: 650; }
+
+.seg-board { margin-top: 8px; padding: 8px 10px 9px; border-left: 4px solid var(--green); animation: slidein 0.25s ease-out; pointer-events: none; }
+.seg-board.kom { border-left-color: var(--red); }
+.seg-board.done { border-left-color: var(--blue); }
+.seg-board .t { font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--green); }
+.seg-board.kom .t { color: #ff7b72; } .seg-board.done .t { color: var(--cyan); }
+.seg-board .n { font-size: 15px; font-weight: 800; line-height: 1.2; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seg-board .r { display: grid; grid-template-columns: 22px 1fr auto auto; gap: 8px; align-items: baseline; font-size: 15px; font-weight: 700; padding: 2px 4px; border-radius: 6px; }
+.seg-board .r .p { color: var(--muted); text-align: right; font-size: 13px; }
+.seg-board .r .d { white-space: nowrap; }
+.seg-board .r .d .pr { display: inline-block; background: var(--yellow); color: #000; font-size: 10px; font-weight: 850; border-radius: 5px; padding: 0 5px; margin-left: 6px; vertical-align: 1px; }
+.seg-board .r .tm { text-align: right; min-width: 40px; }
+.seg-board .r .g { text-align: right; min-width: 50px; font-size: 14px; }
+.seg-board .r .g.ahead { color: var(--green); } .seg-board .r .g.behind { color: #ff8a80; }
+.seg-board .r.you { background: rgba(255, 214, 10, 0.92); color: #000; }
+.seg-board .r.you .p { color: #000; }
+.seg-board .gap-row { font-size: 12px; color: var(--muted); text-align: center; line-height: 1.1; }
+.seg-board .foot { font-size: 12px; color: var(--muted); margin-top: 5px; }
 `;
 
 let styled = false;
@@ -170,6 +188,39 @@ export function SegmentHud({ sim, units }) {
     ${live.results.map((r) => html`<${ResultCard} key=${r.key} r=${r} />`)}
     ${active.map((a, i) => html`<${LiveCard} key=${a.segment.id} a=${a} compact=${i > 0 || live.results.length > 0} />`)}
     ${up ? html`<${UpcomingCard} key=${`up-${up.segment.id}`} up=${up} units=${units} compact=${active.length > 0 || live.results.length > 0} />` : null}
+  </div>`;
+}
+
+/**
+ * The segment leaderboard on the left of the HUD: while riding a timed segment (or the KOM) it ranks you now
+ * against every dated attempt at the same point, and for a few seconds after it shows where the attempt finished.
+ */
+export function SegmentBoard({ sim }) {
+  ensureStyles();
+  if (!sim) return null;
+  const now = performance.now();
+  const routeId = sim.route.id;
+  const active = sim.segmentStatus(0, LIVE_KINDS).active.sort((x, y) => (x.segment.kind === 'segment' ? 0 : 1) - (y.segment.kind === 'segment' ? 0 : 1) || x.elapsed - y.elapsed)[0];
+  const done = !active ? live.results.find((r) => r.until > now) : null;
+  const seg = active?.segment ?? done?.segment;
+  if (!seg) return null;
+  const board = active
+    ? E.segmentBoard(sim.profile, routeId, seg, { elapsed: active.elapsed, fraction: active.fraction })
+    : E.segmentBoard(sim.profile, routeId, seg, null, done.result.attempt);
+  if (!board.rows.length) return null;
+  const today = new Date();
+  const first = board.total === 1;
+  return html`<div class="glass seg-board ${seg.kind} ${done ? 'done' : ''}">
+    <div class="t">${done ? '✓ Finished' : '⏱ Segment'} · ${board.place} of ${board.total}</div>
+    <div class="n">${seg.name}</div>
+    ${board.rows.map((r) => r.skipped ? html`<div class="gap-row">⋯ ${r.skipped} more</div>` : html`<div class="r ${r.you ? 'you' : ''}">
+      <span class="p num">${r.place}</span>
+      <span class="d num">${r.you ? (done ? `You · ${E.dayMonth(r.date, today)}` : 'You now') : E.dayMonth(r.date, today)}${r.isPR && !r.you ? html`<span class="pr">PR</span>` : null}</span>
+      <span class="tm num">${r.you && !done ? E.clock(r.at) : E.clock(r.time)}</span>
+      <span class="g num ${r.gap < 0 ? 'ahead' : r.gap > 0 ? 'behind' : ''}">${r.you ? '' : E.signedGap(r.gap)}</span>
+    </div>`)}
+    ${first ? html`<div class="foot">${done ? 'Your first time: next time you race this one.' : 'First attempt: this sets the time to beat.'}</div>`
+      : html`<div class="foot">${done ? 'Final times, with the gap to you.' : 'Gaps at this point: green ahead of you, red behind.'}</div>`}
   </div>`;
 }
 
