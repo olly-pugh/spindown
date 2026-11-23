@@ -23,6 +23,8 @@ export class RideSession {
     this.timer = null;
     this.powerWindow = [];
     this.worldVisible = false;
+    /** Segment efforts ridden in World during this ride ({name, time, power, hr, …}), saved with the ride. */
+    this.segmentEfforts = [];
     /**
      * Set by the World tab while it is on screen: {position() -> {lat, lon, alt}|null, info() -> world ride
      * info|null, capture() -> Promise<JPEG bytes|null>}. Samples taken while it is set carry the rider's real
@@ -123,6 +125,7 @@ export class RideSession {
       this.api.journal.append(Journal.header(id, start, this.equipment), true);
       this.rideID = id;
       this.recorder = new RideRecorder(start);
+      this.segmentEfforts = [];
       this.worldInfo = null;
       this.worldInfoText = null;
       this.lastRecordedSecond = 0;
@@ -193,6 +196,7 @@ export class RideSession {
       recovered: false,
       uploads: Object.fromEntries(this.settings.autoUploadDestinations.map((d) => [d, { status: 'pending' }])),
     };
+    if (this.segmentEfforts.length) record.segments = this.segmentEfforts.slice();
     if (world) record.world = world;
     try {
       await this.api.journal.save(record, r.track, !!this.settings.get('captureRawPackets'), picture);
@@ -219,6 +223,7 @@ export class RideSession {
     this.timer = null;
     this.recorder = null;
     this.rideID = null;
+    this.segmentEfforts = [];
     this.worldInfo = null;
     this.worldInfoText = null;
     this.setPhase('idle');

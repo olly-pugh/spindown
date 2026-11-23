@@ -15,6 +15,7 @@ import { WorldSim, RACE_PRESETS, raceFieldSize } from '../../core/world/sim.js';
 import * as P from '../../core/world/progression.js';
 import { ITEMS, ACHIEVEMENTS, CHALLENGES, POWERUPS, TIERS, MAX_LEVEL, PACERS } from '../../core/world/content.js';
 import { riderParams, steadySpeed } from '../../core/world/physics.js';
+import { SegmentHud, SegmentsPanel, noteSegmentEvent, resetSegmentHud } from './segments.js';
 import { routeLatLon } from '../../core/world/geo.js';
 import { worldRideInfo } from '../../core/worldride.js';
 import yorkData from '../game3d/data/york.json';
@@ -119,6 +120,7 @@ function newSim(app, { routeId, mode = 'free', race = null, startPacer = null })
   G.startD = G.sim.player.d;
   G.rideClock = 0;
   G.raceXP = 0;
+  resetSegmentHud();
   G.profile.lastRoute = routeId;
   for (const e of P.noteRideDay(G.profile)) handleEvent(app, e);
   scheduleSave(app.api);
@@ -132,6 +134,7 @@ function handleEvent(app, e) {
   if (G.eventLog.length > 600) G.eventLog.splice(0, 100);
   const u = app.settings.get('units');
   const a = G.audio;
+  const segmentHud = noteSegmentEvent(app, e); // timed segments and the KOM have their own cards (segments.js)
   switch (e.type) {
     case 'banner': toast('banner', e.text, '', 3.5); break;
     case 'pickup': toast('pickup', `${e.powerup.icon} ${e.powerup.name}`, 'Press Space or click to use', 3); a.chime(); break;
@@ -146,9 +149,13 @@ function handleEvent(app, e) {
     }
     case 'xp': if (G.sim?.mode === 'race') G.raceXP += e.amount; break;
     case 'segment-start':
-      if (e.segment.kind !== 'lap') toast('segment', `${e.segment.kind === 'kom' ? '▲' : '⚡'} ${e.segment.name}`, e.pr ? `PR ${Format.shortDuration(e.pr)} · gold ${Format.shortDuration(e.segment.medals.gold)}` : `Gold under ${Format.shortDuration(e.segment.medals.gold)}`, 3.5);
+      if (e.segment.kind !== 'lap' && !segmentHud) toast('segment', `${e.segment.kind === 'kom' ? '▲' : '⚡'} ${e.segment.name}`, e.pr ? `PR ${Format.shortDuration(e.pr)} · gold ${Format.shortDuration(e.segment.medals.gold)}` : `Gold under ${Format.shortDuration(e.segment.medals.gold)}`, 3.5);
       break;
     case 'segment-end': {
+      if (segmentHud) {
+        if (e.medal || e.result?.isPR) a.chime();
+        break;
+      }
       const medal = e.medal ? { gold: '🥇', silver: '🥈', bronze: '🥉' }[e.medal] : '';
       const pr = e.improved && e.previous != null ? ` · new PR (−${(e.previous - e.time).toFixed(1)} s)` : e.previous != null ? ` · PR ${Format.shortDuration(e.previous)}` : '';
       const speed = e.speed ? ` · ${Format.speedMS(e.speed, u)} ${Format.speedUnit(u)}` : '';
@@ -295,11 +302,21 @@ function ElevationProfile({ sim }) {
   const ghost = sim.ghost && !sim.ghost.hidden ? r.wrap(sim.ghost.d) / r.length : null;
   return html`<svg class="elevation" viewBox="0 0 1000 40" preserveAspectRatio="none">
     ${r.zones.map((z) => html`<rect x=${(z.from / r.length) * 1000} y="0" width=${((z.to - z.from) / r.length) * 1000} height="40" fill=${z.kind === 'kom' ? 'rgba(255,69,58,0.25)' : 'rgba(10,132,255,0.25)'} />`)}
+    ${timedSegmentBands(r).map(([x, w]) => html`<rect x=${x} y="36" width=${w} height="4" fill="rgba(52,199,89,0.95)" />`)}
     <path d=${`${r.profilePath} L1000,40 L0,40 Z`} fill="rgba(255,255,255,0.18)" />
     <path d=${r.profilePath} fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.5" vector-effect="non-scaling-stroke" />
     ${ghost != null ? html`<line x1=${ghost * 1000} x2=${ghost * 1000} y1="0" y2="40" stroke="#5ad1ff" stroke-width="2" vector-effect="non-scaling-stroke" />` : null}
     <line x1=${lap * 1000} x2=${lap * 1000} y1="0" y2="40" stroke="#ffd60a" stroke-width="3" vector-effect="non-scaling-stroke" />
   </svg>`;
+}
+
+/** Timed segments as [x, width] bands on the 0–1000 profile (one that crosses the line is split in two). */
+function timedSegmentBands(r) {
+  r.segmentBands ??= r.segments.filter((s) => s.kind === 'segment').flatMap((s) => {
+    const a = (r.wrap(s.from) / r.length) * 1000, w = ((s.to - s.from) / r.length) * 1000;
+    return a + w <= 1000 ? [[a, w]] : [[a, 1000 - a], [0, a + w - 1000]];
+  });
+  return r.segmentBands;
 }
 
 function RiderList({ sim, units }) {
@@ -404,6 +421,7 @@ function MainMenu({ app, onFreeRide, onRace, onWorkouts, open }) {
     <div class="menu-row">
       <button class="btn big white" onClick=${onWorkouts}>🎯 Workouts</button>
       <button class="btn big white" onClick=${() => open('garage')}>🚲 Garage</button>
+      <button class="btn big white" onClick=${() => open('segments')}>⏱ Segments</button>
       <button class="btn big white" onClick=${() => open('progress')}>🏆 Progress</button>
       <button class="btn big white" onClick=${() => open('options')}>⚙️ World settings</button>
     </div>
@@ -474,7 +492,7 @@ function ProgressPanel({ app, onClose }) {
       ${r.segments.map((seg) => {
         const pr = prof.prs[r.id]?.[seg.id];
         const medal = prof.medals[r.id]?.[seg.id];
-        return html`<div class="item"><span style="flex:1">${seg.kind === 'kom' ? '▲' : seg.kind === 'zone' ? '⚡' : '🔁'} ${seg.name}</span>
+        return html`<div class="item"><span style="flex:1">${{ kom: '▲', zone: '⚡', segment: '⏱' }[seg.kind] ?? '🔁'} ${seg.name}</span>
           ${seg.medals ? html`<span class="small muted num">🥇 ${Format.shortDuration(seg.medals.gold)} 🥈 ${Format.shortDuration(seg.medals.silver)} 🥉 ${Format.shortDuration(seg.medals.bronze)}</span>` : null}
           <span class="num" style="min-width:90px;text-align:right">${medal ? { gold: '🥇', silver: '🥈', bronze: '🥉' }[medal] : ''} ${pr ? Format.shortDuration(pr.time) : '—'}</span></div>`;
       })}
@@ -625,7 +643,7 @@ export function WorldView({ app, openSensors }) {
         const events = [];
         while (remaining > 1e-6) {
           const dt = Math.min(0.25, remaining);
-          events.push(...sim.step(dt, { power, cadence: reading?.cadenceRPM ?? null }));
+          events.push(...sim.step(dt, { power, cadence: reading?.cadenceRPM ?? null, heartRate: heartRate.freshHeartRate(now) }));
           remaining -= dt;
         }
         if (power != null) G.rideClock += real * G.timeScale;
@@ -825,6 +843,7 @@ export function WorldView({ app, openSensors }) {
             <span class="num">${Format.distance(Math.max(0, rideDistance), u)} ${Format.distanceUnit(u)}</span>
             <span class="num ${grad > 3 ? 'red' : grad < -3 ? 'cyan' : ''}">${grad >= 0 ? '↗' : '↘'} ${grad.toFixed(1)}%</span>
           </div>`}
+          <${SegmentHud} sim=${sim} units=${u} />
           <${Toasts} />
         </div>
         <div class="hud-right">
@@ -870,6 +889,7 @@ export function WorldView({ app, openSensors }) {
     ${panel === 'menu' ? html`<div class="menu-backdrop"><${MainMenu} app=${app} onFreeRide=${startFree} onRace=${startRace} onWorkouts=${() => setPanel('workouts')} open=${setPanel} />
       ${sim ? html`<button class="btn big white close-menu" onClick=${() => { G.audio.start(); setPanel(null); }}>Ride ${sim.route.title} ▸</button>` : null}</div>` : null}
     ${panel === 'garage' ? html`<${Garage} app=${app} onClose=${() => setPanel(null)} />` : null}
+    ${panel === 'segments' ? html`<${SegmentsPanel} app=${app} profile=${G.profile} routeFor=${route} onClose=${() => setPanel('menu')} />` : null}
     ${panel === 'progress' ? html`<${ProgressPanel} app=${app} onClose=${() => setPanel('menu')} />` : null}
     ${panel === 'options' ? html`<${OptionsPanel} app=${app} onClose=${() => setPanel('menu')} onQuality=${rebuild} />` : null}
     ${panel === 'workouts' ? html`<${WorkoutPicker} app=${app} onChoose=${chooseWorkout} onClose=${() => setPanel('menu')} />` : null}
