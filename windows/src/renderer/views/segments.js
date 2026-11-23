@@ -146,9 +146,9 @@ function ResultCard({ r }) {
   const medalIcon = medal ? { gold: '🥇', silver: '🥈', bronze: '🥉' }[medal] : '';
   const cls = !result.previousBest ? '' : result.isPR ? 'ahead' : 'behind';
   return html`<div class="seg-card result ${result.isPR && result.previousBest ? 'pr' : ''}">
-    <div class="kicker">${result.isPR && result.previousBest ? '🏆 New PR' : '✓ Segment complete'} ${medalIcon}</div>
+    <div class="kicker">${result.isPR && result.previousBest ? '🏆 New PR' : '✓ Segment complete'} · ${E.dayMonth(a.date)} ${medalIcon}</div>
     <div class="name">${s.name}</div>
-    <div class="stats num">${E.clock(a.time)}${a.power != null ? html` · ${a.power}<small>W</small>` : null}${a.hr != null ? html` · ${a.hr}<small>bpm</small>` : null} · <small>${E.dayMonth(a.date)}</small></div>
+    <div class="stats num">${E.clock(a.time)}${a.power != null ? html` · ${a.power}<small>W</small>` : null}${a.hr != null ? html` · ${a.hr}<small>bpm</small>` : null}</div>
     <div class="cmp ${cls}">${c.pr}</div>
     ${c.vsLast ? html`<div class="last">${c.vsLast}</div>` : null}
   </div>`;
@@ -308,7 +308,7 @@ export function RideSegments({ app, record }) {
     <div class="list segs ride-segs" style="padding:4px 6px">
       <table>
         <thead><tr><th>Segment</th><th class="r">Time</th><th class="r">Avg power</th><th class="r">Avg HR</th><th class="r">vs PR</th><th></th></tr></thead>
-        <tbody>${list.map((s) => html`<tr class=${s.isPR ? 'pr' : ''}>
+        <tbody>${list.map((s) => html`<tr class=${s.isPR && s.prGap != null ? 'pr' : ''}>
           <td class="name">${ICON[s.kind] ?? '⏱'} ${s.name}${s.isPR && s.prGap != null ? html`<span class="badge-pr">PR</span>` : null}</td>
           <td class="r num" style="font-weight:800">${E.clock(s.time)}</td>
           <td class="r num">${s.power != null ? `${s.power} W` : '--'}</td>

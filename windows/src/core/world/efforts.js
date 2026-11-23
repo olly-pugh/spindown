@@ -189,11 +189,12 @@ export function dayMonth(iso, now = new Date()) {
 export function lengthAndGrade(seg, units = 'metric') {
   const len = seg.to - seg.from;
   const grade = seg.grade ?? 0;
+  const lap = seg.kind === 'lap';
   const g = `${grade < -0.0005 ? '−' : ''}${Math.abs(grade * 100).toFixed(1)}%`;
   let l;
   if (units === 'imperial') l = len < 1609 * 0.5 ? `${Math.round(len * 1.0936)} yd` : `${(len / 1609.344).toFixed(2)} mi`;
   else l = len < 1000 ? `${Math.round(len / 10) * 10} m` : `${(len / 1000).toFixed(1)} km`;
-  return `${l} · ${g}`;
+  return lap ? l : `${l} · ${g}`;
 }
 
 /**
@@ -207,7 +208,8 @@ export function comparison(result, now = new Date()) {
   else if (isPR) pr = `PR by ${gap(previousBest.time - attempt.time)}`;
   else pr = `${signedGap(attempt.time - previousBest.time)} on PR (${clock(previousBest.time)}, ${dayMonth(previousBest.date, now)})`;
   let vsLast = null;
-  if (last) {
+  // Against the last attempt too, unless that was the PR (already said above).
+  if (last && !(previousBest && last.date === previousBest.date && last.time === previousBest.time)) {
     const d = attempt.time - last.time;
     vsLast = `${Math.abs(d) < 0.05 ? 'Same as' : `${signedGap(d)} on`} last time (${clock(last.time)}, ${dayMonth(last.date, now)})`;
   }

@@ -141,7 +141,7 @@ test('segments: PR and comparison logic, wording and the cap on history', () => 
   assert.deepEqual(E.comparison(r1, at('2026-11-23T09:00:00')), { pr: 'First time', vsLast: null });
   const r2 = E.recordAttempt(p, 'dales', seg, { time: 222.2, power: 186, hr: 150 }, at('2026-11-20T09:00:00'));
   assert.ok(!r2.isPR);
-  assert.deepEqual(E.comparison(r2, at('2026-11-23T09:00:00')), { pr: '+0:04 on PR (3:38, 12/11)', vsLast: '+0:04 on last time (3:38, 12/11)' });
+  assert.deepEqual(E.comparison(r2, at('2026-11-23T09:00:00')), { pr: '+0:04 on PR (3:38, 12/11)', vsLast: null });
   const r3 = E.recordAttempt(p, 'dales', seg, { time: 212, power: 205.4, hr: 152.4 }, at('2026-11-23T09:00:00'));
   assert.ok(r3.isPR);
   assert.equal(E.summaryLine(seg, r3, at('2026-11-23T10:00:00')), 'Cove Road Ramp — 3:32 · 205 W · 152 bpm · 23/11 · PR by 0:06');
