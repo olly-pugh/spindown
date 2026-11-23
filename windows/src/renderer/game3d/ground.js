@@ -348,28 +348,7 @@ export function classTexture(raster, weights) {
       for (let k = 0; k < 4; k++) px[o + k] = w[k] * 255;
     }
   }
-  // Two box blurs: boundaries a few metres soft rather than raster-stepped.
-  const tmp = new Uint8Array(px.length);
-  for (let pass = 0; pass < 2; pass++) {
-    for (let j = 0; j < nz; j++) {
-      for (let i = 0; i < nx; i++) {
-        for (let k = 0; k < 4; k++) {
-          let s = 0;
-          for (let d = -1; d <= 1; d++) s += px[(j * nx + Math.min(nx - 1, Math.max(0, i + d))) * 4 + k];
-          tmp[(j * nx + i) * 4 + k] = s / 3;
-        }
-      }
-    }
-    for (let j = 0; j < nz; j++) {
-      for (let i = 0; i < nx; i++) {
-        for (let k = 0; k < 4; k++) {
-          let s = 0;
-          for (let d = -1; d <= 1; d++) s += tmp[(Math.min(nz - 1, Math.max(0, j + d)) * nx + i) * 4 + k];
-          px[(j * nx + i) * 4 + k] = s / 3;
-        }
-      }
-    }
-  }
+  // (Edges are softened in the shader: bilinear filtering plus a jitter of a couple of metres.)
   const t = new THREE.DataTexture(px, nx, nz);
   t.magFilter = THREE.LinearFilter;
   t.minFilter = THREE.LinearFilter;

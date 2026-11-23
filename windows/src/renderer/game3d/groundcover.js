@@ -156,7 +156,7 @@ function plantMaterial(atlas, time, fade0, fade1, aa, sway) {
         varying float vCoverH;`)
       .replace('#include <map_fragment>', `#include <map_fragment>
         // Darker down in the sward, where the light does not reach.
-        diffuseColor.rgb *= mix(0.5, 1.12, smoothstep(0.0, 0.8, vCoverH));`);
+        diffuseColor.rgb *= mix(0.72, 1.1, smoothstep(0.0, 0.8, vCoverH));`);
   };
   m.customProgramCacheKey = () => 'groundcover-plants-v2';
   return m;
@@ -232,7 +232,9 @@ export class GroundCover {
         const seedI = ci * 64 + gx, seedJ = cj * 64 + gz;
         const verge = c00.verge > 0 && c11.verge > 0;
         // Fine sward everywhere there is turf (a few blades' worth of card per square metre).
-        const nFine = verge ? fine + 1 : c00.rough > 0.5 ? fine - 1 : fine;
+        // Grazed pasture is a fine, close turf (the ground texture shows it): long grass only on the verges and the
+        // rough grazing.
+        const nFine = verge ? fine + 1 : c00.rough > 0.5 ? fine - 1 : 0;
         for (let k = 0; k < nFine; k++) {
           const u = hash2(seedI * 7 + k, seedJ, 11), v = hash2(seedI, seedJ * 7 + k, 12), w = hash2(seedI + k * 31, seedJ - k * 17, 13);
           const s = (verge ? 0.2 : c00.rough > 0.5 ? 0.16 : 0.09) + w * (verge ? 0.12 : 0.08);

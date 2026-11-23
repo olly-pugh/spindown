@@ -33,7 +33,7 @@ export function groundDetailArrays() {
   const make = (size, fill, srgb) => {
     const n = colourUrls.length;
     const data = new Uint8Array(size * size * 4 * n);
-    for (let i = 0; i < data.length; i += 4) data.set(fill, i);
+    new Uint32Array(data.buffer).fill(fill[0] | (fill[1] << 8) | (fill[2] << 16) | (fill[3] << 24));
     const t = new THREE.DataArrayTexture(data, size, size, n);
     t.format = THREE.RGBAFormat;
     t.type = THREE.UnsignedByteType;
@@ -99,6 +99,101 @@ export function loadTex(url, srgb = true, repeat = 1) {
   t.repeat.set(repeat, repeat);
   cache.set(key, t);
   return t;
+}
+
+// ---- Water ------------------------------------------------------------------------------------------------
+
+let rippleTex = null;
+/** A tiling normal map of small wind ripples (procedural, drawn once). */
+export function rippleNormals() {
+  if (rippleTex) return rippleTex;
+  const S = 256;
+  const h = new Float32Array(S * S);
+  // A sum of waves with whole numbers of periods across the tile, so it repeats seamlessly.
+  const waves = [];
+  let seed = 3;
+  const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let k = 0; k < 28; k++) {
+    const kx = Math.round((r() - 0.5) * 18), ky = Math.round((r() - 0.5) * 18);
+    if (!kx && !ky) continue;
+    waves.push([kx, ky, 1 / Math.hypot(kx, ky), r() * 6.283]);
+  }
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      let v = 0;
+      for (const [kx, ky, a, p] of waves) v += a * Math.sin(((kx * x + ky * y) / S) * 6.283 + p);
+      h[y * S + x] = v;
+    }
+  }
+  const px = new Uint8Array(S * S * 4);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const dx = h[y * S + ((x + 1) % S)] - h[y * S + ((x + S - 1) % S)], dy = h[((y + 1) % S) * S + x] - h[((y + S - 1) % S) * S + x];
+      const nx = -dx * 0.9, ny = -dy * 0.9, l = Math.hypot(nx, ny, 1);
+      const o = (y * S + x) * 4;
+      px[o] = Math.round(127.5 + (nx / l) * 127.5);
+      px[o + 1] = Math.round(127.5 + (ny / l) * 127.5);
+      px[o + 2] = Math.round(127.5 + (1 / l) * 127.5);
+      px[o + 3] = 255;
+    }
+  }
+  const t = new THREE.DataTexture(px, S, S);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
+  t.needsUpdate = true;
+  rippleTex = t;
+  return t;
+}
+
+/**
+ * A tarn or a reservoir: deep, dark peaty blue-grey water reflecting the sky, wind ripples moving across it (the
+ * normal map's offset is animated by the caller), deeper colour away from the shore (vertex attribute `depth` 0..1).
+ */
+export function lakeMaterial() {
+  const normalMap = rippleNormals();
+  const m = new THREE.MeshStandardMaterial({ color: '#16242b', roughness: 0.08, metalness: 0, normalMap, normalScale: new THREE.Vector2(0.22, 0.22), envMapIntensity: 0.9 });
+  m.userData.ripple = normalMap;
+  return m;
+}
+
+/**
+ * Becks: shallow, clear, peat-tinted water over a stony bed, so the stones show through near the camera and the
+ * surface catches the sky further off. uv = (across 0..1, along in metres); `flow` scrolls the ripples downstream.
+ */
+export function beckWaterMaterial() {
+  const normalMap = rippleNormals();
+  const m = new THREE.MeshStandardMaterial({ color: '#33382f', roughness: 0.04, metalness: 0, transparent: true, opacity: 0.5, normalMap, normalScale: new THREE.Vector2(0.28, 0.28), envMapIntensity: 1.2, depthWrite: false });
+  const flow = { value: 0 };
+  m.userData.flow = flow;
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.beckFlow = flow;
+    shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>
+        uniform float beckFlow;
+        varying float vBeckAcross;`).replace('#include <uv_vertex>', `#include <uv_vertex>
+        vBeckAcross = uv.x;
+        #ifdef USE_NORMALMAP
+          vNormalMapUv = vec2(uv.x * 0.6, uv.y / 3.0 - beckFlow * 0.45);
+        #endif`);
+    // Clearer (more transparent) where the water is shallow, at the edges.
+    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>
+        varying float vBeckAcross;`).replace('#include <opaque_fragment>', `
+        float edgeK = 1.0 - smoothstep(0.0, 0.3, min(vBeckAcross, 1.0 - vBeckAcross));
+        // Fresnel: clear looking down into it, a mirror of the sky at a glance.
+        float fres = pow(1.0 - clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0), 4.0);
+        diffuseColor.a = mix(diffuseColor.a * (1.0 - 0.55 * edgeK), 0.97, fres);
+        #include <opaque_fragment>`);
+  };
+  m.customProgramCacheKey = () => 'beck-water-v1';
+  return m;
+}
+
+/** The beck bed: wet river stones (world-space UVs in `uv`, metres), dark and glistening. */
+export function beckBedMaterial() {
+  const map = loadTex(gravelUrl, true, 1 / 1.6);
+  const normalMap = loadTex(gravelNUrl, false, 1 / 1.6);
+  return new THREE.MeshStandardMaterial({ color: '#c9c6bc', map, normalMap, normalScale: new THREE.Vector2(1.2, 1.2), roughness: 0.45, metalness: 0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
 }
 
 /**

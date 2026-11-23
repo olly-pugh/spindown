@@ -13,7 +13,8 @@ import { RouteField } from '../../core/world/field.js';
 import { rng, hash2 } from '../../core/world/noise.js';
 import { nestedTerrain, Raster, imageryTexture, landMaterial, normalTexture, classTexture, roadDistanceTexture, ImagerySampler } from './ground.js';
 import { Scars } from './cliffs.js';
-import { limestoneFaceMaterial, groundDetailArrays, boulderMaterial } from './nature.js';
+import { limestoneFaceMaterial, groundDetailArrays, boulderMaterial, lakeMaterial, beckWaterMaterial, beckBedMaterial } from './nature.js';
+import { Becks } from './becks.js';
 import { GroundCover } from './groundcover.js';
 import nearImageUrl from './data/dales-near.jpg';
 import farImageUrl from './data/dales-far.jpg';
@@ -68,6 +69,14 @@ export function buildDales(route, data, q) {
     const shore = [];
     for (let i = 0; i < ring.length; i += 2) shore.push(dem(ring[i], ring[i + 1]));
     shore.sort((a, b) => a - b);
+    // A water area on a slope, or a long thin one, is a river or a run of pools, not a tarn: leave it to the becks.
+    if (shore[Math.floor(shore.length * 0.9)] - shore[Math.floor(shore.length * 0.1)] > 3) continue;
+    let area = 0, perim = 0;
+    for (let i = 0, j = ring.length - 2; i < ring.length; j = i, i += 2) {
+      area += (ring[j] + ring[i]) * (ring[j + 1] - ring[i + 1]);
+      perim += Math.hypot(ring[i] - ring[j], ring[i + 1] - ring[j + 1]);
+    }
+    if ((4 * Math.PI * Math.abs(area / 2)) / (perim * perim) < 0.3 && Math.abs(area / 2) < 150000) continue;
     const level = shore[Math.floor(shore.length * 0.15)] - 0.2;
     if (lakes.length < 250) {
       lakes.push({ ring, level, name: w.n });
@@ -77,11 +86,17 @@ export function buildDales(route, data, q) {
 
   // ---- Height: the DEM, with the road let into it (cuttings and embankments) and lakes kept below water ----
   const inField = (x, z) => x > field.x0 && z > field.z0 && x < field.x0 + field.nx * field.cell && z < field.z0 + field.nz * field.cell;
+  /** A quick lower bound on the distance to the road (the route field's grid; exact to within ~20 m). */
+  const roadFar = (x, z) => {
+    const cx = Math.round((x - field.x0) / field.cell), cz = Math.round((z - field.z0) / field.cell);
+    if (cx < 0 || cz < 0 || cx >= field.nx || cz >= field.nz) return Infinity;
+    return Math.sqrt(field.dist[cz * field.nx + cx]) - field.cell;
+  };
   function heightAt(x, z) {
     let h = dem(x, z);
     const lake = wet.get(x, z);
     if (lake) h = Math.min(h, lakes[lake - 1].level - 0.6);
-    if (inField(x, z)) {
+    if (inField(x, z) && roadFar(x, z) < 72) {
       field.query(x, z, tmp);
       const d = tmp.distance;
       if (d < 70) {
@@ -141,8 +156,29 @@ export function buildDales(route, data, q) {
 
   // ---- Limestone faces from the 1 m LIDAR (cliffs.js): the terrain is cut away in their 20 m cells ----
   const tMat = performance.now();
+  const tm = { start: tMat };
+  const mark = (k) => { tm[k] = Math.round(performance.now() - tm.start); };
   const scars = new Scars(data.scars, { roadDistance, q, detailAt, ground, rock: limestoneFaceMaterial() });
+  mark("scars");
   const SCAR_LEVEL = 2; // tiles drawn at this detail or finer show the 3D faces (and have their cells cut out)
+
+  // ---- Becks (becks.js): channels cut into the most detailed tiles, a flat ribbon of water beyond ----
+  const becks = new Becks((data.streams ?? []).filter((s) => {
+    for (let i = 0; i < s.p.length; i += 8) if (roadDistance(s.p[i], -s.p[i + 1]) < 1300) return true;
+    return false;
+  }).map((s) => ({ p: W(s.p), w: s.w })), {
+    heightAt,
+    keep: (x, z) => !scars.underFace(x, z) && (roadFar(x, z) > ROAD_HALF + 8 || roadDistance(x, z) > ROAD_HALF + 8) && !wet.get(x, z),
+  });
+  // Banks are lit by their own shape (the survey's relief does not have the cut channel in it).
+  const beckMats = { banks: null, bed: beckBedMaterial(), water: beckWaterMaterial(), far: null };
+  beckMats.banks = bedMat;
+  beckMats.far = lakeMaterial();
+  beckMats.far.polygonOffset = true;
+  beckMats.far.polygonOffsetFactor = -3;
+  beckMats.far.polygonOffsetUnits = -3;
+  const beckOut = {};
+  mark("scars+becks");
   const apronOut = {};
 
   // ---- Terrain tiles with distance-based detail ----
@@ -159,7 +195,7 @@ export function buildDales(route, data, q) {
     for (let tx = fx0; tx < fx1; tx += TILE) {
       const cx = tx + TILE / 2, cz = tz + TILE / 2;
       const rd = roadDistance(cx, cz);
-      tiles.push({ x: tx, z: tz, cx, cz, roadNear: rd < TILE, meshes: [], level: -1, scarCells: null, scar: null });
+      tiles.push({ x: tx, z: tz, cx, cz, roadNear: rd < TILE, meshes: [], level: -1, scarCells: null, scar: null, beckNear: false, becks: null });
     }
   }
   {
@@ -172,6 +208,22 @@ export function buildDales(route, data, q) {
       const t = tiles[tj * across + ti];
       if (!t || ti < 0 || ti >= across) continue;
       (t.scarCells ??= []).push(list[i], list[i + 1]);
+    }
+  }
+
+  {
+    // Which tiles have a beck channel (or its banks) in them.
+    const across = Math.round((fx1 - fx0) / TILE);
+    for (const line of becks.lines) {
+      const e = Becks.edge(line.half);
+      for (const p of line.P) {
+        for (const [dx, dz] of [[-e, -e], [e, -e], [-e, e], [e, e]]) {
+          const ti = Math.floor((p.x + dx - fx0) / TILE), tj = Math.floor((p.z + dz - fz0) / TILE);
+          if (ti < 0 || ti >= across) continue;
+          const t = tiles[tj * across + ti];
+          if (t) t.beckNear = true;
+        }
+      }
     }
   }
 
@@ -284,6 +336,10 @@ export function buildDales(route, data, q) {
       det[v * 3 + 1] = d[1];
       det[v * 3 + 2] = d[2];
       if (rd < BED - step * 0.25) pos[v * 3 + 1] -= sink;
+      if (level === 0 && tile.beckNear) {
+        becks.nearest(x, z, beckOut);
+        if (beckOut.d < Becks.edge(beckOut.half) - step * 0.9) pos[v * 3 + 1] -= 2;
+      }
       v++;
     };
     for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) put(tile.x + i * step, hs[(j + 1) * N + i + 1], tile.z + j * step, i + 1, j + 1);
@@ -386,7 +442,7 @@ export function buildDales(route, data, q) {
     terrainGroup.add(b.mesh);
   }
   let lastCam = null;
-  function updateTerrain(camera, budget = 3) {
+  function updateTerrain(camera, budget = 3, reach = Infinity) {
     if (!camera) return;
     const cx = camera.position.x, cz = camera.position.z;
     lastCam = { x: cx, z: cz };
@@ -402,7 +458,7 @@ export function buildDales(route, data, q) {
       if (!t.meshes[want]) work.push(t);
     }
     work.sort((a, b) => a.d - b.d);
-    for (const t of work.slice(0, budget)) buildTile(t, t.want);
+    for (const t of work.slice(0, budget)) if (t.d <= reach) buildTile(t, t.want);
     for (const b of blocks.values()) {
       b.merged = b.tiles.every((t) => t.want >= 3);
       b.mesh.visible = b.merged;
@@ -423,6 +479,15 @@ export function buildDales(route, data, q) {
           t.meshes[k] = undefined;
         }
       });
+      // Becks: the cut channel with the most detailed mesh (let down under it), a flat ribbon of water beyond.
+      if (t.beckNear && show >= 0 && show <= 2 && t.becks === null) {
+        t.becks = becks.buildTile(t.x, t.z, t.x + TILE, t.z + TILE, beckMats, (x, z) => detailAt(x, z, Infinity)) ?? false;
+        if (t.becks) terrainGroup.add(t.becks.near, t.becks.far);
+      }
+      if (t.becks) {
+        t.becks.near.visible = show === 0;
+        t.becks.far.visible = show >= 1 && show <= 2;
+      }
       // The limestone faces go with the detailed meshes that have their cells cut out.
       if (t.scar) t.scar.visible = show >= 0 && show <= SCAR_LEVEL && !!t.scarCells;
     }
@@ -466,9 +531,9 @@ export function buildDales(route, data, q) {
   road.receiveShadow = true;
   group.add(road);
 
-  // ---- Water: tarns and ponds flat at their shore level, becks as ribbons following the ground ----
-  const waterNormal = T.waterNormalTexture();
-  const waterMat = new THREE.MeshStandardMaterial({ color: '#3d5560', roughness: 0.06, metalness: 0.1, normalMap: waterNormal, normalScale: new THREE.Vector2(0.25, 0.25), envMapIntensity: 1.0 });
+  // ---- Water: tarns and ponds flat at their shore level (the becks are built with the terrain tiles) ----
+  const lakeMat = lakeMaterial();
+  const waterNormal = lakeMat.userData.ripple;
   {
     const parts = [];
     for (const lk of lakes) {
@@ -482,7 +547,8 @@ export function buildDales(route, data, q) {
         const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
         for (const pnt of cross > 0 ? [a, c, b] : [a, b, c]) {
           pos.push(pnt.x, lk.level, pnt.y);
-          uv.push(pnt.x / 14, pnt.y / 14);
+          // Ripples about 2.5 m across.
+          uv.push(pnt.x / 2.5, pnt.y / 2.5);
         }
       }
       const g = new THREE.BufferGeometry();
@@ -491,66 +557,14 @@ export function buildDales(route, data, q) {
       g.computeVertexNormals();
       parts.push(g);
     }
-    const streamParts = [];
-    // Becks, split where they would run down a rock face (Malham Beck "flows" over the Cove in the map data: in
-    // fact it rises from the foot of it).
-    const pieces = [];
-    for (const s of data.streams ?? []) {
-      const all = densify(W(s.p), 4);
-      let cur = [];
-      for (let i = 0; i < all.length; i += 2) {
-        if (scars.underFace(all[i], all[i + 1])) {
-          if (cur.length >= 4) pieces.push({ p: cur, w: s.w });
-          cur = [];
-        } else cur.push(all[i], all[i + 1]);
-      }
-      if (cur.length >= 4) pieces.push({ p: cur, w: s.w });
-    }
-    for (const s of pieces) {
-      const pts = s.p;
-      // Only becks that can be seen from the road.
-      let near = false;
-      for (let i = 0; i < pts.length && !near; i += 8) near = roadDistance(pts[i], pts[i + 1]) < 900;
-      if (!near) continue;
-      const half = Math.max(0.6, s.w / 2);
-      const pos = [], uv = [], idx = [];
-      let along = 0;
-      for (let i = 0; i < pts.length; i += 2) {
-        const pi = Math.max(0, i - 2), ni = Math.min(pts.length - 2, i + 2);
-        let dx = pts[ni] - pts[pi], dz = pts[ni + 1] - pts[pi + 1];
-        const len = Math.hypot(dx, dz) || 1;
-        dx /= len;
-        dz /= len;
-        if (i > 0) along += Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
-        for (const o of [-half, half]) {
-          const x = pts[i] - dz * o, z = pts[i + 1] + dx * o;
-          pos.push(x, heightAt(x, z) + 0.2, z);
-          uv.push(o / 4, along / 4);
-        }
-        if (i > 0) {
-          const a = i - 2, b = i;
-          idx.push(a, a + 1, b, a + 1, b + 1, b);
-        }
-      }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-      g.setIndex(idx);
-      g.computeVertexNormals();
-      streamParts.push(g);
-    }
     if (parts.length) {
-      const lakesMesh = new THREE.Mesh(C.mergeAll(parts), waterMat);
+      const lakesMesh = new THREE.Mesh(C.mergeAll(parts), lakeMat);
       lakesMesh.receiveShadow = true;
       group.add(lakesMesh);
     }
-    if (streamParts.length) {
-      // Becks: peaty, shallow and stony, darker and less mirror-like than the tarn.
-      const sm = new THREE.MeshStandardMaterial({ color: '#39423c', roughness: 0.35, metalness: 0, normalMap: waterNormal, normalScale: new THREE.Vector2(0.4, 0.4), polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
-      group.add(new THREE.Mesh(C.mergeAll(streamParts), sm));
-    }
   }
 
+  mark("tilesetup+lakes");
   // ---- Dry-stone walls: every OSM wall near the loop, following the ground ----
   const sceneryR = q.sceneryRadius;
   const wallR = sceneryR * 1.9;
@@ -563,7 +577,7 @@ export function buildDales(route, data, q) {
         let prev = null;
         for (let i = 0; i < pts.length; i += 2) {
           const x = pts[i], z = pts[i + 1];
-          const rd = roadDistance(x, z);
+          const rd = roadFar(x, z) > maxR ? Infinity : roadDistance(x, z);
           if (rd < ROAD_HALF + 0.5 || rd > maxR) {
             prev = null;
             continue;
@@ -582,11 +596,13 @@ export function buildDales(route, data, q) {
     group.userData.wallSegments = segs.length;
   }
 
+  mark("walls");
   // ---- Buildings: every OSM footprint near the loop, as stone cottages and field barns ----
   const houses = placeBuildings(data, heightAt, roadDistance, q, sceneryR * 3);
   group.add(houses);
   group.userData.buildings = houses.userData.count;
 
+  mark("buildings");
   // ---- Trees: OSM woods (filled), tree rows and single trees, nearest the road first ----
   {
     const spots = [];
@@ -594,6 +610,7 @@ export function buildDales(route, data, q) {
       const rd = roadDistance(x, z);
       if (rd < ROAD_HALF + 4) return;
       if (wet.get(x, z) || scars.underFace(x, z)) return;
+      if (becks.nearest(x, z, beckOut).d < beckOut.half + 1.5) return;
       spots.push({ x, z, kind, s, pri: rd + pri });
     };
     for (let i = 0; i < (data.trees ?? []).length; i += 2) tryAdd(data.trees[i], -data.trees[i + 1], 'broad', 0.9 + r() * 0.5, -200);
@@ -629,6 +646,7 @@ export function buildDales(route, data, q) {
     group.userData.trees = placements.length;
   }
 
+  mark("trees");
   // ---- Power: wooden pole lines (11 kV / 33 kV) with sagging wires; steel towers where mapped ----
   const power = powerLines(data, heightAt, roadDistance, q);
   group.add(power);
@@ -663,6 +681,7 @@ export function buildDales(route, data, q) {
     group.add(limestoneRocks(rocks.slice(0, cap), heightAt, q, r));
   }
 
+  mark("power+rocks");
   // ---- Sheep in the fields near the road ----
   {
     const sheep = [];
@@ -706,6 +725,7 @@ export function buildDales(route, data, q) {
   const imgNear = new ImagerySampler(nearImageUrl, im.near ?? rectOf(mid), landOpts, () => cover.reset());
   const fallbackGreen = [0.05, 0.11, 0.025, 0.08];
   const probeCol = [0, 0, 0, 0];
+  const probeBeck = {};
   const probe = (x, z, p) => {
     const rd = roadDistance(x, z);
     const c = cls.get(x, z);
@@ -713,6 +733,9 @@ export function buildDales(route, data, q) {
     if (p.skip) return p;
     p.h = heightAt(x, z);
     p.under = scars.underFace(x, z);
+    // Not in a beck; rushes and long grass along its banks.
+    const bd = becks.nearest(x, z, probeBeck);
+    if (bd.d < bd.half + 1.1) p.skip = true;
     const col = imgNear.colour(x, -z, probeCol) ? probeCol : fallbackGreen;
     p.colour = [col[0], col[1], col[2], col[3]];
     p.verge = rd < ROAD_HALF + 3.6 ? 1 : 0;
@@ -728,7 +751,7 @@ export function buildDales(route, data, q) {
     p.scree = c === CLS.scree ? 1 : 0;
     // Soft rush: in the wet ground, and in patches in the flatter fields.
     const patch = hash2(Math.floor(x / 11), Math.floor(z / 11), 5);
-    p.rushPatch = c === CLS.wet ? 0.5 : p.field && slope < 0.18 && patch < 0.09 ? 0.35 * (1 - patch / 0.09) + 0.1 : 0;
+    p.rushPatch = bd.d < bd.half + 4 ? 0.4 : c === CLS.wet ? 0.5 : p.field && slope < 0.18 && patch < 0.09 ? 0.35 * (1 - patch / 0.09) + 0.1 : 0;
     // Bracken on the slopes of the rough ground and the dale sides.
     const bp = hash2(Math.floor(x / 15), Math.floor(z / 15), 9);
     p.bracken = slope > 0.14 && slope < 0.8 && (p.rough > 0.5 || (p.field && !p.high && bp < 0.22)) ? 0.4 : 0;
@@ -747,12 +770,14 @@ export function buildDales(route, data, q) {
   const tScene = performance.now();
   // Warm the terrain detail around the start so the first frame is sharp.
   const start = route.position(0);
-  updateTerrain({ position: new THREE.Vector3(start.x, start.y, start.z) }, 1e9);
+  // (Only the nearest tiles: the rest come in over the first frames, shown coarse until then.)
+  updateTerrain({ position: new THREE.Vector3(start.x, start.y, start.z) }, 1e9, 700);
 
   const tWarm = performance.now();
   let lastT = null;
   const update = (t, camera) => {
     waterNormal.offset.set(t * 0.03, t * 0.012);
+    beckMats.water.userData.flow.value = t;
     updateTerrain(camera);
     cover.update(camera, lastT == null ? 0.016 : Math.min(0.1, t - lastT));
     lastT = t;
@@ -771,8 +796,8 @@ export function buildDales(route, data, q) {
     view.sky.scale.setScalar(view.camera.far * 0.9);
   };
   const ms = Math.round(performance.now() - t0);
-  console.log(`[world] Malham built in ${ms} ms (materials ${Math.round(tMat - t0)}, scenery ${Math.round(tScene - tMat)}, terrain warm-up ${Math.round(tWarm - tScene)}): ${tiles.length} terrain tiles, ${group.userData.wallSegments} wall segments, ${group.userData.trees} trees, ${group.userData.buildings} buildings`);
-  return { group, heightAt, roadHalf: ROAD_HALF, update, atmosphere, buildingCount: group.userData.buildings, buildMs: ms, debug: { tiles, lastCam: () => lastCam } };
+  console.log(`[world] Malham built in ${ms} ms (materials ${Math.round(tMat - t0)}, scenery ${Math.round(tScene - tMat)} ${JSON.stringify(tm)}, terrain warm-up ${Math.round(tWarm - tScene)}): ${tiles.length} terrain tiles, ${group.userData.wallSegments} wall segments, ${group.userData.trees} trees, ${group.userData.buildings} buildings`);
+  return { group, heightAt, roadHalf: ROAD_HALF, update, atmosphere, buildingCount: group.userData.buildings, buildMs: ms, debug: { tiles, lastCam: () => lastCam, becks, scars } };
 }
 
 // ---- Helpers ---------------------------------------------------------------------------------------------

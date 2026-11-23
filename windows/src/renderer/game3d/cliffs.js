@@ -52,6 +52,79 @@ export function decodeFace(face) {
   return cols;
 }
 
+/**
+ * Smooths the lip and foot heights along a face (a median of five, then never more than a little above the
+ * neighbours' mean): a column's lip is only ever lowered, its foot only raised, and its profile cut to match.
+ */
+function smoothEnds(cols) {
+  const med = (a) => a.slice().sort((x, y) => x - y)[a.length >> 1];
+  const n = cols.length;
+  const zt = cols.map((c) => (c.face ? c.zTop : NaN)), zf = cols.map((c) => (c.face ? c.zFoot : NaN));
+  for (let k = 0; k < n; k++) {
+    const c = cols[k];
+    if (!c.face) continue;
+    const nt = [], nf = [];
+    for (let d = -2; d <= 2; d++) {
+      const q = cols[k + d];
+      if (q?.face) {
+        nt.push(zt[k + d]);
+        nf.push(zf[k + d]);
+      }
+    }
+    let top = Math.min(c.zTop, med(nt) + 0.8), foot = Math.max(c.zFoot, med(nf) - 0.8);
+    if (top - foot < 1.5) {
+      c.face = false;
+      continue;
+    }
+    if (top < c.zTop) {
+      const t = profileT(c, top);
+      c.prof = [...c.prof.filter((p) => p.z < top - 0.05), { z: top, t }];
+      c.back3 += c.zTop - top;
+      c.back7 += c.zTop - top;
+      c.zTop = top;
+      c.tLip = t;
+    }
+    if (foot > c.zFoot) {
+      const t = profileT(c, foot);
+      c.prof = [{ z: foot, t }, ...c.prof.filter((p) => p.z > foot + 0.05)];
+      c.zFoot = foot;
+      c.tFoot = t;
+    }
+  }
+}
+
+/** For each column, the length (in columns) of the run of faces it belongs to. */
+function runLengths(cols) {
+  const out = new Array(cols.length).fill(0);
+  for (let k = 0; k < cols.length;) {
+    if (!cols[k].face) {
+      k++;
+      continue;
+    }
+    let e = k;
+    while (e < cols.length && cols[e].face) e++;
+    for (let m = k; m < e; m++) out[m] = e - k;
+    k = e;
+  }
+  return out;
+}
+
+/** Drops runs shorter than 4 columns, and runs under 8 columns whose faces are nowhere over 4 m high. */
+function dropSmallRuns(cols) {
+  const len = runLengths(cols);
+  for (let k = 0; k < cols.length;) {
+    if (!cols[k].face) {
+      k++;
+      continue;
+    }
+    const n = len[k];
+    let tallest = 0;
+    for (let m = k; m < k + n; m++) tallest = Math.max(tallest, cols[m].zTop - cols[m].zFoot);
+    if (n < 4 || (n < 8 && tallest < 4)) for (let m = k; m < k + n; m++) cols[m].face = false;
+    k += n;
+  }
+}
+
 /** The face's offset along the ray at height z (the profile is monotone: t falls as z rises). */
 function profileT(col, z) {
   const p = col.prof;
@@ -120,11 +193,18 @@ export class Scars {
         const reach = Math.max(Math.abs(c.tFoot), Math.abs(c.tLip)) + 8;
         if (opts.roadDistance(c.x, c.z) < 16 + reach) c.face = false;
       }
-      // Faces die away into the hillside at their ends rather than stopping as a sheer edge.
+      // Lips and feet that jump up or down from one column to the next make spikes between the rows (which are
+      // at fixed heights, the beds): bring each column's lip down and foot up towards its neighbours'.
+      smoothEnds(cols);
+      // Runs of a few columns that are only a couple of metres high are rubble or noise in the survey: drop them.
+      dropSmallRuns(cols);
+      // Faces die away into the hillside at their ends rather than stopping as a sheer edge (long runs only: a
+      // short outcrop tapered at both ends would come out as a tooth).
+      const runLen = runLengths(cols);
       cols.forEach((c, k) => {
         if (!c.face) return;
         const gap = (d) => !cols[k + d]?.face;
-        const f2 = gap(-1) || gap(1) ? 0.3 : gap(-2) || gap(2) ? 0.65 : 1;
+        const f2 = runLen[k] < 7 ? 1 : gap(-1) || gap(1) ? 0.3 : gap(-2) || gap(2) ? 0.65 : 1;
         if (f2 < 1) {
           const H = c.zTop - c.zFoot;
           c.prof = c.prof.map((p) => ({ z: c.zFoot + (p.z - c.zFoot) * f2, t: p.t }));
@@ -148,12 +228,18 @@ export class Scars {
         c.tz = tz / l;
         // Half the gap to each neighbour (columns are ~2 m apart; a gap where the face is broken).
         c.halfW = 1.15;
-        const key = `${Math.floor(c.x / 16)},${Math.floor(c.z / 16)}`;
+        const key = this.key(Math.floor(c.x / 16), Math.floor(c.z / 16));
         if (!this.hash.has(key)) this.hash.set(key, []);
         this.hash.get(key).push(c);
       });
     }
     this.columnCount = this.faces.reduce((s, f) => s + f.cols.filter((c) => c.face).length, 0);
+    // 16 m cells within reach of any column: most of the map has none, and is answered with one lookup.
+    this.reach = new Set();
+    for (const key of this.hash.keys()) {
+      const cx = Math.round(key / 100003), cz = key - cx * 100003;
+      for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) this.reach.add(this.key(cx + dx, cz + dz));
+    }
   }
 
   key(cx, cz) {
@@ -165,13 +251,15 @@ export class Scars {
     return this.cells.has(this.key(Math.floor(x / this.cell), Math.floor(z / this.cell)));
   }
 
-  /** Columns whose footprint might include (x, z). */
+  /** Columns whose footprint might include (x, z) (a shared array: use it before the next call). */
   near(x, z) {
-    const out = [];
+    const out = this.nearOut ?? (this.nearOut = []);
+    out.length = 0;
     const cx = Math.floor(x / 16), cz = Math.floor(z / 16);
+    if (!this.reach.has(this.key(cx, cz))) return out;
     for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
-      const l = this.hash.get(`${cx + dx},${cz + dz}`);
-      if (l) out.push(...l);
+      const l = this.hash.get(this.key(cx + dx, cz + dz));
+      if (l) for (let i = 0; i < l.length; i++) out.push(l[i]);
     }
     return out;
   }
