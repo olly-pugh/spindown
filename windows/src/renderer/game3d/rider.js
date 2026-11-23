@@ -187,6 +187,23 @@ function bikeAndGear(kit, lod, boneIdx, assets, body) {
   return merged;
 }
 
+/** Moves a body geometry's morph attributes (morph0..2) into morphAttributes, once. */
+export const MORPH_SCALE = 0.05;
+function faceMorphs(geo) {
+  if (geo.userData.morphsReady) return geo;
+  const list = [];
+  for (let k = 0; geo.attributes['morph' + k]; k++) {
+    list.push(geo.attributes['morph' + k]);
+    geo.deleteAttribute('morph' + k);
+  }
+  if (list.length) {
+    geo.morphAttributes.position = list;
+    geo.morphTargetsRelative = true;
+  }
+  geo.userData.morphsReady = true;
+  return geo;
+}
+
 // ---- IK helpers ------------------------------------------------------------------------------------------------
 const _a = V(0, 0, 0), _b = V(0, 0, 0), _c = V(0, 0, 0), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
 /** Two-bone IK: the middle joint for root -> joint -> end of lengths a, b reaching target, bending towards pole. */
@@ -279,7 +296,17 @@ export class RiderModel {
     const bodyMat = ghost ? ghostMaterial() : kitMat(kit, skin, meta.landmarks, body, hair);
     const gearMat = ghost ? ghostMaterial() : bikeMaterial();
     this.beard = ghost ? 0 : lastBeard;
-    this.near = [make(G['body' + sfx], bodyMat), make(bikeAndGear(kit, 'near', byName, assets, body), gearMat)];
+    const nearBody = make(faceMorphs(G['body' + sfx]), bodyMat);
+    // A face of their own: a mix of the face shapes, picked from their looks (so a rider keeps theirs).
+    if (nearBody.morphTargetInfluences) {
+      const h = [...`${skin}${hair}${body}`].reduce((a, ch) => (a * 131 + ch.charCodeAt(0)) >>> 0, 11);
+      const r = (k) => ((h >>> (k * 5)) % 97) / 96;
+      const S = MORPH_SCALE;
+      nearBody.morphTargetInfluences[0] = (r(0) * 1.3 - 0.35) * S;
+      nearBody.morphTargetInfluences[1] = (r(1) * 1.3 - 0.35) * S;
+      nearBody.morphTargetInfluences[2] = r(2) * r(2) * S;
+    }
+    this.near = [nearBody, make(bikeAndGear(kit, 'near', byName, assets, body), gearMat)];
     if (!ghost) this.near.push(make(G['hair' + sfx], hairMaterial(hair, body === 'f' ? 'ponytail' : 'short'), false));
     this.far = [make(G['bodyFar' + sfx], bodyMat), make(bikeAndGear(kit, 'far', byName, assets, body), gearMat)];
     this.detail = null;

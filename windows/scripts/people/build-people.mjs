@@ -175,6 +175,12 @@ function fitted(file, restMH, skel) {
 }
 
 const REF = {};
+/** Face shapes, stored as morph targets on the near body (the game mixes them per rider). */
+const FACE_MORPHS = [
+  { 'head/head-square': 0.7, 'chin/chin-width-incr': 0.6, 'chin/chin-prominent-incr': 0.5, 'nose/nose-scale-horiz-incr': 0.4, 'cheek/l-cheek-bones-incr': 0.4, 'cheek/r-cheek-bones-incr': 0.4, 'mouth/mouth-scale-horiz-incr': 0.3 },
+  { 'head/head-oval': 0.7, 'head/head-scale-vert-incr': 0.35, 'nose/nose-scale-vert-incr': 0.5, 'nose/nose-hump-incr': 0.6, 'chin/chin-height-incr': 0.4, 'nose/nose-point-width-incr': 0.3 },
+  { 'head/head-age-incr': 0.8, 'cheek/l-cheek-volume-decr': 0.5, 'cheek/r-cheek-volume-decr': 0.5, 'eyebrows/eyebrows-trans-down': 0.5 },
+];
 function buildRider({ shape = RIDER_SHAPE, body = 'm', proxyFile = 'proxymeshes/male1591/male1591.proxy', hairFile = 'hair/short02/short02.mhclo' } = {}) {
   const restMH = shaped(shape);
   const rest = toGame(restMH);
@@ -226,7 +232,15 @@ function buildRider({ shape = RIDER_SHAPE, body = 'm', proxyFile = 'proxymeshes/
   const W = mapWeights(mhWeights);
   const K = kitFields(mhWeights);
   const keep = (f) => !f.v.every((v) => hidden(rest[v * 3], rest[v * 3 + 1], rest[v * 3 + 2]));
-  const near = assemble({ faces: bodyFaces, vt: base.vt, posed, rest, weights: W, kit: K, keep });
+  // Face morphs: the same pose applied to the body shaped with extra face targets; only the head moves.
+  const morphs = FACE_MORPHS.map((extra) => {
+    const restM = toGame(shaped({ ...shape, ...Object.fromEntries(Object.entries(extra).map(([k, w]) => [k, (shape[k] ?? 0) + w])) }));
+    const posedM = skel.skin(restM, mhWeights);
+    const d = new Float64Array(posed.length);
+    for (let i = 0; i < d.length; i++) d[i] = posedM[i] - posed[i];
+    return d;
+  });
+  const near = assemble({ faces: bodyFaces, vt: base.vt, posed, rest, weights: W, kit: K, keep, morphs });
 
   // Far: the 1591-vertex male proxy, fitted to the same shaped body and pose.
   const proxy = fitted(path.join(SYS, proxyFile), restMH, skel);

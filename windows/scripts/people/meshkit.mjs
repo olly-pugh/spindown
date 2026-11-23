@@ -3,6 +3,9 @@
 // src/renderer/game3d/people/pack.js).
 import { V3 } from './skeleton.mjs';
 
+/** Full scale of the stored face morph deltas (metres). */
+export const MORPH_SCALE = 0.05;
+
 /** Smooth per-vertex normals (area weighted) for coords over faces [{v: [...]}]. */
 export function vertexNormals(coords, faces, n = coords.length / 3) {
   const N = new Float64Array(n * 3);
@@ -48,6 +51,7 @@ export function assemble(src) {
   const normals = src.normals ?? vertexNormals(posed, faces);
   const map = new Map();
   const P = [], NN = [], UV = [], SI = [], SW = [], RP = [], KW = [], ORIG = [], index = [];
+  const MO = (src.morphs ?? []).map(() => []);
   const vid = (v, t) => {
     const key = v * 65536 + (t + 1);
     let i = map.get(key);
@@ -65,6 +69,7 @@ export function assemble(src) {
     }
     if (src.rest) RP.push(src.rest[v * 3], src.rest[v * 3 + 1], src.rest[v * 3 + 2]);
     if (src.kit) KW.push(...src.kit[v].map((x) => Math.round(Math.max(0, Math.min(1, x)) * 255)));
+    (src.morphs ?? []).forEach((d, k) => MO[k].push(d[v * 3], d[v * 3 + 1], d[v * 3 + 2]));
     return i;
   };
   for (const f of faces) {
@@ -93,6 +98,7 @@ export function assemble(src) {
   }
   if (src.rest) out.rest = Int16Array.from(RP.map((x) => Math.round(Math.max(-1, Math.min(1, x)) * 32767)));
   if (src.kit) out.kit = Uint8Array.from(KW);
+  MO.forEach((m, k) => { out['morph' + k] = Int16Array.from(m.map((x) => Math.round(Math.max(-1, Math.min(1, x / MORPH_SCALE)) * 32767))); });
   return out;
 }
 
@@ -100,7 +106,7 @@ export function assemble(src) {
 export const LAYOUT = {
   position: [3, false], normal: [3, true], uv: [2, true], skinIndex: [4, false], skinWeight: [4, true], rest: [3, true], kit: [4, true],
   color: [3, true], region: [1, false], arm: [1, true], uv2: [2, true], edge: [1, true],
-  positionB: [3, false], normalB: [3, true], part: [1, false],
+  positionB: [3, false], normalB: [3, true], part: [1, false], morph0: [3, true], morph1: [3, true], morph2: [3, true],
 };
 const TYPES = { Float32Array: 'f32', Int8Array: 'i8', Uint8Array: 'u8', Int16Array: 'i16', Uint16Array: 'u16', Uint32Array: 'u32', Int32Array: 'i32' };
 
