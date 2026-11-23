@@ -10,6 +10,7 @@ import { standingPose } from './pose.mjs';
 import { vertexNormals } from './meshkit.mjs';
 import { simplify, compactMesh } from './simplify.mjs';
 import { Builder } from './shells.mjs';
+import { VoxelGrid, bakeAO } from './ao.mjs';
 
 /** Parts, as the crowd shader understands them. */
 export const PART = { SKIN: 0, TOP: 1, BOTTOM: 2, HAIR: 3, SHOES: 4, EYES: 5, HAT: 6, FLAG: 7, POLE: 8, PHONE: 9, CAP: 10, BEANIE: 11, BAG: 12 };
@@ -304,6 +305,16 @@ export function buildCrowd(ctx) {
     // Very far: the proxy simplified to about a third (people beyond ~55 m are a handful of pixels).
     const vr = simplify(far.position, Array.from(far.index), Math.round((far.index.length / 3) * 0.3), { lockBorder: false });
     const vfar = compactMesh(far, vr.index, vr.keep);
+    // Baked occlusion (frame A) for the near and far figures.
+    {
+      const grid = new VoxelGrid([-1.2, -0.05, -1.0], [1.2, 2.3, 1.0], 0.012);
+      grid.addTriangles(near.position, near.index);
+      for (const m of [near, far, vfar]) {
+        const nrm = Float32Array.from(m.normal, (x) => x / 127);
+        const ao = bakeAO(grid, m.position, nrm, m.index, { rays: 20, maxDist: 0.2, strength: 0.9 });
+        m.ao = Uint8Array.from(ao, (x) => Math.round(Math.max(0, Math.min(1, x)) * 255));
+      }
+    }
     meshes[`${v.name}`] = near;
     meshes[`${v.name}:far`] = far;
     meshes[`${v.name}:vfar`] = vfar;
@@ -340,7 +351,7 @@ function accessories(v, skel) {
   };
   if (v.cap) {
     const b = new Builder();
-    dome(b, 0.097, 0.09, 0.11, C[1] + 0.002, C[1] + 0.008, C[1] - 0.016, PART.CAP);
+    dome(b, 0.096, 0.094, 0.108, C[1] - 0.004, C[1] - 0.014, C[1] - 0.042, PART.CAP);
     // Peak: a curved visor off the front, slightly down.
     const NU = 10, peak = [];
     for (let i = 0; i <= NU; i++) {
@@ -348,14 +359,14 @@ function accessories(v, skel) {
       const a = u * 1.0;
       const x0 = Math.sin(a) * 0.096, z0 = C[2] - Math.cos(a) * 0.109;
       const len = 0.075 * Math.cos(u * 1.2);
-      peak.push([b.v([x0, C[1] + 0.008, z0], PART.CAP), b.v([x0 * 1.05, C[1] + 0.0 - 0.012 * (1 - u * u), z0 - len], PART.CAP)]);
+      peak.push([b.v([x0, C[1] - 0.013, z0], PART.CAP), b.v([x0 * 1.05, C[1] - 0.019 - 0.01 * (1 - u * u), z0 - len], PART.CAP)]);
     }
     for (let i = 0; i < NU; i++) {
       b.quad(peak[i][0], peak[i][1], peak[i + 1][1], peak[i + 1][0]);
       b.quad(peak[i][0], peak[i + 1][0], peak[i + 1][1], peak[i][1]);
     }
     out.push({ b, bone: 'head', part: PART.CAP });
-    covers = (x, y, z) => y > C[1] - 0.012 && (x / 0.12) ** 2 + ((y - C[1]) / 0.12) ** 2 + ((z - C[2]) / 0.13) ** 2 < 1;
+    covers = (x, y, z) => y > C[1] - 0.03 + 0.12 * Math.max(0, z - C[2]) * 0 && (x / 0.12) ** 2 + ((y - C[1]) / 0.12) ** 2 + ((z - C[2]) / 0.13) ** 2 < 1;
   } else if (v.beanie) {
     const b = new Builder();
     dome(b, 0.092, 0.092, 0.104, C[1] + 0.006, C[1] - 0.012, C[1] - 0.03, PART.BEANIE);

@@ -131,6 +131,8 @@ function crowdMaterial(variant, lod) {
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>
         attribute vec3 iTop, iBottom, iSkin, iHair;
+        attribute float ao;
+        varying float vAO;
         uniform sampler2D uAtlas;
         varying float vPart;
         varying vec3 vTint;
@@ -138,6 +140,7 @@ function crowdMaterial(variant, lod) {
         varying vec3 vFarCol;`)
       .replace('#include <color_vertex>', `#include <color_vertex>
         vPart = part;
+        vAO = ao;
         vTint = part < 0.5 ? iSkin : part < 1.5 ? iTop : part < 2.5 ? iBottom : part < 3.5 ? iHair : part > 9.5 && part < 10.5 ? iTop : part > 10.5 && part < 11.5 ? iBottom : vec3(1.0);
         vTintBottom = iMisc.z;
         ${near ? 'vFarCol = vec3(1.0);' : 'vFarCol = textureLod(uAtlas, uv, 4.0).rgb;'}`);
@@ -145,10 +148,14 @@ function crowdMaterial(variant, lod) {
       .replace('#include <common>', `#include <common>
         uniform float uTopLum, uBotLum;
         uniform vec3 uSkinMean;
+        varying float vAO;
         varying float vPart;
         varying vec3 vTint;
         varying float vTintBottom;
         varying vec3 vFarCol;`)
+      .replace('#include <aomap_fragment>', `#include <aomap_fragment>
+        reflectedLight.indirectDiffuse *= vAO;
+        reflectedLight.directDiffuse *= mix(1.0, vAO, 0.3);`)
       .replace('#include <map_fragment>', `${near ? '#include <map_fragment>' : 'diffuseColor.rgb = vFarCol;'}
         {
           vec3 t = diffuseColor.rgb;
@@ -165,7 +172,7 @@ function crowdMaterial(variant, lod) {
           diffuseColor.rgb = t;
         }`);
   };
-  m.customProgramCacheKey = () => `spindown-crowd-${lod}`;
+  m.customProgramCacheKey = () => `spindown-crowd-${lod}-ao`;
   materials.set(key, m);
   return m;
 }
