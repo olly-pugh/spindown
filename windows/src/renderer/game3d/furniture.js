@@ -74,14 +74,20 @@ export function gateLeaf(kind, w) {
 /** A gatepost: a weathered limestone stoop, or a square timber post. Base at the origin. */
 export function gatePost(kind = 'stone') {
   if (kind === 'timber') return merge([paint(box(-0.09, -0.3, -0.09, 0.09, 1.45, 0.09), '#5f5446'), paint(box(-0.1, 1.45, -0.1, 0.1, 1.5, 0.1), '#56493c')]);
+  // A limestone stoop: tapering, a little out of true, with a weathered, uneven top. Keeps its UVs for a
+  // stone texture (the vertex colour is left white).
   const g = new THREE.BoxGeometry(0.3, 1.85, 0.3, 1, 3, 1).translate(0, 0.62, 0);
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) {
     const y = p.getY(i), k = 1 - (y + 0.3) * 0.06;
     p.setXYZ(i, p.getX(i) * k + Math.sin(y * 7 + p.getZ(i) * 9) * 0.012, y + (y > 1.4 ? Math.sin(p.getX(i) * 13) * 0.04 : 0), p.getZ(i) * k + Math.cos(y * 5 + p.getX(i) * 11) * 0.012);
   }
+  const uv = g.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 0.6, uv.getY(i) * (p.getY(i) > 1.4 ? 0.5 : 2.2));
   g.computeVertexNormals();
-  return paint(g, '#a7a49b');
+  const ng = g.toNonIndexed();
+  ng.setAttribute('color', new THREE.BufferAttribute(new Float32Array(ng.attributes.position.count * 3).fill(1), 3));
+  return ng;
 }
 
 /** Gate leaf geometry for the boundaries module: kind 'timber'|'metal', width class in metres. */
@@ -219,6 +225,7 @@ export function signAtlas(steepPercent = 16) {
     g.fill();
     g.save();
     g.translate(x, y);
+    g.fillStyle = g.strokeStyle = '#111111';
     inner();
     g.restore();
   };
@@ -233,6 +240,7 @@ export function signAtlas(steepPercent = 16) {
     g.fill();
     g.save();
     g.translate(x, y);
+    g.fillStyle = g.strokeStyle = '#111111';
     inner();
     g.restore();
   };

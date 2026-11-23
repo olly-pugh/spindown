@@ -15,7 +15,7 @@ import * as THREE from 'three';
 import { hash2 } from '../../core/world/noise.js';
 import * as F from './foliage.js';
 import { gateGeometry, gatePost } from './furniture.js';
-import { crispCoverage } from './vegetation.js';
+import { crispCoverage, dullSheen } from './vegetation.js';
 
 const V3 = THREE.Vector3;
 const TAU = Math.PI * 2;
@@ -574,7 +574,7 @@ function plantMaterial(map, level) {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <alphatest_fragment>', crispCoverage)
       .replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''))
-      .replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\nmaterial.specularColorBlended *= 0.3; material.specularF90 = 0.3;');
+      .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>\n${dullSheen}`);
   };
   m.customProgramCacheKey = () => 'spindown-plant';
   return m;
@@ -694,7 +694,7 @@ export function walls(segments, opts = {}) {
   group.add(chunkMeshes(far, mat, { shadows, maxDistance }));
 
   // Gates in the gateways, on stone gateposts.
-  if (gates.length) group.add(gateMeshes(gates, { shadows, level, posts: 'stone' }));
+  if (gates.length) group.add(gateMeshes(gates, { shadows, level, posts: 'stone', tone: opts.tone ?? 'limestone' }));
 
   // Near detail: full bodies, coping and throughstones, stiles and grass at the foot.
   if (level !== 'low' || opts.nearOnLow) {
@@ -834,13 +834,15 @@ const GATE_WIDTHS = [2.0, 2.6, 3.2, 3.8];
  * Gates hung in gateways [{x, y, z, rot, width, a, b}]: a post just inside each wall end and a timber
  * five-bar or galvanised gate between them (about one in seven left standing open), instanced in chunks.
  */
-function gateMeshes(list, { shadows, level, posts = 'stone' }) {
+function gateMeshes(list, { shadows, level, posts = 'stone', tone = 'limestone' }) {
   const group = new THREE.Group();
   const sets = new Map(); // name -> {geo, mat, items: [matrix]}
   const mats = {
     timber: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0 }),
     metal: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.55 }),
-    post: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 }),
+    post: posts === 'stone'
+      ? new THREE.MeshStandardMaterial({ map: wallTextures(tone).stoneMap, normalMap: wallTextures(tone).stoneNormal, vertexColors: true, roughness: 0.95, metalness: 0 })
+      : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 }),
   };
   const add = (name, make, mat, m) => {
     let s = sets.get(name);
@@ -1035,7 +1037,7 @@ function softFoliage(m, cards = false) {
   m.onBeforeCompile = (sh) => {
     let f = sh.fragmentShader.replace('#include <alphatest_fragment>', crispCoverage);
     if (cards) f = f.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''));
-    f = f.replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\nmaterial.specularColorBlended *= 0.3; material.specularF90 = 0.3;');
+    f = f.replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>\n${dullSheen}`);
     sh.fragmentShader = f;
   };
   m.customProgramCacheKey = () => (cards ? 'spindown-hedge-cards' : 'spindown-hedge');

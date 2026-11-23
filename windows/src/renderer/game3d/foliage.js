@@ -9,7 +9,7 @@
 // keep the same alpha coverage as the full-size image, so trees do not thin out and go see-through into the
 // distance (the usual failure of alpha-tested foliage).
 import * as THREE from 'three';
-import { rng } from '../../core/world/noise.js';
+import { rng, hash2 } from '../../core/world/noise.js';
 
 const TAU = Math.PI * 2;
 const cache = new Map();
@@ -723,206 +723,139 @@ export const BARK_COLUMNS = ['oak', 'ash', 'sycamore', 'hawthorn', 'birch', 'lim
 /** Average bark colour of each species (for the impostors' branches). */
 export const BARK_MEAN = { oak: '#4f483e', ash: '#6f6e66', sycamore: '#706a60', hawthorn: '#5a5248', birch: '#cfcdc4', lime: '#5c564c', pine: '#94593a', spruce: '#5a5046' };
 
-function barkStrip(g, W, H, kind, r) {
-  // Everything is drawn three times across (x − W, x, x + W) and twice down so the strip wraps.
-  const wrap = (fn) => {
-    for (const ox of [-W, 0, W]) for (const oy of [-H, 0, H]) {
-      g.save();
-      g.translate(ox, oy);
-      fn();
-      g.restore();
-    }
-  };
-  const sinuous = (x, y, len, amp, w, col) => {
-    g.strokeStyle = col;
-    g.lineWidth = w;
-    g.lineCap = 'round';
-    g.beginPath();
-    g.moveTo(x, y);
-    const n = Math.max(3, Math.round(len / 12));
-    let px = x;
-    for (let i = 1; i <= n; i++) {
-      px = x + Math.sin(i * 0.9 + r() * 2) * amp;
-      g.lineTo(px, y + (len * i) / n);
-    }
-    g.stroke();
-  };
-  const fill = (col) => {
-    g.fillStyle = col;
-    g.fillRect(0, 0, W, H);
-  };
-  const blobs = (n, cols, rmin, rmax, alpha) => {
-    for (let i = 0; i < n; i++) {
-      const x = r() * W, y = r() * H, rad = rmin + r() * (rmax - rmin), col = cols[Math.floor(r() * cols.length)];
-      wrap(() => {
-        g.globalAlpha = alpha;
-        g.fillStyle = col;
-        g.beginPath();
-        g.ellipse(x, y, rad, rad * (0.6 + r() * 0.8), r() * 3, 0, TAU);
-        g.fill();
-      });
-    }
-    g.globalAlpha = 1;
-  };
-  switch (kind) {
-    case 'oak': {
-      // Deeply fissured into long, rough, grey-brown ridges.
-      fill('#4a443b');
-      for (let i = 0; i < 46; i++) {
-        const x = r() * W, y = r() * H, len = 60 + r() * 180, w = 4 + r() * 7;
-        const col = ['#6d665a', '#776f62', '#5f584d', '#817868'][Math.floor(r() * 4)];
-        wrap(() => sinuous(x, y, len, 2.5, w, col));
-      }
-      for (let i = 0; i < 70; i++) {
-        const x = r() * W, y = r() * H, len = 40 + r() * 140;
-        wrap(() => sinuous(x, y, len, 2, 1.2 + r() * 1.8, 'rgba(24,20,16,0.85)'));
-      }
-      blobs(16, ['#8a9578', '#9aa48a', '#7c8a6a'], 3, 9, 0.35);
-      break;
-    }
-    case 'ash': {
-      // Pale grey with a net of shallow, interlacing fissures (diamonds).
-      fill('#807f77');
-      blobs(30, ['#8e8d85', '#75746c', '#9a988f'], 8, 24, 0.4);
-      for (let i = 0; i < 60; i++) {
-        const x = r() * W, y = r() * H, len = 30 + r() * 50, dir = r() < 0.5 ? 1 : -1;
-        wrap(() => {
-          g.strokeStyle = 'rgba(48,46,42,0.75)';
-          g.lineWidth = 1 + r() * 1.4;
-          g.beginPath();
-          g.moveTo(x, y);
-          g.lineTo(x + dir * len * 0.35, y + len);
-          g.stroke();
-        });
-      }
-      blobs(10, ['#a3ab90', '#6f7b5f'], 2, 6, 0.4);
-      break;
-    }
-    case 'sycamore': {
-      // Smooth grey-pink, flaking in small irregular plates that show orange-brown beneath.
-      fill('#7d756b');
-      for (let i = 0; i < 40; i++) {
-        const x = r() * W, y = r() * H, w = 10 + r() * 22, h = 14 + r() * 30, col = ['#8f8579', '#9b8d7f', '#a38a6e', '#86796c', '#a69a8c'][Math.floor(r() * 5)];
-        wrap(() => {
-          g.fillStyle = col;
-          g.beginPath();
-          g.moveTo(x, y);
-          g.lineTo(x + w, y + r() * 4);
-          g.lineTo(x + w - r() * 4, y + h);
-          g.lineTo(x + r() * 3, y + h - r() * 4);
-          g.closePath();
-          g.fill();
-          g.strokeStyle = 'rgba(40,34,28,0.5)';
-          g.lineWidth = 1;
-          g.stroke();
-        });
-      }
-      blobs(8, ['#9aa48a', '#7f8c6a'], 3, 8, 0.3);
-      break;
-    }
-    case 'hawthorn': {
-      // Grey-brown, fluted and finely cracked.
-      fill('#5e554a');
-      for (let i = 0; i < 18; i++) {
-        const x = r() * W, col = ['#6f665a', '#544c42', '#7a7062'][Math.floor(r() * 3)];
-        wrap(() => sinuous(x, -10, H + 20, 3, 4 + r() * 6, col));
-      }
-      for (let i = 0; i < 50; i++) {
-        const x = r() * W, y = r() * H;
-        wrap(() => sinuous(x, y, 10 + r() * 30, 1.5, 1, 'rgba(25,22,18,0.7)'));
-      }
-      break;
-    }
-    case 'birch': {
-      // White and papery, with dark horizontal lenticels and a few black diamonds.
-      fill('#e3e1d9');
-      blobs(14, ['#eeece6', '#d6d2c8', '#cfc8bd'], 10, 30, 0.5);
-      for (let i = 0; i < 90; i++) {
-        const x = r() * W, y = r() * H, w = 6 + r() * 18;
-        wrap(() => {
-          g.fillStyle = r() < 0.8 ? 'rgba(40,36,32,0.85)' : 'rgba(120,100,90,0.6)';
-          g.fillRect(x, y, w, 1 + r() * 1.6);
-        });
-      }
-      for (let i = 0; i < 5; i++) {
-        const x = r() * W, y = r() * H, s = 6 + r() * 10;
-        wrap(() => {
-          g.fillStyle = '#2b2724';
-          g.beginPath();
-          g.moveTo(x, y - s * 1.4);
-          g.lineTo(x + s, y);
-          g.lineTo(x, y + s * 1.4);
-          g.lineTo(x - s, y);
-          g.closePath();
-          g.fill();
-        });
-      }
-      break;
-    }
-    case 'lime': {
-      fill('#5a544a');
-      for (let i = 0; i < 40; i++) {
-        const x = r() * W, y = r() * H, len = 50 + r() * 120;
-        wrap(() => sinuous(x, y, len, 3, 3 + r() * 4, ['#6b6458', '#625b50', '#746c5f'][Math.floor(r() * 3)]));
-      }
-      for (let i = 0; i < 60; i++) {
-        const x = r() * W, y = r() * H;
-        wrap(() => sinuous(x, y, 20 + r() * 60, 2.5, 1.1, 'rgba(28,24,20,0.7)'));
-      }
-      break;
-    }
-    case 'pine': {
-      // Scots pine upper bark: thin, papery, orange-red plates.
-      fill('#8f4a2a');
-      for (let i = 0; i < 70; i++) {
-        const x = r() * W, y = r() * H, w = 8 + r() * 20, h = 10 + r() * 26, col = ['#a95c34', '#9a522e', '#b8693c', '#7f4126', '#a2603a', '#6b5546'][Math.floor(r() * 6)];
-        wrap(() => {
-          g.fillStyle = col;
-          g.beginPath();
-          g.ellipse(x, y, w / 2, h / 2, (r() - 0.5) * 0.6, 0, TAU);
-          g.fill();
-          g.strokeStyle = 'rgba(70,35,20,0.45)';
-          g.lineWidth = 1;
-          g.stroke();
-        });
-      }
-      break;
-    }
-    case 'spruce': {
-      fill('#5d5247');
-      for (let i = 0; i < 160; i++) {
-        const x = r() * W, y = r() * H, s = 3 + r() * 6, col = ['#6e6255', '#544a40', '#786b5c'][Math.floor(r() * 3)];
-        wrap(() => {
-          g.fillStyle = col;
-          g.beginPath();
-          g.ellipse(x, y, s, s * 0.7, 0, 0, TAU);
-          g.fill();
-          g.strokeStyle = 'rgba(30,26,22,0.6)';
-          g.lineWidth = 0.8;
-          g.stroke();
-        });
-      }
-      break;
-    }
-  }
+/** Value noise that tiles with period (px, py) lattice cells. */
+function tnoise(x, y, px, py, seed) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const x0 = ((xi % px) + px) % px, x1 = (x0 + 1) % px, y0 = ((yi % py) + py) % py, y1 = (y0 + 1) % py;
+  const a = hash2(x0, y0, seed), b = hash2(x1, y0, seed), c = hash2(x0, y1, seed), d = hash2(x1, y1, seed);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
+/** Tiling fractal noise over u, v in [0, 1) with fx × fy cells in its first octave. */
+function tfbm(u, v, fx, fy, oct, seed) {
+  let s = 0, n = 0, amp = 0.5, f = 1;
+  for (let o = 0; o < oct; o++) {
+    s += amp * tnoise(u * fx * f, v * fy * f, fx * f, fy * f, seed + o * 31);
+    n += amp;
+    amp *= 0.5;
+    f *= 2;
+  }
+  return s / n;
+}
+const sstep = (a, b, x) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+const mixRGB = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const rgb = (hex) => {
+  const c = new THREE.Color(hex);
+  return [c.r * 255, c.g * 255, c.b * 255];
+};
+
+/**
+ * One species' bark as colour per (u round the trunk, v along it), both in [0, 1) and tiling. Returns
+ * [r, g, b] (0–255). Drawn at half resolution and smoothed up.
+ */
+const BARK = {
+  // English oak: deep fissures between long, rough, grey-brown ridges, with lichen.
+  oak(u, v) {
+    const n = tfbm(u, v, 7, 3, 3, 11) + 0.18 * tfbm(u, v, 22, 9, 2, 12);
+    const ridge = sstep(0.43, 0.6, n);
+    const tone = 0.85 + 0.3 * tfbm(u, v, 14, 8, 2, 13);
+    let c = mixRGB(rgb('#1a1612'), rgb('#62594c'), ridge).map((x) => x * tone);
+    const lichen = sstep(0.68, 0.76, tfbm(u, v, 10, 7, 3, 14)) * ridge;
+    return mixRGB(c, rgb('#8c977a'), lichen * 0.55);
+  },
+  // Ash: pale grey with a net of interlacing shallow fissures.
+  ash(u, v) {
+    const w = 0.35 * tfbm(u, v, 6, 4, 2, 21);
+    const d1 = Math.abs(((u * 6 + v * 5 + w) % 1) - 0.5), d2 = Math.abs(((u * 6 - v * 5 + w + 10) % 1) - 0.5);
+    const crack = 1 - sstep(0.03, 0.1, Math.min(d1, d2));
+    const tone = 0.88 + 0.24 * tfbm(u, v, 12, 10, 2, 22);
+    return mixRGB(rgb('#6f6e66'), rgb('#2c2b27'), crack * 0.85).map((x) => x * tone);
+  },
+  // Sycamore: smooth grey-pink, flaking in small plates that show orange-brown beneath.
+  sycamore(u, v) {
+    const p = tfbm(u, v, 9, 7, 3, 31);
+    const plate = sstep(0.58, 0.62, p), edge = sstep(0.55, 0.585, p) - plate;
+    const tone = 0.9 + 0.2 * tfbm(u, v, 18, 12, 2, 32);
+    let c = mixRGB(rgb('#7a7067'), rgb('#9a7f62'), plate * 0.8);
+    c = mixRGB(c, rgb('#2e2924'), Math.max(0, edge) * 0.9);
+    return c.map((x) => x * tone);
+  },
+  // Hawthorn: grey-brown, fluted and finely cracked.
+  hawthorn(u, v) {
+    const flute = 0.5 + 0.5 * Math.sin((u * 7 + 0.4 * tfbm(u, v, 4, 3, 2, 41)) * Math.PI * 2);
+    const crack = sstep(0.62, 0.7, tfbm(u, v, 16, 10, 2, 42));
+    return mixRGB(mixRGB(rgb('#3c362f'), rgb('#6a6155'), flute), rgb('#211d19'), crack * 0.8);
+  },
+  // Silver birch: white and papery, dark horizontal lenticels, and black fissured patches.
+  birch(u, v) {
+    const len = sstep(0.62, 0.7, tfbm(u, v, 3, 44, 2, 51)) * sstep(0.45, 0.55, tfbm(u, v, 8, 6, 2, 52));
+    const black = sstep(0.7, 0.78, tfbm(u, v, 5, 4, 3, 53));
+    const tone = 0.9 + 0.12 * tfbm(u, v, 10, 8, 2, 54);
+    let c = mixRGB(rgb('#ddd9cf'), rgb('#cfc4b6'), tfbm(u, v, 6, 5, 2, 55) * 0.6).map((x) => x * tone);
+    c = mixRGB(c, rgb('#2a2622'), len * 0.9);
+    return mixRGB(c, rgb('#1f1c19'), black);
+  },
+  // Lime: grey-brown with a fine network of shallow ridges.
+  lime(u, v) {
+    const n = tfbm(u, v, 12, 4, 3, 61);
+    const ridge = sstep(0.42, 0.58, n);
+    return mixRGB(rgb('#24201b'), rgb('#5e574c'), ridge).map((x) => x * (0.88 + 0.24 * tfbm(u, v, 20, 9, 2, 62)));
+  },
+  // Scots pine (upper trunk): thin papery plates in orange and red-brown with dark seams.
+  pine(u, v) {
+    const p = tfbm(u, v, 10, 9, 3, 71);
+    const seam = 1 - sstep(0.015, 0.05, Math.abs(p - 0.5));
+    const tone = tfbm(u, v, 14, 12, 2, 72);
+    const c = mixRGB(rgb('#8f4728'), rgb('#c2703f'), tone);
+    return mixRGB(c, rgb('#3a2014'), seam * 0.85);
+  },
+  // Spruce: grey-brown with small round scales.
+  spruce(u, v) {
+    const s = tfbm(u, v, 24, 30, 2, 81);
+    const scale = sstep(0.5, 0.62, s);
+    return mixRGB(rgb('#2b251f'), rgb('#62574b'), scale).map((x) => x * (0.9 + 0.2 * tfbm(u, v, 8, 10, 2, 82)));
+  },
+};
 
 /** Bark strips, one column per species: U round the trunk, V along it (repeat 4 × the circumference). */
 export function barkAtlas() {
   return once('bark', () => {
-    const W = 128, H = 512;
+    const W = 128, H = 512, w = 64, h = 256;
     const [c, g] = canvas2d(W * BARK_COLUMNS.length, H);
     BARK_COLUMNS.forEach((kind, i) => {
-      const [sc, sg] = canvas2d(W, H);
-      barkStrip(sg, W, H, kind, rng(300 + i * 13));
-      // Bark is dark: under the game's bright sky light it must be drawn darker than it looks on paper.
-      const dark = kind === 'birch' ? 0.8 : kind === 'pine' ? 0.6 : 0.42;
-      sg.fillStyle = `rgba(0,0,0,${1 - dark})`;
-      sg.fillRect(0, 0, W, H);
-      g.drawImage(sc, i * W, 0);
+      // Bark is dark: under the game's bright sky light it is drawn darker than it looks on paper.
+      const dark = kind === 'birch' ? 0.85 : 0.74;
+      // Computed at half resolution, then scaled up bilinearly with wrap-around so the strip tiles both ways.
+      const half = new Float32Array(w * h * 3);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const col = BARK[kind](x / w, y / h);
+          half.set([col[0] * dark, col[1] * dark, col[2] * dark], (y * w + x) * 3);
+        }
+      }
+      const img = g.createImageData(W, H);
+      for (let y = 0; y < H; y++) {
+        const fy = (y + 0.5) / 2 - 0.5, y0 = Math.floor(fy), ty = fy - y0;
+        const ya = ((y0 % h) + h) % h, yb = (ya + 1) % h;
+        for (let x = 0; x < W; x++) {
+          const fx = (x + 0.5) / 2 - 0.5, x0 = Math.floor(fx), tx = fx - x0;
+          const xa = ((x0 % w) + w) % w, xb = (xa + 1) % w;
+          const o = (y * W + x) * 4;
+          for (let k = 0; k < 3; k++) {
+            const top = half[(ya * w + xa) * 3 + k] * (1 - tx) + half[(ya * w + xb) * 3 + k] * tx;
+            const bot = half[(yb * w + xa) * 3 + k] * (1 - tx) + half[(yb * w + xb) * 3 + k] * tx;
+            img.data[o + k] = top * (1 - ty) + bot * ty;
+          }
+          img.data[o + 3] = 255;
+        }
+      }
+      g.putImageData(img, i * W, 0);
     });
     const map = foliageTexture(c, { threshold: 0, wrapT: THREE.RepeatWrapping });
-    const normalMap = normalMapFrom(c, { strength: 2.4, columns: BARK_COLUMNS.length });
+    const normalMap = normalMapFrom(c, { strength: 4.5, columns: BARK_COLUMNS.length });
     const column = (kind) => {
       const i = BARK_COLUMNS.indexOf(kind);
       return { u0: (i + 0.02) / BARK_COLUMNS.length, u1: (i + 0.98) / BARK_COLUMNS.length };

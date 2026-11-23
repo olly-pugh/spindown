@@ -493,6 +493,13 @@ function barkGeometry(tree, column, { maxDepth, sides, stride = 1 }) {
       pts.push(b.pts[b.pts.length - 1]);
       rad.push(b.rad[b.rad.length - 1]);
     }
+    // Extra rings where the trunk meets the ground, so the root flare curves in smoothly.
+    if (b.depth === 0 && pts.length > 1) {
+      const extra = stride === 1 ? [0.12, 0.26, 0.42, 0.62] : [0.3];
+      const p0 = pts[0], p1 = pts[1], r0 = rad[0], r1 = rad[1];
+      pts.splice(1, 0, ...extra.map((t) => p0.clone().lerp(p1, t)));
+      rad.splice(1, 0, ...extra.map((t) => r0 + (r1 - r0) * t));
+    }
     let started = false, v = 0;
     const base = pos.length / 3;
     for (let i = 0; i < pts.length; i++) {
@@ -506,11 +513,11 @@ function barkGeometry(tree, column, { maxDepth, sides, stride = 1 }) {
       if (i > 0) v += pts[i].distanceTo(pts[i - 1]) / (TAU * Math.max(0.025, (rad[i] + rad[i - 1]) / 2) * 4);
       const y = pts[i].y;
       // Root flare and buttresses where the trunk meets the ground.
-      const flare = b.depth === 0 ? 1 + 0.7 * (1 - smooth(-0.5, 1.2, y)) : 1;
+      const flare = b.depth === 0 ? 1 + 0.6 * Math.pow(1 - smooth(-0.5, 1.0, y), 2) : 1;
       // Bark darkens towards the ground (damp, moss), and the canopy hides most of the sky from the limbs
       // inside it and from the trunk beneath it.
       const crown = tree.crown;
-      const canopy = y < crown.bottom ? 0.6 : 0.4 + 0.55 * Math.pow(Math.min(1, crown.f(pts[i])), 1.5);
+      const canopy = y < crown.bottom ? 0.68 : 0.42 + 0.55 * Math.pow(Math.min(1, crown.f(pts[i])), 1.5);
       let ao = (0.72 + 0.28 * smooth(-0.3, 2.0, y)) * canopy;
       let cr = ao, cg = ao, cb = ao;
       if (tree.pineBark !== undefined) {
@@ -522,7 +529,7 @@ function barkGeometry(tree, column, { maxDepth, sides, stride = 1 }) {
       }
       for (let j = 0; j <= S; j++) {
         const a = (j / S) * TAU;
-        const lobes = b.depth === 0 && flare > 1.02 ? 1 + 0.35 * Math.pow(Math.max(0, Math.cos(a * 4 + 1.3)), 3) * (flare - 1) : 1;
+        const lobes = b.depth === 0 && flare > 1.01 ? 1 + 0.5 * Math.pow(0.5 + 0.5 * Math.cos(a * 4 + 1.3), 2) * (flare - 1) : 1;
         const r = rad[i] * flare * lobes;
         const dx = N.x * Math.cos(a) + Bn.x * Math.sin(a), dy = N.y * Math.cos(a) + Bn.y * Math.sin(a), dz = N.z * Math.cos(a) + Bn.z * Math.sin(a);
         pos.push(pts[i].x + dx * r, pts[i].y + dy * r, pts[i].z + dz * r);
@@ -640,7 +647,7 @@ function impostorItem(tree) {
       yMax = Math.max(yMax, q.y);
     }
     p.copy(cd.c);
-    return { tl: [tl.x, tl.y], tr: [tr.x, tr.y], bl: [bl.x, bl.y], z: cd.c.z, shade: crownAO(crown, p) * 1.05, cell: cd.cell };
+    return { tl: [tl.x, tl.y], tr: [tr.x, tr.y], bl: [bl.x, bl.y], z: cd.c.z, shade: crownAO(crown, p) * 1.18, cell: cd.cell };
   });
   const branches = tree.branches.filter((b) => b.depth <= 2).map((b) => {
     for (const q of b.pts) {
@@ -712,9 +719,11 @@ const windChunk = /* glsl */ `
 
 // Foliage has only a faint sheen: with the crown-shaped normals, full Fresnel reflection of the bright sky
 // would put a milky rim round every tree.
-const dullSheen = /* glsl */ `
-  material.specularColorBlended *= 0.3;
-  material.specularF90 = 0.3;
+// (Both the direct and the environment terms: three uses specularColorBlended for one, specularColor for the other.)
+export const dullSheen = /* glsl */ `
+  material.specularColor *= 0.25;
+  material.specularColorBlended *= 0.25;
+  material.specularF90 = 0.12;
 `;
 // Alpha to coverage, but with the coverage ramp centred on the cut-off and never wider than a fraction of
 // the alpha range: three's own ramp widens with fwidth(alpha), which on distant leaves (many leaves to a
