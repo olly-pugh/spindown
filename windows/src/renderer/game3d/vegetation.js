@@ -855,7 +855,7 @@ function qualityLevel(opts) {
 
 // Full detail within R0 and the lighter trees within R1 (metres, for a 13 m tree; bigger trees keep their
 // detail further away), impostors beyond.
-const LOD_RANGES = { low: [26, 85], medium: [50, 150], high: [80, 240] };
+const LOD_RANGES = { low: [26, 85], medium: [42, 140], high: [75, 230] };
 // The prevailing wind (from the west-south-west): windswept trees lean towards +x turned to this heading.
 const DOWNWIND = 0.38;
 
@@ -1008,8 +1008,57 @@ export function buildTrees(placements, opts = {}) {
       shadow.call(this, renderer, object, camera, shadowCamera, geometry, depthMaterial, grp);
     };
   }
+  // Street trees (placements with `pit`) stand in square cast-iron grates set in the pavement.
+  const pits = placements.filter((p) => p.pit);
+  if (pits.length) group.add(treeGrates(pits));
   group.userData.treeCount = n;
   group.userData.setting = setting;
   group.userData.libraryMs = lib.ms;
   return group;
+}
+
+/** Cast-iron tree grates, 1.2 m square with a frame and slots, at placements [{x, y, z, rot}]. */
+function treeGrates(list) {
+  const parts = [];
+  const box = (x0, z0, x1, z1, y1, k) => {
+    const g = new THREE.BoxGeometry(x1 - x0, y1, z1 - z0).translate((x0 + x1) / 2, y1 / 2, (z0 + z1) / 2).toNonIndexed();
+    const c = new Float32Array(g.attributes.position.count * 3).fill(k);
+    g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+    g.deleteAttribute('uv');
+    return g;
+  };
+  // A dark soil square under a frame and slotted bars.
+  parts.push(box(-0.6, -0.6, 0.6, 0.6, 0.012, 0.06));
+  for (const s of [-1, 1]) {
+    parts.push(box(-0.62, s * 0.62 - 0.04, 0.62, s * 0.62 + 0.04, 0.035, 0.16));
+    parts.push(box(s * 0.62 - 0.04, -0.62, s * 0.62 + 0.04, 0.62, 0.035, 0.16));
+  }
+  for (let i = -5; i <= 5; i++) {
+    if (Math.abs(i) <= 1) continue; // the hole for the trunk
+    parts.push(box(i * 0.1 - 0.018, -0.58, i * 0.1 + 0.018, 0.58, 0.03, 0.13));
+  }
+  for (const s of [-1, 1]) parts.push(box(-0.15, s * 0.14 - 0.018, 0.15, s * 0.14 + 0.018, 0.03, 0.13));
+  const geo = mergeAll(parts);
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.4 });
+  const mesh = new THREE.InstancedMesh(geo, mat, list.length);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new V3(0, 1, 0);
+  list.forEach((p, i) => mesh.setMatrixAt(i, m.compose(new V3(p.x, p.y - 0.21, p.z), q.setFromAxisAngle(up, p.rot ?? 0), new V3(1, 1, 1))));
+  mesh.computeBoundingSphere();
+  mesh.receiveShadow = true;
+  mesh.castShadow = false;
+  return mesh;
+}
+
+function mergeAll(list) {
+  const pos = [], nrm = [], col = [];
+  for (const g of list) {
+    pos.push(...g.attributes.position.array);
+    nrm.push(...g.attributes.normal.array);
+    col.push(...g.attributes.color.array);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return g;
 }

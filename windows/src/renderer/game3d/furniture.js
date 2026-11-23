@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as F from './foliage.js';
 import { hash2 } from '../../core/world/noise.js';
+import { NearDetail, tuftGeometry, plantMaterial, pushMatrix, qualityLevel } from './neardetail.js';
 
 const V3 = THREE.Vector3;
 
@@ -449,7 +450,7 @@ export function roadside(route, opts) {
     let last = -1e9;
     for (let d = 0; d < L; d += 8) {
       const turn = wrapAngle(route.heading(d + 35) - route.heading(d - 15));
-      if (Math.abs(turn) > 0.4 && d - last > 220) {
+      if (Math.abs(turn) > 0.55 && d - last > 450) {
         sign((d - 70 + L) % L, turn < 0 ? 'bendLeft' : 'bendRight');
         last = d;
       }
@@ -480,6 +481,7 @@ export function roadside(route, opts) {
     // Single-track lanes have passing places, each with its white sign.
     if (roadHalf < 2.7) for (let d = 250; d < L - 100; d += 380) sign(d, 'passing', Math.floor(d / 380) % 2 ? 1 : -1, 1.7, 0.75);
     group.add(telegraphLine(route, { roadHalf, ground, avoid, shadows }));
+    if (qualityLevel(opts) !== 'low') group.add(vergePlants(route, { roadHalf, ground, avoid, level: qualityLevel(opts) }));
   }
 
   // Signs: posts and plates (the plates alpha-tested on the sign atlas).
@@ -503,6 +505,52 @@ export function roadside(route, opts) {
   return group;
 }
 
+/**
+ * Grass, seed heads and cow parsley along both verges of a lane, shorter by the tarmac and taller towards the
+ * wall or hedge, streamed within ~40 m of the camera.
+ */
+function vergePlants(route, { roadHalf, ground, avoid, level }) {
+  const atlas = F.leafAtlas(1024);
+  const mat = plantMaterial(atlas.texture, level);
+  const meshes = {
+    grass: new THREE.InstancedMesh(tuftGeometry(atlas.rect('grass')), mat, level === 'high' ? 9000 : 6000),
+    seeds: new THREE.InstancedMesh(tuftGeometry(atlas.rect('grassSeed')), mat, 3000),
+    parsley: new THREE.InstancedMesh(tuftGeometry(atlas.rect('parsley')), mat, 1500),
+  };
+  const C = 50, L = route.length;
+  const cells = new Map();
+  const p = {};
+  for (let d = 0; d < L; d += 1) {
+    route.position(d, 0, p);
+    const k = `${Math.floor(p.x / C)},${Math.floor(p.z / C)}`;
+    (cells.get(k) ?? cells.set(k, []).get(k)).push(d);
+  }
+  const make = (key) => {
+    const out = { grass: [], seeds: [], parsley: [] };
+    for (const d0 of cells.get(key) ?? []) {
+      if (avoid(d0)) continue;
+      const roadY = route.elevation(d0);
+      for (let k = 0; k < 4; k++) {
+        const d = d0 + k / 4;
+        for (const side of [-1, 1]) {
+          const h = hash2(Math.round(d * 4), side, 81), h2 = hash2(Math.round(d * 4), side, 82), h3 = hash2(Math.round(d * 4), side, 83);
+          const out2 = Math.pow(h2, 1.4) * 1.8;
+          route.position(d, side * (roadHalf + 0.1 + out2), p);
+          const y = Math.min(roadY + 0.25, Math.max(roadY - 0.2, ground(p.x, p.z, d)));
+          const list = h3 < 0.05 + out2 * 0.03 ? out.parsley : h3 < 0.22 + out2 * 0.08 ? out.seeds : out.grass;
+          const sc = 0.2 + h * 0.25 + out2 * 0.16;
+          pushMatrix(list, p.x, y - 0.04, p.z, h * 6.28, (h2 - 0.5) * 0.3, (h3 - 0.5) * 0.3, sc * 1.4, sc * (list === out.parsley ? 2.1 : list === out.seeds ? 1.5 : 1), sc * 1.4);
+        }
+      }
+    }
+    return { inst: Object.fromEntries(Object.entries(out).map(([k, v]) => [k, { matrices: new Float32Array(v) }])) };
+  };
+  const near = new NearDetail({ cell: C, radius: level === 'high' ? 55 : 40, meshes, make });
+  for (const k of cells.keys()) near.cells.add(k);
+  near.hook(meshes.grass);
+  return near.group;
+}
+
 /** A wooden telegraph line along the left of the road: poles about every 60 m, four wires sagging between them. */
 function telegraphLine(route, { roadHalf, ground, avoid, shadows }) {
   const group = new THREE.Group();
@@ -511,7 +559,8 @@ function telegraphLine(route, { roadHalf, ground, avoid, shadows }) {
   const p = {};
   const lateral = -(roadHalf + 4.2);
   for (let d = 30; d < L - 30; d += 58 + hash2(Math.floor(d), 3, 61) * 8) {
-    if (avoid(d)) {
+    // The line follows the lane only for stretches (out to a farm, then off across the fields).
+    if (avoid(d) || hash2(Math.floor(d / 1100), 7, 62) > 0.45) {
       poles.push(null);
       continue;
     }
