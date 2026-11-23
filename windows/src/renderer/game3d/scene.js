@@ -262,6 +262,9 @@ export class WorldScene {
     // Keep the camera above the ground (Dales slopes).
     const ground = this.world.heightAt(want.x, want.z);
     if (want.y < ground + 0.8) want.y = ground + 0.8;
+    // A camera cut: show and hide scenery chunks for the new view this frame (the crowd picks each person's
+    // level of detail from the camera, so stale chunk visibility would leave nearby people missing).
+    if (!this.camInit) this.cullTimer = 0;
     const k = this.camInit ? 1 - Math.exp(-dt * (mode === 'first' ? 30 : 6)) : 1;
     this.camPos.lerp(want, k);
     this.camLook.lerp(look, this.camInit ? 1 - Math.exp(-dt * 10) : 1);
