@@ -27,7 +27,7 @@ const DEG = Math.PI / 180;
 
 /** Near-detail distance by quality (metres from the camera to a chunk). */
 export function nearDistance(q) {
-  return q.shadows ? (q.shadowSize >= 4096 ? 230 : 165) : 85;
+  return q.shadows ? (q.shadowSize >= 4096 ? 200 : 165) : 85;
 }
 
 const lin = (hex) => new THREE.Color(hex);
@@ -422,7 +422,8 @@ function planRoof(b, ctx) {
     return;
   }
   const pitch = (st.pitch + (t - 0.5) * 6) * DEG;
-  if (b.rectness > 0.8 && b.pts.length <= 8) {
+  const vernacular = st === STYLE.cottage || st === STYLE.dalesRender || st === STYLE.barn || st === STYLE.outbuilding;
+  if ((b.rectness > 0.8 && b.pts.length <= 8) || ((vernacular || b.area < 220) && b.rectness > 0.5)) {
     // Ridge parallel to the street for terraces; gable to the street for many timber houses.
     let ux = b.obb.ux, uz = b.obb.uz;
     if (b.main) {
@@ -546,15 +547,13 @@ function windowAt(W, b, s, w, h0, h, o) {
     // Top of the lower sash's meeting rail, catching the light.
     W.setLayer(L.PAINT).colour(b.frame, 0.95);
     W.quad([s0, hm, -dr], [s1, hm, -dr], [s1, hm, -dr - 0.04], [s0, hm, -dr - 0.04], [s0, 0, s1, 0, s1, 0.04, s0, 0.04]);
-    W.colour(b.frame, 0.7);
-    W.box(s0 + 0.02, s1 - 0.02, hm - 0.035, hm, -dr - 0.005, -dr + 0.02, 1 | 16);
   } else {
     glass(W, g, s0, s1, h0, h1, -dr, o.variant, b.frame);
   }
   // Sill: stone, projecting, with drip shadow below.
   if (st.sill) {
     W.setLayer(L.ASHLAR).colour(b.trim);
-    W.box(s0 - 0.07, s1 + 0.07, h0 - 0.09, h0, -dr + 0.02, 0.07, 1 | 4 | 8 | 16 | 32);
+    W.box(s0 - 0.07, s1 + 0.07, h0 - 0.09, h0, -dr + 0.02, 0.07, 1 | 16 | 32);
   }
   head(W, b, s0, s1, h1, o);
 }
@@ -596,7 +595,7 @@ function head(W, b, s0, s1, h1, o) {
 function doorAt(W, b, s, o = {}) {
   const st = b.st;
   const kind = o.kind ?? st.doorcase;
-  const w = kind === 'barn' ? 3.2 : kind === 'modern' ? 1.8 : kind === 'civic' ? 1.5 : 1.05;
+  const w = kind === 'barn' ? Math.min(3.2, (o.wall ?? 8) * 0.42) : kind === 'modern' ? 1.8 : kind === 'civic' ? 1.5 : 1.05;
   const s0 = s - w / 2, s1 = s + w / 2;
   const step = kind === 'barn' || kind === 'modern' ? 0 : 0.16;
   const leaf = kind === 'barn' ? 3.0 : kind === 'civic' ? 2.7 : kind === 'modern' ? 2.4 : kind === 'stone' || kind === 'plain' ? 2.0 : 2.2;
@@ -610,7 +609,7 @@ function doorAt(W, b, s, o = {}) {
   W.quad([s0, step, 0], [s1, step, 0], [s1, step, -dr], [s0, step, -dr], [s0, 0, s1, 0, s1, dr, s0, dr]);
   // Leaf.
   const variant = kind === 'barn' ? 2 : kind === 'modern' ? 3 : o.variant ?? st.door;
-  W.setLayer(L.DOOR).colour(kind === 'modern' ? P.dark : o.paint ?? b.doorPaint);
+  W.setLayer(L.DOOR).colour(kind === 'modern' ? P.dark : kind === 'barn' ? lin('#7a6a58') : o.paint ?? b.doorPaint);
   const u0 = variant * 0.25;
   if (kind === 'barn') {
     // A pair of boarded doors.
@@ -766,7 +765,6 @@ function studding(W, b, len, y0, h, wins) {
   const rail = 0.2;
   W.box(0, len, y0, y0 + rail, 0, 0.035, 1 | 16);
   W.box(0, len, y0 + h - rail, y0 + h, 0, 0.035, 1 | 32);
-  const mid = y0 + h * 0.48;
   for (let s = 0.12; s < len - 0.05; s += 0.46) {
     const hit = wins.find((o) => s + 0.08 > o.s0 - 0.05 && s - 0.08 < o.s1 + 0.05);
     if (hit) continue;
@@ -778,11 +776,10 @@ function studding(W, b, len, y0, h, wins) {
     W.box(o.s0 - 0.1, o.s1 + 0.1, o.h1, o.h1 + 0.12, 0, 0.03, 1 | 16 | 32);
     W.box(o.s0 - 0.1, o.s1 + 0.1, o.h0 - 0.12, o.h0, 0, 0.03, 1 | 16 | 32);
   }
-  void mid;
 }
 
 /** All the near-detail geometry of one wall. */
-function nearWall(W, b, e, ctx) {
+function nearWall(W, b, e) {
   const st = b.st;
   const len = e.len, H = b.eaves;
   W.wallFrame(e.ax, e.az, e.bx, e.bz, b.y);
@@ -869,7 +866,7 @@ function nearWall(W, b, e, ctx) {
         if (c - a > 2.4) sh.push(shopfront(W, b, a, c, p));
       }
     } else if (k === 0 && st === STYLE.barn) {
-      if (main || e.len > 6) sh.push(doorAt(W, b, len * (b.hash < 0.5 ? 0.35 : 0.65), { kind: 'barn' }));
+      if (main || e.len > 6) sh.push(doorAt(W, b, len * (b.hash < 0.5 ? 0.38 : 0.62), { kind: 'barn', wall: len }));
     } else {
       bays.forEach((bay, bi) => {
         const sx = bay.s;
@@ -948,7 +945,7 @@ function nearWall(W, b, e, ctx) {
   if (st.plinth) {
     W.setLayer(L.ASHLAR).colour(b.trim, 0.9);
     const gaps = shopHere ? plots.map((p) => [p.s0, p.s1]) : [];
-    plinthRuns(W, len, b.storeys[0], -b.foot, 0.32, 0.035, gaps);
+    plinthRuns(W, len, -b.foot, 0.32, 0.035, gaps);
   }
   if (st.string && b.storeys.length > 1) {
     W.setLayer(st === STYLE.render ? L.PAINT : L.ASHLAR).colour(st === STYLE.render ? b.tint : b.trim);
@@ -999,7 +996,6 @@ function nearWall(W, b, e, ctx) {
   }
   W.uo = W.vo = 0;
   W.aoH = 0;
-  void ctx;
 }
 
 /** House plots along a long terrace frontage (the main front), each a little different. */
@@ -1029,14 +1025,13 @@ function planPlots(b) {
   }
 }
 
-function plinthRuns(W, len, g0, y0, y1, d, gaps) {
+function plinthRuns(W, len, y0, y1, d, gaps) {
   let s = 0;
   for (const [a, c] of gaps) {
     if (a > s) W.box(s, a, y0, y1, 0, d, 1 | 16 | 4 | 8);
     s = c;
   }
   if (s < len) W.box(s, len, y0, y1, 0, d, 1 | 16 | 4 | 8);
-  void g0;
 }
 
 /** Long-and-short stone quoins at the wall's exposed corners. */
@@ -1273,6 +1268,12 @@ function roofInset(A, b, N = null) {
   let inner = null;
   for (let t = 0; t < 4 && !inner; t++, d *= 0.6) inner = offsetRing(b.pts, d);
   if (!inner || d < 0.8) {
+    if (b.area < 400) {
+      const o = b.obb;
+      b.roof = { type: 'rect', cx: o.cx, cz: o.cz, ux: o.ux, uz: o.uz, la: o.la, lb: o.lb, pitch: b.roof.pitch, rise: Math.min(o.lb * Math.tan(b.roof.pitch), 6), ends: ['gable', 'gable'] };
+      roofRect(A, b, N);
+      return;
+    }
     roofFlat(A, b);
     return;
   }
@@ -1309,7 +1310,7 @@ function roofInset(A, b, N = null) {
     }
   }
   // Flat lead top.
-  A.setLayer(L.LEAD).setColour(0.55, 0.57, 0.57);
+  A.setLayer(L.LEAD).setColour(0.45, 0.47, 0.47);
   const flat = [];
   for (const p of inner) flat.push(p[0], p[1]);
   A.flat(flat, rise, true);
@@ -1345,9 +1346,9 @@ function roofFlat(A, b) {
   const par = b.st.eaves === 'parapet' || b.st === STYLE.civic ? 0.9 : 0.55;
   A.frame(0, yE, 0, 1, 0);
   // Felt on the flat roofs of modern blocks; lead on the older ones.
-  A.setLayer(b.st === STYLE.modern ? L.DARK : L.LEAD);
-  if (b.st === STYLE.modern) A.setColour(3.2, 3.2, 3.3);
-  else A.setColour(0.5, 0.52, 0.52);
+  A.setLayer(b.st === STYLE.modern ? L.ASHLAR : L.LEAD);
+  if (b.st === STYLE.modern) A.setColour(0.3, 0.31, 0.32);
+  else A.setColour(0.45, 0.47, 0.47);
   const flat = [];
   for (const p of b.pts) flat.push(p[0], p[1]);
   A.flat(flat, par * 0.3, true);
@@ -1398,7 +1399,6 @@ function stack(A, b, x, z, ux, uz, wl, ws, base, top, pots, layer = null, N = b.
     if (N) {
       N.setLayer(A.layer).colour(b.stackTint ?? b.tint);
       N.uo = A.uo;
-      N.box(-wl / 2 - 0.05, wl / 2 + 0.05, h - 0.42, h - 0.33, -ws / 2 - 0.05, ws / 2 + 0.05, 1 | 2 | 4 | 8 | 16 | 32);
       N.box(-wl / 2 - 0.08, wl / 2 + 0.08, h - 0.24, h - 0.14, -ws / 2 - 0.08, ws / 2 + 0.08, 1 | 2 | 4 | 8 | 16 | 32);
       N.uo = 0;
     }
@@ -1565,7 +1565,6 @@ function dormers(Wn, b) {
     const yTop = yFoot + h + 0.15;
     const dBack = sideSign * (r.lb - 0.55 - (yTop - yFoot) / tan - 0.1);
     // Front face (cheeks of render), window, little gabled roof.
-    const fr = (a, c) => (sideSign > 0 ? [a, c] : [c, a]);
     Wn.setLayer(L.PAINT).colour(P.white, 0.95);
     const q = (p0, p1, p2, p3) => (sideSign > 0 ? Wn.quad(p0, p1, p2, p3, [0, 0, 1, 0, 1, 1, 0, 1]) : Wn.quad(p1, p0, p3, p2, [0, 0, 1, 0, 1, 1, 0, 1]));
     q([s0, yFoot - 0.1, dFace], [s1, yFoot - 0.1, dFace], [s1, yFoot + 0.12, dFace], [s0, yFoot + 0.12, dFace]);
@@ -1603,13 +1602,12 @@ function dormers(Wn, b) {
     Wn.setLayer(L.PAINT).colour(P.white, 0.9);
     if (sideSign > 0) Wn.tri([s0, ym, dFace], [s1, ym, dFace], [sm, yr - 0.04, dFace], [0, 0, 1, 0, 0.5, 0.4]);
     else Wn.tri([s1, ym, dFace], [s0, ym, dFace], [sm, yr - 0.04, dFace], [0, 0, 1, 0, 0.5, 0.4]);
-    void fr;
   }
 }
 
 // ---- Assembly ---------------------------------------------------------------------------------------------
 
-function finishStyle(b, ctx) {
+function finishStyle(b) {
   const st = b.st;
   const t = hash2(b.i, 7, 7), t2 = hash2(b.group, 9, 1);
   b.hash2 = hash2(b.i, 17, 23);
@@ -1626,7 +1624,6 @@ function finishStyle(b, ctx) {
   b.stackTint = st.wall === L.BRICK || st.wall === L.BRICK2 ? b.tint : P.brickTints[Math.floor(t * 8) % 8];
   b.signIndex = Math.floor(hash2(b.i, 99, 5) * 16);
   b.shopPaint = lin(SIGN_PAINTS[b.signIndex]);
-  void ctx;
 }
 
 /**
@@ -1637,9 +1634,7 @@ function finishStyle(b, ctx) {
  */
 export function buildingSet(list, ctx) {
   const q = ctx.q;
-  const t0 = performance.now();
   const mats = materials(q.texDetail ?? 1);
-  const t1 = performance.now();
   const bs = [];
   list.forEach((src) => {
     const b = makeBuilding(src, bs.length);
@@ -1688,7 +1683,7 @@ export function buildingSet(list, ctx) {
     else if ((st === STYLE.georgian || st === STYLE.render) && b.inside && hash2(b.i, 5, 5) < 0.18) n = Math.max(2, n + (hash2(b.i, 6, 6) < 0.5 ? -1 : 1));
     if (b.src.storeys) n = b.src.storeys;
     setHeights(b, n);
-    finishStyle(b, ctx);
+    finishStyle(b);
     planRoof(b, ctx);
     planPlots(b);
     if (b.src.chimney === false) b.noChimney = true;
@@ -1715,7 +1710,7 @@ export function buildingSet(list, ctx) {
     if (b.st === STYLE.church) churchTower(A, b);
     b.nearWriter = null;
     if (b.detail) {
-      for (const e of b.edges) nearWall(N, b, e, ctx);
+      for (const e of b.edges) nearWall(N, b, e);
       dormers(N, b);
       const F = cells.writer(b.cx, b.cz, 'far');
       for (const e of b.edges) farWall(F, b, e);
@@ -1737,7 +1732,6 @@ export function buildingSet(list, ctx) {
   group.userData.buildings = bs.length;
   // Style and place of each building (for diagnostics and the screenshot tools).
   group.userData.list = bs.map((b) => [b.styleName, Math.round(b.cx), Math.round(b.cz), b.detail ? 1 : 0, ...(b.main ? [+((b.main.ax + b.main.bx) / 2).toFixed(1), +((b.main.az + b.main.bz) / 2).toFixed(1), +b.main.nx.toFixed(2), +b.main.nz.toFixed(2)] : [])]);
-  console.log(`[gp] buildings: ${bs.length}, textures ${Math.round(t1 - t0)} ms, geometry ${Math.round(performance.now() - t1)} ms`);
   return { group, buildings: bs };
 }
 

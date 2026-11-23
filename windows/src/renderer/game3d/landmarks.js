@@ -619,7 +619,6 @@ export function cliffordsTower(lm, q, { y0 = 12 } = {}) {
       // Outer face: wall frame with the outward normal pointing away from the lobe centre (a→b clockwise?).
       W.wallFrame(p0x, p0z, p1x, p1z, base);
       const len = Math.hypot(p1x - p0x, p1z - p0z);
-      const mid = (k + 0.5) / n;
       // Batter at the foot, then the wall, with an arrow slit in a few segments.
       W.setLayer(stoneL).colour(tint, 0.97);
       W.quad([0, -1.5, 0.9], [len, -1.5, 0.9], [len, 1.2, 0], [0, 1.2, 0], [0, 0, len, 0, len, 2.8, 0, 2.8]);
@@ -639,7 +638,6 @@ export function cliffordsTower(lm, q, { y0 = 12 } = {}) {
       const ph = ruin < 0.12 ? 1.6 : ruin < 0.3 ? 0.55 : 1.05;
       W.setLayer(stoneL).colour(tint);
       W.box(0, len, wallH, wallH + ph, -0.6, 0, 1 | 16 | 4 | 8);
-      void mid;
     }
     // Inner face (seen from above) and the wall top.
     const Ri = R - thick;
@@ -1074,7 +1072,6 @@ export function cityWalls(runs, { y0 = 12, q } = {}) {
       // Frame so that +d points out of the city: the segment a→b with the outward normal on the right.
       const dx = (bx - ax) / len, dz = (bz - az) / len;
       const nx = dz, nz = -dx; // right of a→b
-      const outSide = nx * out * (-dz) + 0; void outSide;
       // york.js: out = +1 when (−dz, dx)·(p − centre) > 0, i.e. the outward normal is (−dz, dx)·out.
       const ox = -dz * out, oz = dx * out;
       const flip = ox * nx + oz * nz < 0;
@@ -1107,8 +1104,7 @@ export function cityWalls(runs, { y0 = 12, q } = {}) {
         W.setLayer(stoneL).colour(tint);
         W.box(s0, s1, 6.05, 7.05, 0.45, 1.15, 1 | 2 | 4 | 8);
         W.setLayer(L.ASHLAR).colour(tint, 0.9);
-        W.box(s0 - 0.04, s1 + 0.04, 7.05, 7.13, 0.41, 1.19, 1 | 2 | 4 | 8 | 32);
-        W.prism(s0 - 0.04, s1 + 0.04, 0.41, 1.19, 7.13, 7.27, { ends: true });
+        W.prism(s0 - 0.04, s1 + 0.04, 0.41, 1.19, 7.05, 7.22, { ends: true });
         if (k & 1) {
           const m = (s0 + s1) / 2;
           W.setLayer(L.DARK).setColour(1, 1, 1);

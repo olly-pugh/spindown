@@ -70,11 +70,11 @@ function def(key, tile, rough, metal, glass, draw, reflect = 1.3) {
 }
 
 // Roofs.
-def('SLATE', 2.4, 0.62, 0, false, () => from(T.roofTexture('slate')));
+def('SLATE', 2.4, 0.8, 0, false, () => from(T.roofTexture('slate')));
 def('PANTILE', 2.4, 0.8, 0, false, () => from(T.roofTexture('pantile')));
 def('PLAINTILE', 2.4, 0.85, 0, false, () => plainTiles);
 def('STONESLATE', 2.4, 0.92, 0, false, () => stoneSlates);
-def('LEAD', 2.4, 0.6, 0.08, false, () => from(T.roofTexture('lead')));
+def('LEAD', 2.4, 0.78, 0.04, false, () => from(T.roofTexture('lead')));
 // Walling.
 def('BRICK', 4, 0.9, 0, false, () => (g) => brickwork(g, GEORGIAN_BRICK));
 def('BRICK2', 4, 0.88, 0, false, () => (g) => brickwork(g, VICTORIAN_BRICK));
@@ -393,31 +393,30 @@ function blindTracery(g) {
 
 function dalesLimestone(g) {
   // Carboniferous limestone in random rubble courses with lime mortar: pale grey, a few rusty and dark stones.
-  g.fillStyle = '#9a968c';
+  // Smaller, tighter stones than a field wall, the joints filled with pale lime so the pattern stays quiet.
+  g.fillStyle = '#b3aea3';
   g.fillRect(0, 0, 512, 512);
-  const cols = ['#c9c6bd', '#b8b4aa', '#d6d3ca', '#aaa69b', '#c2bcae', '#bdb8ab', '#a59f92', '#cfc9bb'];
+  const cols = ['#c9c6bd', '#c0bcb2', '#d2cfc6', '#bab6ab', '#c6c0b2', '#cdc8bc', '#b5b0a4', '#d0cabd'];
   const r = rng(71);
   let y = 0;
   while (y < 512) {
-    const h = Math.min(512 - y, 18 + r() * 22);
+    const h = Math.min(512 - y, 13 + r() * 15);
     let x = -r() * 40;
     while (x < 512) {
-      const w = 24 + r() * 58;
+      const w = 18 + r() * 44;
       g.fillStyle = cols[Math.floor(r() * cols.length)];
       g.beginPath();
-      g.roundRect(x + 1.6, y + 1.4 + r() * 2, w - 3.2, h - 3.4 - r() * 2, 5 + r() * 4);
+      g.roundRect(x + 1.1, y + 1.0 + r() * 1.5, w - 2.2, h - 2.4 - r() * 1.5, 3 + r() * 3);
       g.fill();
-      g.fillStyle = 'rgba(255,255,255,0.12)';
-      g.fillRect(x + 4, y + 3, w - 10, 2);
-      g.fillStyle = 'rgba(0,0,0,0.1)';
-      g.fillRect(x + 4, y + h - 6, w - 10, 2.5);
+      g.fillStyle = 'rgba(0,0,0,0.05)';
+      g.fillRect(x + 3, y + h - 4, w - 7, 1.5);
       x += w;
     }
     y += h;
-    if (y > 496) y = 512;
+    if (y > 500) y = 512;
   }
-  mottle(g, 30, ['#7c8460', '#e4e0d4', '#6e6a5e', '#a69a7c'], 20, 100, 0.18, 72);
-  speckle(g, 6000, ['#4e4a42', '#ecebe4', '#7b8456', '#d0c48e'], 0.8, 2.4, 73, 0.1, 0.35);
+  mottle(g, 30, ['#8c9070', '#e6e3d8', '#7e7a6e', '#b0a688'], 20, 100, 0.1, 72);
+  speckle(g, 6000, ['#5e5a52', '#ecebe4', '#8a9066', '#d0c48e'], 0.8, 2.2, 73, 0.06, 0.25);
 }
 
 function paint(g) {
@@ -604,7 +603,7 @@ function signs(g, half) {
 }
 
 /** Dark glass with a hint of a room beyond: curtains, a blind, a lit lamp. (x,y,w,h) in pixels. */
-function pane(g, x, y, w, h, r, room) {
+function pane(g, x, y, w, h, room) {
   const grd = g.createLinearGradient(x, y, x + w * 0.3, y + h);
   grd.addColorStop(0, '#34414c');
   grd.addColorStop(0.5, '#1b232a');
@@ -619,7 +618,6 @@ function pane(g, x, y, w, h, r, room) {
   g.lineTo(x + w * 0.9, y);
   g.lineTo(x, y + h);
   g.fill();
-  void r;
 }
 
 /**
@@ -627,7 +625,6 @@ function pane(g, x, y, w, h, r, room) {
  * and horns. Drawn for an opening about 1.8 times taller than wide, so the bars come out evenly thick.
  */
 function sashes(g, nx, ny) {
-  const r = rng(nx * 10 + ny);
   for (let q = 0; q < 4; q++) {
     const X = (q % 2) * 256, Y = Math.floor(q / 2) * 256;
     g.save();
@@ -654,7 +651,7 @@ function sashes(g, nx, ny) {
         g.fillRect(x, y, w, h);
       }
     };
-    pane(g, X, Y, 256, 256, r, room);
+    pane(g, X, Y, 256, 256, room);
     g.restore();
   }
   // Frames: drawn into the alpha channel by painting opaque white bars over a glass-alpha canvas later.
@@ -684,10 +681,9 @@ function sashFrames(nx, ny) {
 
 function casements(g) {
   // Small-paned casements (two lights side by side across the quarter) for Dales farmhouses.
-  const r = rng(121);
   for (let q = 0; q < 4; q++) {
     const X = (q % 2) * 256, Y = Math.floor(q / 2) * 256;
-    pane(g, X, Y, 256, 256, r, q === 1 ? (x, y, w, h) => { g.fillStyle = 'rgba(214,206,186,0.8)'; g.fillRect(x, y, w * 0.2, h); g.fillRect(x + w * 0.8, y, w * 0.2, h); } : null);
+    pane(g, X, Y, 256, 256, q === 1 ? (x, y, w, h) => { g.fillStyle = 'rgba(214,206,186,0.8)'; g.fillRect(x, y, w * 0.2, h); g.fillRect(x + w * 0.8, y, w * 0.2, h); } : null);
   }
 }
 
@@ -702,14 +698,13 @@ function casementFrames() {
 
 function leaded(g) {
   // Diamond leaded lights in an oak frame with a mullion: timber-framed houses.
-  const r = rng(131);
   for (let q = 0; q < 4; q++) {
     const X = (q % 2) * 256, Y = Math.floor(q / 2) * 256;
     g.save();
     g.beginPath();
     g.rect(X, Y, 256, 256);
     g.clip();
-    pane(g, X, Y, 256, 256, r, null);
+    pane(g, X, Y, 256, 256, null);
     // Slightly greenish old glass, uneven.
     g.fillStyle = 'rgba(120,150,120,0.12)';
     g.fillRect(X, Y, 256, 256);
@@ -789,12 +784,7 @@ function shopFrames() {
 }
 
 function fanlight(g) {
-  const r = rng(151);
-  pane(g, 0, 0, 512, 512, r, null);
-}
-
-function fanFrames() {
-  return null; // drawn as a path below
+  pane(g, 0, 0, 512, 512, null);
 }
 
 function lancets(g) {
@@ -828,10 +818,6 @@ function lancets(g) {
   }
 }
 
-function lancetFrames() {
-  return null;
-}
-
 function roseWindow(g) {
   // A wheel window: radiating lights of red and white glass round a central rosette.
   const cx = 256, cy = 256;
@@ -845,7 +831,6 @@ function roseWindow(g) {
     g.fillRect(cx + Math.cos(a) * d - 3, cy + Math.sin(a) * d - 3, 6, 6);
   }
   g.globalAlpha = 1;
-  void cx;
 }
 
 function westWindow(g) {
@@ -1055,7 +1040,7 @@ export function surfaceArray(detail = 1) {
   const n = DEFS.length;
   const data = new Uint8Array(size * size * 4 * n);
   DEFS.forEach((d, li) => {
-    const [c, g] = canvas();
+    const [, g] = canvas();
     const draw = d.draw();
     draw(g);
     const img = g.getImageData(0, 0, size, size);
@@ -1065,7 +1050,6 @@ export function surfaceArray(detail = 1) {
     // Flip rows so v = 0 is the bottom of each painting (as CanvasTexture does).
     const row = size * 4, base = li * size * size * 4;
     for (let y = 0; y < size; y++) data.set(img.data.subarray(y * row, (y + 1) * row), base + (size - 1 - y) * row);
-    void c;
   });
   const tex = new THREE.DataArrayTexture(data, size, size, n);
   tex.format = THREE.RGBAFormat;
