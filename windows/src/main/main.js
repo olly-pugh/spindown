@@ -1,6 +1,6 @@
 // Spindown for Windows: the main process. Owns files, uploads, sign-in windows, the Bluetooth device chooser
 // bridge and self-updating. The app window (src/renderer) owns Bluetooth, the ride and the screens.
-import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, nativeImage, net, powerMonitor, powerSaveBlocker, safeStorage, session, shell } from 'electron';
+import electron, { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, nativeImage, net, powerMonitor, powerSaveBlocker, safeStorage, session, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -377,10 +377,17 @@ function start() {
       const p = store.picturePath(id);
       return p ? `data:image/jpeg;base64,${fs.readFileSync(p).toString('base64')}` : null;
     });
-    handle('rides:copyPicture', (id) => {
+    handle('rides:copyPicture', async (id) => {
       const p = store.picturePath(id);
       if (!p) return false;
-      clipboard.writeImage(nativeImage.createFromPath(p));
+      const image = nativeImage.createFromPath(p);
+      if (typeof clipboard.writeImage === 'function') {
+        clipboard.writeImage(image);
+      } else {
+        // Electron 45's clipboard follows the web's: write([ClipboardItem]).
+        const png = image.toPNG();
+        await clipboard.write([new electron.ClipboardItem({ 'image/png': new Blob([png], { type: 'image/png' }) })]);
+      }
       return true;
     });
     handle('rides:savePicture', async (id) => {
