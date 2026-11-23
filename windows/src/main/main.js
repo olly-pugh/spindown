@@ -1,6 +1,6 @@
 // Spindown for Windows: the main process. Owns files, uploads, sign-in windows, the Bluetooth device chooser
 // bridge and self-updating. The app window (src/renderer) owns Bluetooth, the ride and the screens.
-import { app, BrowserWindow, Menu, dialog, ipcMain, net, powerMonitor, powerSaveBlocker, safeStorage, session, shell } from 'electron';
+import electron, { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, nativeImage, net, powerMonitor, powerSaveBlocker, safeStorage, session, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -326,8 +326,8 @@ function start() {
     handle('journal:read', () => store.journalRead());
     handle('journal:discard', () => store.journalDiscard());
     handle('journal:moveAside', () => store.journalMoveAside());
-    handle('journal:save', (record, track, includePackets) => {
-      store.saveFromJournal(record, track, includePackets);
+    handle('journal:save', (record, track, includePackets, picture) => {
+      store.saveFromJournal(record, track, includePackets, picture ? Buffer.from(picture) : null);
       uploads.process();
       return true;
     });
@@ -354,6 +354,49 @@ function start() {
       const ride = store.exportable(id);
       const { canceled, filePath } = await dialog.showSaveDialog(win, {
         defaultPath: path.join(app.getPath('documents'), exportFileName(ride, 'fit').replace(/\.fit$/, '-bluetooth.jsonl')),
+      });
+      if (canceled || !filePath) return null;
+      fs.copyFileSync(src, filePath);
+      shell.showItemInFolder(filePath);
+      return filePath;
+    });
+
+    // Ride pictures: a screenshot of the 3D world taken as a World ride finishes (the window hides other riders'
+    // names first). rect is the 3D view's area in CSS pixels.
+    handle('app:capturePicture', async (rect) => {
+      const area = rect && rect.width > 50 && rect.height > 50
+        ? { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) }
+        : undefined;
+      let image = await win.webContents.capturePage(area);
+      if (image.isEmpty()) return null;
+      const { width } = image.getSize();
+      if (width > 1920) image = image.resize({ width: 1920, quality: 'best' });
+      return new Uint8Array(image.toJPEG(88));
+    });
+    handle('rides:picture', (id) => {
+      const p = store.picturePath(id);
+      return p ? `data:image/jpeg;base64,${fs.readFileSync(p).toString('base64')}` : null;
+    });
+    handle('rides:copyPicture', async (id) => {
+      const p = store.picturePath(id);
+      if (!p) return false;
+      const image = nativeImage.createFromPath(p);
+      if (typeof clipboard.writeImage === 'function') {
+        clipboard.writeImage(image);
+      } else {
+        // Electron 45's clipboard follows the web's: write([ClipboardItem]).
+        const png = image.toPNG();
+        await clipboard.write([new electron.ClipboardItem({ 'image/png': new Blob([png], { type: 'image/png' }) })]);
+      }
+      return true;
+    });
+    handle('rides:savePicture', async (id) => {
+      const src = store.picturePath(id);
+      if (!src) return null;
+      const ride = store.exportable(id);
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        defaultPath: path.join(app.getPath('pictures'), exportFileName(ride, 'jpg')),
+        filters: [{ name: 'JPEG picture', extensions: ['jpg'] }],
       });
       if (canceled || !filePath) return null;
       fs.copyFileSync(src, filePath);

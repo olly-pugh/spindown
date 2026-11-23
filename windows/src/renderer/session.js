@@ -3,7 +3,8 @@
 // survives the window closing, a crash or a power cut.
 import { RideRecorder, Journal, replayJournal, newRideID, defaultRideName } from '../core/recorder.js';
 import { hex } from '../core/bytes.js';
-import { changed } from './model.js';
+import { worldRideName } from '../core/worldride.js';
+import { changed, withTimeout } from './model.js';
 
 export const RESUME_WINDOW = 15 * 60 * 1000;
 
@@ -22,6 +23,39 @@ export class RideSession {
     this.timer = null;
     this.powerWindow = [];
     this.worldVisible = false;
+    /**
+     * Set by the World tab while it is on screen: {position() -> {lat, lon, alt}|null, info() -> world ride
+     * info|null, capture() -> Promise<JPEG bytes|null>}. Samples taken while it is set carry the rider's real
+     * position on the course; a ride with any such samples is saved as a virtual ride with a picture.
+     */
+    this.world = null;
+    this.worldInfo = null;
+    this.worldInfoText = null;
+  }
+
+  /** The rider's real-world position in the 3D world, or null (Ride tab, or the world is not running). */
+  worldPosition() {
+    try {
+      return this.world?.position() ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Notes (and journals, for crash recovery) the world ride once a sample has a position. */
+  noteWorld() {
+    let info = null;
+    try {
+      info = this.world?.info() ?? null;
+    } catch {
+      info = null;
+    }
+    if (!info) return;
+    const text = JSON.stringify(info);
+    if (text === this.worldInfoText) return;
+    this.worldInfo = info;
+    this.worldInfoText = text;
+    this.api.journal.append(Journal.world(info), true);
   }
 
   get startDate() {
@@ -89,6 +123,8 @@ export class RideSession {
       this.api.journal.append(Journal.header(id, start, this.equipment), true);
       this.rideID = id;
       this.recorder = new RideRecorder(start);
+      this.worldInfo = null;
+      this.worldInfoText = null;
       this.lastRecordedSecond = 0;
       this.lastError = null;
       this.setPhase('recording');
@@ -105,7 +141,7 @@ export class RideSession {
     if (this.phase !== 'recording' || !this.recorder) return;
     const r = this.recorder;
     const t = (Date.now() - r.startDate) / 1000;
-    const closing = r.pause(t, this.trainer.freshReading(), this.heartRate.freshHeartRate());
+    const closing = r.pause(t, this.trainer.freshReading(), this.heartRate.freshHeartRate(), this.worldPosition());
     if (closing) this.api.journal.append(Journal.sample(closing));
     this.api.journal.append(Journal.pause(t), true);
     this.setPhase('paused');
@@ -130,14 +166,26 @@ export class RideSession {
     const endDate = Date.now();
     const endT = (endDate - r.startDate) / 1000;
     if (this.phase === 'recording') {
-      const closing = r.pause(endT, this.trainer.freshReading(), this.heartRate.freshHeartRate());
+      const closing = r.pause(endT, this.trainer.freshReading(), this.heartRate.freshHeartRate(), this.worldPosition());
       if (closing) this.api.journal.append(Journal.sample(closing));
     }
     this.api.journal.append(Journal.pause(endT), true);
+    // A ride in the 3D world: the final course details (race place) and a picture of the world, taken with
+    // other riders' names hidden. Neither may hold up or prevent saving.
+    let picture = null;
+    if (this.worldInfo && this.world) {
+      this.noteWorld();
+      try {
+        picture = await withTimeout(this.world.capture(), 6000, 'picture timed out');
+      } catch (e) {
+        this.log.log(`Could not take the ride picture: ${e.message}`, 'warning');
+      }
+    }
+    const world = this.worldInfo;
     const record = {
       schemaVersion: 1,
       id: this.rideID,
-      name: defaultRideName(r.startDate),
+      name: world ? worldRideName(world) : defaultRideName(r.startDate),
       startDate: new Date(r.startDate).toISOString(),
       endDate: new Date(endDate).toISOString(),
       summary: r.summary(endT),
@@ -145,8 +193,9 @@ export class RideSession {
       recovered: false,
       uploads: Object.fromEntries(this.settings.autoUploadDestinations.map((d) => [d, { status: 'pending' }])),
     };
+    if (world) record.world = world;
     try {
-      await this.api.journal.save(record, r.track, !!this.settings.get('captureRawPackets'));
+      await this.api.journal.save(record, r.track, !!this.settings.get('captureRawPackets'), picture);
       this.reset();
       this.log.log(`Ride saved: ${Math.round(record.summary.distance)} m, ${Math.round(record.summary.timerTime)} s`);
       return record;
@@ -170,6 +219,8 @@ export class RideSession {
     this.timer = null;
     this.recorder = null;
     this.rideID = null;
+    this.worldInfo = null;
+    this.worldInfoText = null;
     this.setPhase('idle');
   }
 
@@ -195,7 +246,8 @@ export class RideSession {
     const second = Math.floor((now - r.startDate) / 1000);
     if (!(second > this.lastRecordedSecond)) return;
     this.lastRecordedSecond = second;
-    const sample = r.record(second, this.trainer.freshReading(now), this.heartRate.freshHeartRate(now));
+    const sample = r.record(second, this.trainer.freshReading(now), this.heartRate.freshHeartRate(now), this.worldPosition());
+    if (sample?.lat != null) this.noteWorld();
     if (sample) this.api.journal.append(Journal.sample(sample));
     changed();
   }
@@ -217,6 +269,8 @@ export class RideSession {
         await this.api.journal.open(true);
         this.rideID = rec.id;
         this.recorder = rec.recorder;
+        this.worldInfo = rec.world ?? null;
+        this.worldInfoText = rec.world ? JSON.stringify(rec.world) : null;
         this.lastRecordedSecond = Math.floor(rec.lastT);
         this.setPhase(rec.recorder.isPaused ? 'paused' : 'recording');
         this.startTimer();
@@ -229,7 +283,7 @@ export class RideSession {
       const record = {
         schemaVersion: 1,
         id: rec.id,
-        name: defaultRideName(start),
+        name: rec.world ? worldRideName(rec.world) : defaultRideName(start),
         startDate: new Date(start).toISOString(),
         endDate: new Date(lastKnown).toISOString(),
         summary: r.summary(rec.lastT),
@@ -237,6 +291,7 @@ export class RideSession {
         recovered: true,
         uploads: Object.fromEntries(this.settings.autoUploadDestinations.map((d) => [d, { status: 'pending' }])),
       };
+      if (rec.world) record.world = rec.world;
       await this.api.journal.save(record, r.track, true);
       this.log.log('Saved the unfinished ride as a recovered ride');
       return `Spindown was closed during a ride. It has been saved to your history as "${record.name}".`;

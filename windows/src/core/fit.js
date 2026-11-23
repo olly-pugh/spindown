@@ -1,15 +1,15 @@
 // Minimal, spec-compliant FIT writer and the FIT/TCX/CSV exporters.
 // Ports of FITWriter.swift and ActivityExporter.swift.
 import { ByteWriter, roundHalfAway } from './bytes.js';
-import { calories } from './recorder.js';
+import { calories, hasPositions } from './recorder.js';
 
 export const FIT_EPOCH = 631065600; // 1989-12-31T00:00:00Z
 export const PRODUCT_NAME = 'Spindown';
 export const SOFTWARE_VERSION = 100; // 1.00
 
-const T = { enumeration: 0x00, uint8: 0x02, uint16: 0x84, uint32: 0x86, string: 0x07, uint32z: 0x8c };
-const SIZE = { 0x00: 1, 0x02: 1, 0x07: 1, 0x84: 2, 0x86: 4, 0x8c: 4 };
-const INVALID = { 0x00: 0xff, 0x02: 0xff, 0x84: 0xffff, 0x86: 0xffffffff, 0x8c: 0, 0x07: 0 };
+const T = { enumeration: 0x00, uint8: 0x02, uint16: 0x84, sint32: 0x85, uint32: 0x86, string: 0x07, uint32z: 0x8c };
+const SIZE = { 0x00: 1, 0x02: 1, 0x07: 1, 0x84: 2, 0x85: 4, 0x86: 4, 0x8c: 4 };
+const INVALID = { 0x00: 0xff, 0x02: 0xff, 0x84: 0xffff, 0x85: 0x7fffffff, 0x86: 0xffffffff, 0x8c: 0, 0x07: 0 };
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const field = (number, type, value, string = null, stringSize = 0) => ({ number, type, value, string, stringSize });
@@ -19,6 +19,7 @@ export const F = {
   u16: (n, v) => field(n, T.uint16, v == null ? null : clamp(v, 0, 0xfffe)),
   u32: (n, v) => field(n, T.uint32, v == null ? null : clamp(v, 0, 0xfffffffe)),
   u32z: (n, v) => field(n, T.uint32z, v >>> 0),
+  s32: (n, v) => field(n, T.sint32, v == null ? null : clamp(v, -0x7fffffff, 0x7ffffffe)),
   enumeration: (n, v) => field(n, T.enumeration, v),
   text: (n, s, size = 20) => field(n, T.string, null, s, size),
 };
@@ -124,9 +125,21 @@ function serialFor(id) {
 const r = roundHalfAway;
 const opt = (x, f) => (x == null ? null : f(x));
 
+/** Degrees to FIT semicircles (2^31 per 180°). */
+export const semicircles = (deg) => Math.round((deg * 2 ** 31) / 180);
+/** Metres to FIT altitude (scale 5, offset 500), used by altitude and enhanced_altitude. */
+const fitAltitude = (m) => Math.round((m + 500) * 5);
+
+export const SUB_SPORT = { indoorCycling: 6, virtualActivity: 58 };
+
+/** A ride in Spindown World: a virtual ride with a GPS track on the real course. */
+export const isVirtualRide = (ride) => !!ride.record.world || hasPositions(ride.track.samples);
+
 /**
- * FIT activity: sport cycling / sub-sport indoor cycling, so Garmin files it as "Indoor Cycling" and
- * Strava as an indoor ride. `ride` = {record, track}; dates in record are ISO strings or ms.
+ * FIT activity. A plain ride is sport cycling / sub-sport indoor cycling, so Garmin files it as "Indoor
+ * Cycling" and Strava as an indoor ride. A ride in Spindown World is sub-sport virtual activity (58), which
+ * Garmin and Strava file as a Virtual Ride, and its records carry the rider's real latitude, longitude and
+ * altitude on the course, so it shows on a map. `ride` = {record, track}; dates in record are ISO strings or ms.
  */
 export function exportFIT(ride, tzOffsetSeconds = null) {
   const rec = ride.record;
@@ -136,6 +149,10 @@ export function exportFIT(ride, tzOffsetSeconds = null) {
   const startTS = fitTimestamp(startMs);
   const endTS = Math.max(fitTimestamp(endMs), startTS + Math.floor(Math.max(0, s.elapsedTime)));
   const w = new FITWriter();
+  const virtual = isVirtualRide(ride);
+  const subSport = virtual ? SUB_SPORT.virtualActivity : SUB_SPORT.indoorCycling;
+  // GPS summary of the records written (virtual rides only).
+  const gps = { first: null, last: null, n: -90, s: 90, e: -180, w: 180, ascent: 0, descent: 0, lastAlt: null };
 
   // file_id
   w.write(0, [F.enumeration(0, 4), F.u16(1, 255), F.u16(2, 1), F.u32z(3, serialFor(rec.id)), F.u32(4, startTS), F.text(8, PRODUCT_NAME)]);
@@ -163,14 +180,26 @@ export function exportFIT(ride, tzOffsetSeconds = null) {
     const ts = startTS + Math.max(0, r(sample.t));
     if (lastRecordTS != null && ts <= lastRecordTS) continue; // strictly increasing seconds
     lastRecordTS = ts;
-    w.write(20, [
+    const fields = [
       F.u32(253, ts),
       F.u32(5, r(sample.distance * 100)),
       F.u16(6, opt(sample.speed, (v) => r(v * 1000))),
       F.u16(7, sample.power),
       F.u8(4, opt(sample.cadence, (v) => r(v))),
       F.u8(3, sample.heartRate),
-    ]);
+    ];
+    if (virtual) {
+      const has = sample.lat != null && sample.lon != null;
+      if (has) noteGPS(gps, sample);
+      const alt = has && sample.alt != null ? fitAltitude(sample.alt) : null;
+      fields.push(
+        F.s32(0, has ? semicircles(sample.lat) : null),
+        F.s32(1, has ? semicircles(sample.lon) : null),
+        F.u16(2, alt),
+        F.u32(78, alt),
+      );
+    }
+    w.write(20, fields);
   }
   while (eventIndex < events.length) writeEvent(events[eventIndex++]);
   if (events.length === 0 || events[events.length - 1].start) writeEvent({ t: endTS - startTS, start: false });
@@ -195,18 +224,30 @@ export function exportFIT(ride, tzOffsetSeconds = null) {
     F.u32(7, elapsed), F.u32(8, timer), F.u32(9, distance), F.u16(11, kcal),
     F.u16(13, avgSpeed), F.u16(14, maxSpeed), F.u8(17, avgCad), F.u8(18, maxCad),
     F.u16(19, avgPower), F.u16(20, s.maxPower), F.enumeration(24, 7), F.enumeration(25, 2),
-    F.u16(33, np), F.enumeration(39, 6), F.u32(41, work), F.u32(52, moving), F.u16(254, 0),
+    F.u16(33, np), F.enumeration(39, subSport), F.u32(41, work), F.u32(52, moving), F.u16(254, 0),
     F.u8(15, avgHR), F.u8(16, s.maxHeartRate),
+    ...(virtual ? [
+      F.s32(3, opt(gps.first?.lat, semicircles)), F.s32(4, opt(gps.first?.lon, semicircles)),
+      F.s32(5, opt(gps.last?.lat, semicircles)), F.s32(6, opt(gps.last?.lon, semicircles)),
+      F.u16(21, gps.first ? r(gps.ascent) : null), F.u16(22, gps.first ? r(gps.descent) : null),
+    ] : []),
   ]);
 
   // session
   w.write(18, [
     F.u32(253, endTS), F.enumeration(0, 8), F.enumeration(1, 1), F.u32(2, startTS),
-    F.enumeration(5, 2), F.enumeration(6, 6), F.u32(7, elapsed), F.u32(8, timer), F.u32(9, distance),
+    F.enumeration(5, 2), F.enumeration(6, subSport), F.u32(7, elapsed), F.u32(8, timer), F.u32(9, distance),
     F.u16(11, kcal), F.u16(14, avgSpeed), F.u16(15, maxSpeed), F.u8(18, avgCad), F.u8(19, maxCad),
     F.u16(20, avgPower), F.u16(21, s.maxPower), F.u16(25, 0), F.u16(26, 1), F.enumeration(28, 0),
     F.u16(34, np), F.u32(48, work), F.u32(59, moving), F.u16(254, 0),
     F.u8(16, avgHR), F.u8(17, s.maxHeartRate),
+    ...(virtual ? [
+      F.s32(3, opt(gps.first?.lat, semicircles)), F.s32(4, opt(gps.first?.lon, semicircles)),
+      F.u16(22, gps.first ? r(gps.ascent) : null), F.u16(23, gps.first ? r(gps.descent) : null),
+      // Bounding box: north-east and south-west corners.
+      F.s32(29, gps.first ? semicircles(gps.n) : null), F.s32(30, gps.first ? semicircles(gps.e) : null),
+      F.s32(31, gps.first ? semicircles(gps.s) : null), F.s32(32, gps.first ? semicircles(gps.w) : null),
+    ] : []),
   ]);
 
   // activity
@@ -214,6 +255,23 @@ export function exportFIT(ride, tzOffsetSeconds = null) {
   w.write(34, [F.u32(253, endTS), F.u32(0, timer), F.u16(1, 1), F.enumeration(2, 0), F.enumeration(3, 26), F.enumeration(4, 1), F.u32(5, endTS + tz)]);
 
   return w.finish();
+}
+
+function noteGPS(g, sample) {
+  if (!g.first) g.first = { lat: sample.lat, lon: sample.lon };
+  g.last = { lat: sample.lat, lon: sample.lon };
+  g.n = Math.max(g.n, sample.lat);
+  g.s = Math.min(g.s, sample.lat);
+  g.e = Math.max(g.e, sample.lon);
+  g.w = Math.min(g.w, sample.lon);
+  if (sample.alt != null) {
+    if (g.lastAlt != null) {
+      const dh = sample.alt - g.lastAlt;
+      if (dh > 0) g.ascent += dh;
+      else g.descent -= dh;
+    }
+    g.lastAlt = sample.alt;
+  }
 }
 
 function toMs(d) {
@@ -253,6 +311,10 @@ export function exportTCX(ride) {
     lastSecond = second;
     x += `            <Trackpoint>\n`;
     x += `              <Time>${iso(start + second * 1000)}</Time>\n`;
+    if (sample.lat != null && sample.lon != null) {
+      x += `              <Position><LatitudeDegrees>${fmt(sample.lat, 7)}</LatitudeDegrees><LongitudeDegrees>${fmt(sample.lon, 7)}</LongitudeDegrees></Position>\n`;
+      if (sample.alt != null) x += `              <AltitudeMeters>${fmt(sample.alt, 1)}</AltitudeMeters>\n`;
+    }
     x += `              <DistanceMeters>${fmt(sample.distance, 2)}</DistanceMeters>\n`;
     if (sample.heartRate != null) x += `              <HeartRateBpm><Value>${sample.heartRate}</Value></HeartRateBpm>\n`;
     if (sample.cadence != null) x += `              <Cadence>${Math.min(254, r(sample.cadence))}</Cadence>\n`;

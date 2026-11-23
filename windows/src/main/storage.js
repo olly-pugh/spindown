@@ -5,6 +5,7 @@
 //   Rides/<uuid>/record.json   metadata + summary + upload states
 //   Rides/<uuid>/track.json    1 Hz samples and timer events
 //   Rides/<uuid>/packets.jsonl raw BLE capture (optional)
+//   Rides/<uuid>/picture.jpg   screenshot of a ride in Spindown World (optional)
 //   ActiveRide/                crash journal of the ride in progress
 //   Logs/events.log            event log (rotated at 2 MB)
 import fs from 'node:fs';
@@ -22,6 +23,8 @@ function writeAtomic(file, data) {
   }
   fs.renameSync(tmp, file);
 }
+
+const PICTURE = 'picture.jpg';
 
 function readJSON(file, fallback) {
   try {
@@ -241,11 +244,22 @@ export class RideStore {
     return this.records.find((r) => r.id === id) ?? null;
   }
 
-  /** Saves a finished ride. Track first, record last, so a record never points at a missing track. */
-  save(record, track, packetCapturePath) {
+  /**
+   * Saves a finished ride. Track (and picture) first, record last, so a record never points at a missing file.
+   * `picture`: JPEG bytes of the ride's screenshot, or null.
+   */
+  save(record, track, packetCapturePath, picture = null) {
     const dir = this.folder(record.id);
     fs.mkdirSync(dir, { recursive: true });
     writeAtomic(path.join(dir, 'track.json'), JSON.stringify(track));
+    if (picture && picture.length > 100) {
+      try {
+        writeAtomic(path.join(dir, PICTURE), Buffer.from(picture));
+        record = { ...record, picture: PICTURE };
+      } catch {
+        // the picture is optional
+      }
+    }
     if (packetCapturePath && fs.existsSync(packetCapturePath)) {
       const dest = path.join(dir, 'packets.jsonl');
       fs.rmSync(dest, { force: true });
@@ -296,6 +310,22 @@ export class RideStore {
 
   track(id) {
     return JSON.parse(fs.readFileSync(path.join(this.folder(id), 'track.json'), 'utf8'));
+  }
+
+  /** The ride's picture (JPEG bytes), or null. */
+  picture(id) {
+    const r = this.record(id);
+    if (!r?.picture) return null;
+    try {
+      return fs.readFileSync(path.join(this.folder(id), PICTURE));
+    } catch {
+      return null;
+    }
+  }
+
+  picturePath(id) {
+    const p = path.join(this.folder(id), PICTURE);
+    return this.record(id)?.picture && fs.existsSync(p) ? p : null;
   }
 
   packetCapturePath(id) {
@@ -396,9 +426,9 @@ export class RideStore {
   }
 
   /** Saves the ride in progress (or a recovered one) and clears the journal. */
-  saveFromJournal(record, track, includePackets) {
+  saveFromJournal(record, track, includePackets, picture = null) {
     this.journalClose();
-    this.save(record, track, includePackets ? this.packetsPath() : null);
+    this.save(record, track, includePackets ? this.packetsPath() : null, picture);
     fs.rmSync(this.activeDir, { recursive: true, force: true });
   }
 }

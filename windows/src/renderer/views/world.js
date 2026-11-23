@@ -15,6 +15,8 @@ import { WorldSim, RACE_PRESETS, raceFieldSize } from '../../core/world/sim.js';
 import * as P from '../../core/world/progression.js';
 import { ITEMS, ACHIEVEMENTS, CHALLENGES, POWERUPS, TIERS, MAX_LEVEL, PACERS } from '../../core/world/content.js';
 import { riderParams, steadySpeed } from '../../core/world/physics.js';
+import { routeLatLon } from '../../core/world/geo.js';
+import { worldRideInfo } from '../../core/worldride.js';
 import yorkData from '../game3d/data/york.json';
 import dalesData from '../game3d/data/dales.json';
 
@@ -603,6 +605,8 @@ export function WorldView({ app, openSensors }) {
     }
     session.worldVisible = true;
     session.updateKeepAwake();
+    const link = worldLink(app, () => holder.current?.parentNode);
+    session.world = link;
     const frame = (t) => {
       raf = requestAnimationFrame(frame);
       try {
@@ -632,11 +636,12 @@ export function WorldView({ app, openSensors }) {
         scene.resize();
         scene.syncRiders(sim);
         const open = panelRef.current;
-        scene.cameraMode = open === 'garage' ? 'side' : open === 'menu' ? 'cinematic' : G.profile.settings.camera;
+        scene.cameraMode = G.shotCamera ?? (open === 'garage' ? 'side' : open === 'menu' ? 'cinematic' : G.profile.settings.camera);
         scene.updateCamera(sim, real);
         scene.updateTokens(sim, real * G.timeScale);
         scene.render();
         G.audio.update(real, sim.player.v, sim.player.cadence);
+        G.lastFrameAt = performance.now();
         updatePlates(sim, scene, plates.current);
         // Auto-close the menu once you start riding.
         // Only the welcome menu shown on arrival closes by itself; a menu you opened stays until you choose.
@@ -696,6 +701,7 @@ export function WorldView({ app, openSensors }) {
       cancelAnimationFrame(raf);
       window.removeEventListener('keydown', onKey);
       G.canvas?.remove();
+      if (session.world === link) session.world = null;
       session.worldVisible = false;
       session.updateKeepAwake();
       scheduleSave(app.api, true);
@@ -874,6 +880,55 @@ export function WorldView({ app, openSensors }) {
       onFinish=${() => { G.showResults = false; finish(); }} />` : null}
     ${dialogs}
   </div>`;
+}
+
+// ---- The ride recording's view of the world -----------------------------------------------------------------
+
+/**
+ * What the ride session reads from the world while it is on screen: the rider's real latitude, longitude and
+ * altitude on the course (null if the world has not drawn a frame lately, e.g. the window is minimised), the
+ * course details saved with the ride, and a picture for the ride's summary and Strava.
+ */
+function worldLink(app, root) {
+  return {
+    position() {
+      const sim = G.sim;
+      if (!sim || G.failure || !(performance.now() - (G.lastFrameAt ?? -1e9) < 2500)) return null;
+      const data = sim.route.world === 'york' ? yorkData : dalesData;
+      if (!data?.origin) return null;
+      return routeLatLon(sim.route, data.origin, sim.player.d, sim.player.lateral ?? 0);
+    },
+    info() {
+      return G.sim ? worldRideInfo(G.sim, { workout: G.workout }) : null;
+    },
+    capture: () => captureRidePicture(app, root()),
+  };
+}
+
+/**
+ * A clean picture of the 3D view: other riders' name tags, the rider list, results, toasts, menus, dialogs and
+ * buttons are hidden (body.world-shot in styles.css), the camera is put behind your rider if it was in first
+ * person, then the main process grabs the world's area of the window. Everything is restored afterwards.
+ */
+async function captureRidePicture(app, root) {
+  if (!G.scene || !G.sim || !root?.isConnected) return null;
+  const frame = () => Promise.race([new Promise((r) => requestAnimationFrame(() => r())), new Promise((r) => setTimeout(r, 250))]);
+  document.body.classList.add('world-shot');
+  if (G.profile?.settings.camera === 'first') {
+    G.shotCamera = 'chase';
+    G.scene.camInit = false;
+  }
+  try {
+    for (let i = 0; i < 3; i++) await frame();
+    const b = root.getBoundingClientRect();
+    return await app.api.app.capturePicture({ x: b.left, y: b.top, width: b.width, height: b.height });
+  } finally {
+    document.body.classList.remove('world-shot');
+    if (G.shotCamera) {
+      G.shotCamera = null;
+      if (G.scene) G.scene.camInit = false;
+    }
+  }
 }
 
 /** Floating name tags over nearby riders, positioned straight from the 3D camera every frame. */

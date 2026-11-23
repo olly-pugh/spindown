@@ -6,6 +6,42 @@ import { Destinations, destinationName, describeUpload } from '../../core/record
 import { GarminConnectClient, StravaClient } from '../../core/services.js';
 import { ExportFormats } from '../../core/fit.js';
 import { timeInZones, zoneBounds, ZONE_COLORS, ZONE_NAMES } from '../../core/hrzones.js';
+import { ordinal } from '../../core/worldride.js';
+
+/** The picture taken as a World ride finished, with ways to get it onto Strava by hand. */
+function RidePicture({ app, record }) {
+  const { api } = app;
+  const [src, setSrc] = useState(null);
+  const [note, setNote] = useState(null);
+  useEffect(() => {
+    if (record.picture) api.rides.picture(record.id).then(setSrc).catch(() => setSrc(null));
+  }, [record.id, record.picture]);
+  if (!record.picture || !src) return null;
+  const strava = record.uploads?.strava;
+  const stravaID = strava && (strava.status === 'uploaded' || strava.status === 'duplicate') ? strava.activityID : null;
+  const footer = strava?.photo === 'attached'
+    ? 'This picture is attached to the ride on Strava.'
+    : 'Strava only lets its approved partner apps (such as Zwift) attach photos automatically, so add this one yourself: copy or save the picture, open the ride on Strava, and add it as a photo.';
+  return html`<${Section} title="Picture" footer=${footer}>
+    <div class="card">
+      <img class="ride-picture" src=${src} alt="Your rider in Spindown World at the end of the ride" />
+      <div class="ride-picture-actions">
+        <button class="btn" onClick=${async () => setNote((await api.rides.copyPicture(record.id)) ? 'Picture copied. Paste it where you like.' : 'Could not copy the picture.')}>⧉ Copy picture</button>
+        <button class="btn" onClick=${async () => { const p = await api.rides.savePicture(record.id); if (p) setNote(`Saved ${p}`); }}>⤓ Save picture…</button>
+        ${stravaID ? html`<button class="btn" onClick=${() => api.app.openExternal(StravaClient.activityURL(stravaID))}>Open in Strava ↗</button>` : null}
+      </div>
+      ${note ? html`<div class="small muted selectable" style="margin-top:8px">${note}</div>` : null}
+    </div>
+  </${Section}>`;
+}
+
+/** "Virtual ride · York Grand Prix · 3rd of 21" for a World ride. */
+function worldLine(w) {
+  const parts = ['Virtual ride in Spindown World', w.course || w.title];
+  if (w.mode === 'race' && w.race) parts.push(w.place ? `${w.race}: ${ordinal(w.place)}${w.field ? ` of ${w.field}` : ''}` : w.race);
+  if (w.mode === 'workout' && w.workout) parts.push(w.workout);
+  return parts.filter(Boolean).join(' · ');
+}
 
 function TimeInZones({ track, settings }) {
   const max = settings.get('maxHeartRate');
@@ -112,7 +148,11 @@ export function RideDetail({ app, rideID, compact }) {
     const signedIn = d === 'garmin' ? uploads.garminSignedIn : uploads.stravaSignedIn;
     const needs = d === 'garmin' ? uploads.garminNeedsSignIn : uploads.stravaNeedsSignIn;
     if (state?.status === 'pending' && (!signedIn || needs)) return 'Waiting for sign-in (Settings)';
-    return describeUpload(state);
+    const extra = [];
+    if (d === 'strava' && state?.sportType === 'VirtualRide') extra.push('Virtual Ride');
+    if (d === 'strava' && state?.photo === 'attached') extra.push('picture attached');
+    if (d === 'strava' && state?.photo === 'manual') extra.push('add the picture by hand');
+    return [describeUpload(state), ...extra].join(' · ');
   };
 
   const activityURL = (d, state) => {
@@ -127,7 +167,10 @@ export function RideDetail({ app, rideID, compact }) {
         onKeyDown=${(e) => e.key === 'Enter' && e.target.blur()} aria-label="Ride name" />
       <div class="muted" style="padding:2px 6px">${Format.dateTime(record.startDate)}</div>
       ${record.recovered ? html`<div class="orange small" style="padding:4px 6px">↺ Recovered after the app closed unexpectedly</div>` : null}
+      ${record.world ? html`<div class="small" style="padding:4px 6px">🌍 ${worldLine(record.world)}</div>` : null}
     </div>
+
+    <${RidePicture} app=${app} record=${record} />
 
     <${Section} title="Summary">
       <div class="tiles" style=${{ gridTemplateColumns: `repeat(${compact ? 3 : 4}, 1fr)` }}>
