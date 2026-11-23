@@ -498,18 +498,28 @@ export function landMaterial(opts, extra = {}) {
           return clamp(tl / ml, 0.3, 2.0) * mix(vec3(1.0), clamp(hue, vec3(0.6), vec3(1.5)), 0.35);
         }
         // Limestone pavement: clints between grikes, along the two joint sets of the Malham pavements.
+        // An integer hash, identical in groundcover.js (which puts 3D clints on this same lattice).
+        float ihash(int x) {
+          uint h = uint(x + 1000000) * 0x9E3779B1u;
+          h ^= h >> 15u;
+          h *= 0x85EBCA77u;
+          h ^= h >> 13u;
+          return float(h & 0xFFFFu) / 65535.0;
+        }
+        // Limestone pavement: clints between grikes, along the two joint sets of the Malham pavements. The
+        // lattice (see groundcover.js clintLattice): joints every 2.3 m one way, rows 1.4-3.8 m the other.
         float grikes(vec2 p, out float tone) {
-          vec2 q = mat2(0.94, -0.34, 0.34, 0.94) * p;
+          vec2 q = vec2(0.94 * p.x + 0.34 * p.y, -0.34 * p.x + 0.94 * p.y);
           float wx = q.x + 0.3 * sin(q.y * 0.61) + 0.14 * sin(q.y * 1.7);
           float col = floor(wx / 2.3);
           float dJ = (0.5 - abs(fract(wx / 2.3) - 0.5)) * 2.3;
-          float sp = 1.4 + 2.4 * lh1(col);
-          float wy = q.y + lh1(col + 3.1) * sp + 0.25 * sin(q.x * 1.3);
+          float sp = 1.4 + 2.4 * ihash(int(col));
+          float wy = q.y + ihash(int(col) + 7919) * sp + 0.25 * sin(q.x * 1.3);
           float dC = (0.5 - abs(fract(wy / sp) - 0.5)) * sp;
           float d = min(dJ, dC * 1.15);
           float aa = fwidth(d) * 1.2 + 0.02;
-          tone = lh(vec2(col, floor(wy / sp)));
-          return 1.0 - smoothstep(0.16 - aa, 0.16 + aa, d);
+          tone = ihash(int(col) * 131 + int(floor(wy / sp)));
+          return 1.0 - smoothstep(0.2 - aa, 0.2 + aa, d);
         }`)
       .replace('#include <map_fragment>', `
         vec2 pd = vec2(vTerrainPos.x, -vTerrainPos.z);
@@ -561,7 +571,9 @@ export function landMaterial(opts, extra = {}) {
         // Mapped rock is mostly turf with rock showing through: bare where the imagery is pale, on edges and steep
         // ground (from the relief); pavements stay mostly bare.
         float exposure = clamp(0.18 + 0.82 * bare + max(0.0, curv) * 0.9 + smoothstep(0.12, 0.35, slope) * 0.6, 0.0, 1.0);
-        float rockClass = max(cw.r * exposure, cw.a * (0.55 + 0.45 * exposure));
+        // Flat bare rock on the limestone is pavement (OSM maps most of it simply as bare rock).
+        float pave = max(cw.a, cw.r * (1.0 - smoothstep(0.05, 0.14, slope)));
+        float rockClass = max(cw.r * exposure, pave * (0.6 + 0.4 * exposure));
         float wRock = clamp(rockClass + smoothstep(0.30, 0.52, slope + (patchN - 0.5) * 0.08) + max(0.0, curv - 0.25) * 1.2 * smoothstep(0.08, 0.2, slope), 0.0, 1.0);
         float wScree = clamp(cw.g, 0.0, 1.0) * (1.0 - wRock);
         float wRough = clamp(cw.b, 0.0, 1.0) * (1.0 - wRock - wScree);
@@ -599,14 +611,15 @@ export function landMaterial(opts, extra = {}) {
           vec3 sT = (nearK > 0.0 && wScree > 0.01) ? layerTex(pd, 4.0, 1.8) / layerMean[4] : vec3(1.0);
           vec3 rock = rockC * mix(vec3(1.0), rT, 0.25 + 0.75 * nearK) * (0.9 + 0.2 * patchN);
           // Limestone pavement: pale clints, dark grikes with moss and grass in them.
-          if (cw.a > 0.05) {
+          if (pave > 0.05) {
             float tone;
             float gk = grikes(pd, tone);
             float far = smoothstep(120.0, 380.0, dist);
             vec3 clint = rock * (0.92 + 0.22 * tone);
-            vec3 grikeC = mix(vec3(0.07, 0.08, 0.06), vec3(0.14, 0.2, 0.08), 0.5);
-            vec3 pave = mix(mix(clint, grikeC, gk), clint * 0.86, far);
-            rock = mix(rock, pave, smoothstep(0.05, 0.4, cw.a));
+            // Grikes: deep, shadowed cracks with ferns and grass in them.
+            vec3 grikeC = mix(vec3(0.018, 0.022, 0.015), vec3(0.05, 0.08, 0.03), tone);
+            vec3 paveC = mix(mix(clint, grikeC, gk), clint * 0.86, far);
+            rock = mix(rock, paveC, smoothstep(0.05, 0.4, pave));
             dn += vec2(0.0);
           }
           vec3 scree = screeC * mix(vec3(1.0), sT, 0.25 + 0.75 * nearK);

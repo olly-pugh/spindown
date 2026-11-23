@@ -180,6 +180,12 @@ export function buildDales(route, data, q) {
   const beckOut = {};
   mark("scars+becks");
   const apronOut = {};
+  const groundOut = {};
+  /** The ground as drawn: the apron in cliff cells (pushed down under the faces), elsewhere heightAt. */
+  const groundAt = (x, z) => {
+    const h = heightAt(x, z);
+    return scars.isCliffCell(x, z) ? scars.adjust(x, z, h, groundOut).y : h;
+  };
 
   // ---- Terrain tiles with distance-based detail ----
   const far = data.terrain.far;
@@ -582,7 +588,7 @@ export function buildDales(route, data, q) {
             prev = null;
             continue;
           }
-          const cur = { x, z, y: heightAt(x, z) };
+          const cur = { x, z, y: groundAt(x, z) };
           if (prev) out.push({ x1: prev.x, z1: prev.z, y1: prev.y, x2: cur.x, z2: cur.z, y2: cur.y });
           prev = cur;
         }
@@ -641,7 +647,7 @@ export function buildDales(route, data, q) {
     }
     spots.sort((a, b) => a.pri - b.pri);
     const cap = q.maxTrees;
-    const placements = spots.slice(0, cap).map((s) => ({ x: s.x, z: s.z, y: heightAt(s.x, s.z), kind: s.kind, s: s.s, rot: r() * 6.28, hue: r() - 0.5, sx: 0.85 + r() * 0.3, sy: 0.85 + r() * 0.35 }));
+    const placements = spots.slice(0, cap).map((s) => ({ x: s.x, z: s.z, y: groundAt(s.x, s.z), kind: s.kind, s: s.s, rot: r() * 6.28, hue: r() - 0.5, sx: 0.85 + r() * 0.3, sy: 0.85 + r() * 0.35 }));
     group.add(C.trees(placements, { shadows: q.shadows, maxDistance: 2600 }));
     group.userData.trees = placements.length;
   }
@@ -696,7 +702,7 @@ export function buildDales(route, data, q) {
         const x = p.x + (r() - 0.5) * 45, z = p.z + (r() - 0.5) * 45;
         const ck = cls.get(x, z);
         if (![0, CLS.meadow, CLS.grass, CLS.heath].includes(ck) || roadDistance(x, z) < ROAD_HALF + 5) continue;
-        sheep.push({ x, z, y: heightAt(x, z), rot: r() * 6.28, s: r() < 0.2 ? 0.55 + r() * 0.1 : 0.9 + r() * 0.25 });
+        sheep.push({ x, z, y: groundAt(x, z), rot: r() * 6.28, s: r() < 0.2 ? 0.55 + r() * 0.1 : 0.9 + r() * 0.25 });
       }
     }
     group.add(sheepMesh(sheep));
@@ -731,7 +737,7 @@ export function buildDales(route, data, q) {
     const c = cls.get(x, z);
     p.skip = rd < ROAD_HALF + 0.15 || wet.get(x, z) > 0 || c === CLS.village || c === CLS.yard || c === CLS.quarry;
     if (p.skip) return p;
-    p.h = heightAt(x, z);
+    p.h = groundAt(x, z);
     p.under = scars.underFace(x, z);
     // Not in a beck; rushes and long grass along its banks.
     const bd = becks.nearest(x, z, probeBeck);
@@ -749,6 +755,8 @@ export function buildDales(route, data, q) {
     const bare = Math.min(1, Math.max(0, (lum - 0.06) / 0.05)) * (grey ? 1 : 0.4);
     p.rock = c === CLS.rock || c === CLS.pavement ? 0.25 + 0.75 * bare : slope > 0.75 ? 0.5 : 0;
     p.scree = c === CLS.scree ? 1 : 0;
+    // Flat bare rock on the plateau is limestone pavement (as the ground shader has it).
+    p.pave = c === CLS.pavement || (c === CLS.rock && slope < 0.3) ? 1 : 0;
     // Soft rush: in the wet ground, and in patches in the flatter fields.
     const patch = hash2(Math.floor(x / 11), Math.floor(z / 11), 5);
     p.rushPatch = bd.d < bd.half + 4 ? 0.4 : c === CLS.wet ? 0.5 : p.field && slope < 0.18 && patch < 0.09 ? 0.35 * (1 - patch / 0.09) + 0.1 : 0;

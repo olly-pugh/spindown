@@ -235,8 +235,12 @@ export function boulderMaterial() {
         vec3 rt = tx * bw.x + ty * bw.y + tz * bw.z;
         float rl = dot(rt, vec3(0.299, 0.587, 0.114));
         vec3 stone = mix(vec3(rl), rt, 0.3) * 1.25;
+        // Tops weather smooth (the photo's fine cracks streak at grazing angles): less texture, lichen patches.
+        float top = smoothstep(0.5, 0.95, vBNormal.y);
+        stone = mix(stone, vec3(dot(stone, vec3(0.333)) * 0.95 + 0.03), top * 0.55);
         vec3 li = texture2D(lichenMap, vBWorld.xz / 2.3).rgb;
-        stone = mix(stone, li, smoothstep(0.5, 0.95, vBNormal.y) * 0.45);
+        float patchL = smoothstep(0.45, 0.75, texture2D(lichenMap, vBWorld.xz / 9.0 + 0.3).g * 1.6);
+        stone = mix(stone, li * 0.9, top * (0.2 + 0.35 * patchL));
         // Earthy and darker where it sits in the ground.
         stone *= mix(0.55, 1.0, smoothstep(-0.45, 0.05, vBLocalY));
         diffuseColor.rgb *= stone;

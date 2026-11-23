@@ -52,6 +52,27 @@ export function decodeFace(face) {
   return cols;
 }
 
+/** Drops columns whose lip or foot is more than 6 m from the median of their four nearest neighbours. */
+function dropOutliers(cols) {
+  const med = (a) => a.slice().sort((x, y) => x - y)[a.length >> 1];
+  const bad = cols.map((c, k) => {
+    if (!c.face) return false;
+    const nt = [], nf = [];
+    for (const d of [-2, -1, 1, 2]) {
+      const q = cols[k + d];
+      if (q?.face) {
+        nt.push(q.zTop);
+        nf.push(q.zFoot);
+      }
+    }
+    if (nt.length < 2) return false;
+    return Math.abs(c.zTop - med(nt)) > 6 || Math.abs(c.zFoot - med(nf)) > 6;
+  });
+  bad.forEach((b, k) => {
+    if (b) cols[k].face = false;
+  });
+}
+
 /**
  * Smooths the lip and foot heights along a face (a median of five, then never more than a little above the
  * neighbours' mean): a column's lip is only ever lowered, its foot only raised, and its profile cut to match.
@@ -193,27 +214,11 @@ export class Scars {
         const reach = Math.max(Math.abs(c.tFoot), Math.abs(c.tLip)) + 8;
         if (opts.roadDistance(c.x, c.z) < 16 + reach) c.face = false;
       }
-      // Lips and feet that jump up or down from one column to the next make spikes between the rows (which are
-      // at fixed heights, the beds): bring each column's lip down and foot up towards its neighbours'.
-      smoothEnds(cols);
+      // A column whose lip or foot is far out of line with its neighbours' is a fault in the survey: drop it.
+      // (Lips are never lowered: the cap would have to climb back up to the real ground as a wall of turf.)
+      dropOutliers(cols);
       // Runs of a few columns that are only a couple of metres high are rubble or noise in the survey: drop them.
       dropSmallRuns(cols);
-      // Faces die away into the hillside at their ends rather than stopping as a sheer edge (long runs only: a
-      // short outcrop tapered at both ends would come out as a tooth).
-      const runLen = runLengths(cols);
-      cols.forEach((c, k) => {
-        if (!c.face) return;
-        const gap = (d) => !cols[k + d]?.face;
-        const f2 = runLen[k] < 7 ? 1 : gap(-1) || gap(1) ? 0.3 : gap(-2) || gap(2) ? 0.65 : 1;
-        if (f2 < 1) {
-          const H = c.zTop - c.zFoot;
-          c.prof = c.prof.map((p) => ({ z: c.zFoot + (p.z - c.zFoot) * f2, t: p.t }));
-          c.zTop = c.zFoot + H * f2;
-          // The cap still climbs to the real ground behind.
-          c.back3 += H * (1 - f2);
-          c.back7 += H * (1 - f2);
-        }
-      });
       if (cols.some((c) => c.face)) this.faces.push({ name: f.n ?? null, cols, seed: this.faces.length });
     }
     // Spatial hash of face columns (16 m cells) for the apron and for "is this under a face?" questions.
@@ -298,7 +303,7 @@ export class Scars {
       const vx = x - c.x, vz = z - c.z;
       if (Math.abs(vx * c.tx + vz * c.tz) > c.halfW + 0.5) continue;
       const d = vx * c.nx + vz * c.nz;
-      if (d >= c.tLip - 2 && d <= c.tFoot + 1) return true;
+      if (d >= c.tLip - 1.5 && d <= c.tFoot + 4) return true;
     }
     return false;
   }

@@ -131,6 +131,66 @@ function boulderGeometry(seed) {
   return g;
 }
 
+// ---- Limestone pavement: clints on the same joint lattice the ground shader paints (ground.js grikes) ----
+
+/** The integer hash the ground shader uses (ihash in ground.js). */
+function ihash(x) {
+  let h = Math.imul((x + 1000000) >>> 0, 0x9e3779b1) >>> 0;
+  h = (h ^ (h >>> 15)) >>> 0;
+  h = Math.imul(h, 0x85ebca77) >>> 0;
+  h = (h ^ (h >>> 13)) >>> 0;
+  return (h & 0xffff) / 65535;
+}
+
+/**
+ * Clints whose centres fall in a data-coordinate box (x east, y north): [{x, y, ang, w, l, tone}]. The lattice: in
+ * rotated coordinates q, joints every 2.3 m across, rows of 1.4-3.8 m along, as in the shader.
+ */
+export function clintLattice(x0, y0, x1, y1) {
+  const out = [];
+  // Rotated bounds (q = R p), generously.
+  const qs = [[x0, y0], [x1, y0], [x0, y1], [x1, y1]].map(([x, y]) => [0.94 * x + 0.34 * y, -0.34 * x + 0.94 * y]);
+  const qx0 = Math.min(...qs.map((q) => q[0])) - 3, qx1 = Math.max(...qs.map((q) => q[0])) + 3;
+  const qy0 = Math.min(...qs.map((q) => q[1])) - 4, qy1 = Math.max(...qs.map((q) => q[1])) + 4;
+  for (let col = Math.floor(qx0 / 2.3); col <= Math.floor(qx1 / 2.3); col++) {
+    const sp = 1.4 + 2.4 * ihash(col), off = ihash(col + 7919) * sp;
+    for (let row = Math.floor((qy0 + off) / sp) - 1; row <= Math.floor((qy1 + off) / sp) + 1; row++) {
+      // Solve for the cell centre: wx = (col + 0.5) 2.3, wy = (row + 0.5) sp (two fixed-point passes).
+      let qy = (row + 0.5) * sp - off, qx = (col + 0.5) * 2.3;
+      for (let it = 0; it < 3; it++) {
+        qx = (col + 0.5) * 2.3 - 0.3 * Math.sin(qy * 0.61) - 0.14 * Math.sin(qy * 1.7);
+        qy = (row + 0.5) * sp - off - 0.25 * Math.sin(qx * 1.3);
+      }
+      const x = 0.94 * qx - 0.34 * qy, y = 0.34 * qx + 0.94 * qy;
+      if (x < x0 || x >= x1 || y < y0 || y >= y1) continue;
+      out.push({ x, y, ang: Math.atan2(0.34, 0.94), w: 2.3, l: sp, tone: ihash(col * 131 + row) });
+    }
+  }
+  return out;
+}
+
+/** A clint: a flat-topped limestone block with rounded, solution-fluted edges (1×1 m top, base at y = 0). */
+function clintGeometry() {
+  const g = new THREE.BoxGeometry(1, 1, 1, 4, 2, 4);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    let x = p.getX(i), y = p.getY(i) + 0.5, z = p.getZ(i);
+    // Round the top edges, draw the base in a little, flute the sides.
+    const ex = Math.abs(x) / 0.5, ez = Math.abs(z) / 0.5;
+    const edge = Math.max(ex, ez);
+    // Flat tops with crisp, slightly rounded edges and runnels (karren) down the sides.
+    if (y > 0.9) y -= Math.pow(Math.max(0, edge - 0.75) / 0.25, 2) * 0.12;
+    const k = y < 0.2 ? 0.92 : 1;
+    x *= k;
+    z *= k;
+    x *= 1 + 0.06 * Math.sin(z * 19 + y * 3);
+    z *= 1 + 0.06 * Math.sin(x * 17 - y * 2);
+    p.setXYZ(i, x, y - 0.05, z);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
 /** A plant material that shrinks instances away between `fade0` and `fade1` metres from the camera. */
 function plantMaterial(atlas, time, fade0, fade1, aa, sway) {
   const m = new THREE.MeshStandardMaterial({ map: atlas, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.95, metalness: 0, alphaToCoverage: aa });
@@ -197,6 +257,19 @@ export class GroundCover {
       this.group.add(mesh);
       return { mesh, cap: s.cap, range: s.fade[1] };
     });
+    // Clints on the limestone pavements (out to clintRange, then the ground shader paints them).
+    this.clintRange = [40, 60, 80][L];
+    const clintCap = [1500, 3500, 6000][L];
+    {
+      const mesh = new THREE.InstancedMesh(clintGeometry(), opts.clintMaterial ?? opts.rockMaterial, clintCap);
+      mesh.count = 0;
+      mesh.frustumCulled = false;
+      mesh.castShadow = !!q.shadows;
+      mesh.receiveShadow = true;
+      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(clintCap * 3), 3);
+      this.group.add(mesh);
+      this.clints = { mesh, cap: clintCap, range: this.clintRange };
+    }
     const rockCap = [300, 900, 1800][L];
     this.rockKinds = [0, 1, 2].map((s) => {
       const cap = Math.max(1, Math.round(rockCap / 3));
@@ -272,6 +345,31 @@ export class GroundCover {
     return out;
   }
 
+  /** The clints of one chunk: on the pavement lattice, wherever the ground there is pavement. */
+  makeClints(ci, cj) {
+    const out = [];
+    const probe = this.opts.probe;
+    const p = {};
+    const x0 = ci * CHUNK, z0 = cj * CHUNK;
+    // Data coords: y = -z.
+    for (const c of clintLattice(x0, -(z0 + CHUNK), x0 + CHUNK, -z0)) {
+      const x = c.x, z = -c.y;
+      probe(x, z, p);
+      if (p.skip || p.under || !(p.pave > 0.5)) continue;
+      // Leave out the odd clint (a grassy hollow, a fallen block's gap) and vary their height and finish.
+      const h = hash2(Math.round(x * 4), Math.round(z * 4), 81);
+      if (h < 0.08) continue;
+      const gap = 0.42 + h * 0.2; // grike width
+      const w = Math.max(0.6, c.w - gap), l = Math.max(0.5, c.l - gap);
+      const ht = 0.18 + 0.22 * hash2(Math.round(x * 4), Math.round(z * 4), 82);
+      // Weathered grey, some darker with lichen.
+      const tone = 0.62 + 0.3 * c.tone;
+      // The joint direction (data angle a, north of east) is world yaw +a (x east, z south).
+      out.push(x, p.h - 0.08, z, c.ang, w, ht, l, tone, tone, tone * 0.98);
+    }
+    return out;
+  }
+
   /** The boulders of one chunk, on a coarser grid: on outcrops, scree and below the scars. */
   makeRocks(ci, cj) {
     const out = [[], [], []];
@@ -284,7 +382,7 @@ export class GroundCover {
         const x = x0 + gx + hA * 2, z = z0 + gz + hB * 2;
         probe(x, z, p);
         if (p.skip || p.under || p.verge > 0) continue;
-        const chance = p.scree * 0.7 + p.rock * 0.32 + (p.field && p.high ? 0.012 : 0);
+        const chance = p.pave > 0.5 ? 0.008 : p.scree * 0.7 + p.rock * 0.32 + (p.field && p.high ? 0.012 : 0);
         if (hC >= chance) continue;
         const big = p.scree > 0.5 ? 0.15 + hA * 0.35 : 0.3 + Math.pow(hA, 2) * 1.2;
         const tone = 0.85 + hB * 0.3;
@@ -314,8 +412,8 @@ export class GroundCover {
         const key = `${i},${j}`;
         keep.add(key);
         let ch = this.chunks.get(key);
-        if (!ch) this.chunks.set(key, (ch = { i, j, plants: null, rocks: null }));
-        if ((!ch.plants && d < this.radius * 1.3) || (!ch.rocks && d < this.rockRadius)) todo.push({ ch, d });
+        if (!ch) this.chunks.set(key, (ch = { i, j, plants: null, rocks: null, clints: null }));
+        if ((!ch.plants && d < this.radius * 1.3) || (!ch.rocks && d < this.rockRadius) || (!ch.clints && d < this.clintRange)) todo.push({ ch, d });
       }
     }
     todo.sort((a, b) => a.d - b.d);
@@ -324,6 +422,7 @@ export class GroundCover {
       if (performance.now() - t0 > budgetMs) break;
       if (!ch.plants && d < this.radius * 1.3) ch.plants = this.makePlants(ch.i, ch.j);
       if (!ch.rocks && d < this.rockRadius) ch.rocks = this.makeRocks(ch.i, ch.j);
+      if (!ch.clints && d < this.clintRange) ch.clints = this.makeClints(ch.i, ch.j);
       this.dirty = true;
     }
     for (const key of [...this.chunks.keys()]) {
@@ -369,6 +468,28 @@ export class GroundCover {
     };
     this.kinds.forEach((k, idx) => fill(k.mesh, k.cap, (ch) => ch.plants?.[idx], k.range));
     this.rockKinds.forEach((k, idx) => fill(k.mesh, k.cap, (ch) => ch.rocks?.[idx], k.range));
+    {
+      const t = this.clints;
+      let n = 0;
+      for (const { ch, d } of list) {
+        if (d > t.range + CHUNK) break;
+        const a = ch.clints;
+        if (!a) continue;
+        for (let k = 0; k + 9 < a.length && n < t.cap; k += 10) {
+          q.setFromAxisAngle(up, a[k + 3]);
+          s.set(a[k + 4], a[k + 5], a[k + 6]);
+          v.set(a[k], a[k + 1], a[k + 2]);
+          m.compose(v, q, s);
+          t.mesh.setMatrixAt(n, m);
+          c.setRGB(a[k + 7], a[k + 8], a[k + 9]);
+          t.mesh.setColorAt(n, c);
+          n++;
+        }
+      }
+      t.mesh.count = n;
+      t.mesh.instanceMatrix.needsUpdate = true;
+      if (t.mesh.instanceColor) t.mesh.instanceColor.needsUpdate = true;
+    }
   }
 
   /** Forget everything (when what the probe knows has changed, e.g. the imagery has loaded). */
