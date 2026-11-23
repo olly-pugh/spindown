@@ -3,7 +3,7 @@
 // camera comes near and cached; shared instanced meshes are refilled as the camera moves, so only what is within a
 // few tens of metres is ever drawn, and nothing has to be built for the whole world up front.
 import * as THREE from 'three';
-import { crispCoverage, dullSheen } from './vegetation.js';
+import { crispCoverage, dullSheen, noSkyReflection } from './vegetation.js';
 
 const V3 = THREE.Vector3;
 
@@ -168,7 +168,7 @@ export function plantMaterial(map, level) {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <alphatest_fragment>', crispCoverage)
       .replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''))
-      .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>\n${dullSheen}`);
+      .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>\n${dullSheen}`).replace('#include <lights_fragment_maps>', noSkyReflection);
   };
   m.customProgramCacheKey = () => 'spindown-plant';
   return m;

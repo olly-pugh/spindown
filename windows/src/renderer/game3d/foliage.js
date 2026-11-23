@@ -933,9 +933,14 @@ export function impostorAtlas(items, atlas, { cell = 256 } = {}) {
       g.setTransform(1, 0, 0, 1, 0, 0);
     }
     g.restore();
-    const u0 = ox / W, u1 = (ox + cell) / W;
-    const v1 = 1 - oy / H, v0 = 1 - (oy + cell) / H;
-    cells.push({ u0, u1, v0, v1, w: cell / s, h: cell / s, y0: it.yMin - margin / s, crown: { x: px(it.crown.cx), y: py(it.crown.cy), rx: it.crown.rx * s, ry: it.crown.ry * s }, ox, oy });
+    // The quad covers only the tree's own extent (not its whole square cell): every transparent texel a
+    // billboard covers still costs a fragment, and far trees stand in rows and woods.
+    const pad = 2;
+    const cx0 = Math.max(ox, Math.floor(px(-it.halfW)) - pad), cx1 = Math.min(ox + cell, Math.ceil(px(it.halfW)) + pad);
+    const cy0 = Math.max(oy, Math.floor(py(it.yMax)) - pad), cy1 = oy + cell - margin + pad;
+    const u0 = cx0 / W, u1 = cx1 / W;
+    const v1 = 1 - cy0 / H, v0 = 1 - cy1 / H;
+    cells.push({ u0, u1, v0, v1, w: (cx1 - cx0) / s, h: (cy1 - cy0) / s, y0: it.yMin - pad / s, crown: { x: px(it.crown.cx), y: py(it.crown.cy), rx: it.crown.rx * s, ry: it.crown.ry * s }, ox, oy });
   });
   // Normal map: a fitted ellipsoid per crown with leafy relief from the painted luminance.
   const px = texels(c);

@@ -389,7 +389,9 @@ const furnitureMat = () => new THREE.MeshStandardMaterial({ vertexColors: true, 
 export function lampPosts(points, { shadows = false } = {}) {
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new V3(0, 1, 0);
   const items = points.map((p) => m.clone().compose(new V3(p.x, p.y, p.z), q.setFromAxisAngle(up, p.rot ?? 0), new V3(1, 1, 1)));
-  return instanced(heritageLamp(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.2 }), items, { chunk: 300, maxDistance: 450, shadows });
+  const group = instanced(heritageLamp(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.2 }), items, { chunk: 300, maxDistance: 450, shadows });
+  group.name = 'lamps';
+  return group;
 }
 
 const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));

@@ -15,7 +15,7 @@ import * as THREE from 'three';
 import { hash2 } from '../../core/world/noise.js';
 import * as F from './foliage.js';
 import { gateGeometry, gatePost } from './furniture.js';
-import { crispCoverage, dullSheen } from './vegetation.js';
+import { crispCoverage, dullSheen, noSkyReflection } from './vegetation.js';
 import { NearDetail, newArrays, toGeometry, tuftGeometry, plantMaterial, pushMatrix, qualityLevel } from './neardetail.js';
 
 const V3 = THREE.Vector3;
@@ -860,7 +860,7 @@ function softFoliage(m, cards = false) {
   m.onBeforeCompile = (sh) => {
     let f = sh.fragmentShader.replace('#include <alphatest_fragment>', crispCoverage);
     if (cards) f = f.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''));
-    f = f.replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>\n${dullSheen}`);
+    f = f.replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>\n${dullSheen}`).replace('#include <lights_fragment_maps>', noSkyReflection);
     sh.fragmentShader = f;
   };
   m.customProgramCacheKey = () => (cards ? 'spindown-hedge-cards' : 'spindown-hedge');

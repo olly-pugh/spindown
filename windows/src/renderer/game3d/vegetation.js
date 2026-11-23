@@ -292,8 +292,8 @@ const BROADLEAF = {
     trunk: { r: 0.44, r1: 0.3, len: 0.3, lean: 0.06, gnarl: 0.14, segs: 5 },
     limbs: { n: [5, 7], t: [0.55, 1], elev: [0.32, 0.95], lead: 0.5, fit: [0.75, 0.92], r: 0.66, segs: 7, gnarl: 0.55, up: -0.004, min: 2.5 },
     branches: { n: [4, 6], t: [0.3, 0.98], ang: [0.5, 1.1], flatten: 0.6, lift: 0.3, maxFrac: 0.5, fit: [0.6, 0.95], gnarl: 0.6, min: 0.8 },
-    masses: { mode: 'ends', r: [1.9, 2.6], ry: 0.85, lift: 0.3, count: 8, spacing: 1.08, shell: [0.3, 1] },
-    cluster: { n: 4, radius: [0.8, 1.1], size: 0.8, cells: ['oak', 'oak2'] },
+    masses: { mode: 'ends', r: [1.9, 2.6], ry: 0.85, lift: 0.3, count: 8, spacing: 1.08, shell: [0.45, 1] },
+    cluster: { n: 3, radius: [0.8, 1.1], size: 0.85, cells: ['oak', 'oak2'] },
   },
   // Sycamore: ascending limbs under a dense, rounded dome.
   sycamore: {
@@ -302,8 +302,8 @@ const BROADLEAF = {
     trunk: { r: 0.42, r1: 0.22, len: 0.45, lean: 0.05, gnarl: 0.08, segs: 5 },
     limbs: { n: [5, 7], t: [0.45, 1], elev: [0.55, 1.15], fit: [0.8, 0.92], r: 0.62, segs: 6, gnarl: 0.3, up: 0.006, min: 2.5 },
     branches: { n: [5, 8], t: [0.25, 0.98], ang: [0.45, 0.95], lift: 0.15, maxFrac: 0.55, fit: [0.6, 0.9], gnarl: 0.35, min: 0.6 },
-    masses: { mode: 'crown', count: 175, spacing: 1.08, shell: [0.5, 1] },
-    cluster: { n: 4, radius: [0.9, 1.2], size: 0.82, cells: ['sycamore', 'sycamore2'] },
+    masses: { mode: 'crown', count: 175, spacing: 1.08, shell: [0.62, 1] },
+    cluster: { n: 3, radius: [0.9, 1.2], size: 0.86, cells: ['sycamore', 'sycamore2'] },
   },
   // Ash: a tall leader with upswept limbs; an open, airy crown of tufts at the branch ends.
   ash: {
@@ -312,8 +312,8 @@ const BROADLEAF = {
     trunk: { r: 0.36, r1: 0.12, len: 0.62, lean: 0.08, gnarl: 0.1, segs: 6 },
     limbs: { n: [7, 10], t: [0.32, 0.95], elev: [0.55, 1.15], fit: [0.8, 0.95], r: 0.6, segs: 6, gnarl: 0.25, up: 0.035, min: 2 },
     branches: { n: [4, 6], t: [0.35, 1], ang: [0.4, 0.85], lift: 0.35, maxFrac: 0.45, fit: [0.6, 0.9], gnarl: 0.3, up: 0.04, min: 0.6 },
-    masses: { mode: 'ends', r: [1.6, 2.2], ry: 0.9, lift: 0.15, count: 8, spacing: 1.05, shell: [0.3, 1] },
-    cluster: { n: 4, radius: [0.8, 1.0], size: 0.9, cells: ['ash'] },
+    masses: { mode: 'ends', r: [1.6, 2.2], ry: 0.9, lift: 0.15, count: 8, spacing: 1.05, shell: [0.4, 1] },
+    cluster: { n: 3, radius: [0.8, 1.0], size: 0.92, cells: ['ash'] },
   },
   // Lime: a clean, straight trunk carrying a tall, dense oval crown (York's streets and parks).
   lime: {
@@ -322,8 +322,8 @@ const BROADLEAF = {
     trunk: { r: 0.4, r1: 0.1, len: 0.8, lean: 0.03, gnarl: 0.05, segs: 6 },
     limbs: { n: [9, 12], t: [0.3, 0.95], elev: [0.65, 1.15], fit: [0.82, 0.94], r: 0.5, segs: 5, gnarl: 0.25, min: 1.5 },
     branches: { n: [3, 5], t: [0.3, 0.98], ang: [0.4, 0.9], maxFrac: 0.5, fit: [0.6, 0.9], gnarl: 0.3, min: 0.5 },
-    masses: { mode: 'crown', count: 150, spacing: 1.02, shell: [0.5, 1] },
-    cluster: { n: 4, radius: [0.85, 1.1], size: 0.76, cells: ['lime', 'lime2'] },
+    masses: { mode: 'crown', count: 150, spacing: 1.02, shell: [0.62, 1] },
+    cluster: { n: 3, radius: [0.85, 1.1], size: 0.8, cells: ['lime', 'lime2'] },
   },
 };
 
@@ -358,7 +358,7 @@ const SPECIES = {
       }
     }
     B.anchorsFrom(1, 0.35);
-    B.fill(crown, 120, 0.55, { n: 4, radius: [0.45, 0.6], size: 0.46, cells: ['hawthorn', 'hawthorn2'] }, [0.35, 1]);
+    B.fill(crown, 120, 0.55, { n: 3, radius: [0.45, 0.6], size: 0.48, cells: ['hawthorn', 'hawthorn2'] }, [0.5, 1]);
     return B.finish(crown, H, 'hawthorn', { windswept: wind });
   },
 
@@ -382,7 +382,7 @@ const SPECIES = {
       for (const t of [0.4, 0.6, 0.8, 1]) {
         const q = B.at(br, t);
         const r = B.rand(0.8, 1.1);
-        B.fill(new Crown(q.p.clone().add(new V3(0, -r * 0.6, 0)), r, r * 1.5, r, B.r, 0.2), 3, 0.72, { n: 4, radius: [0.5, 0.65], size: 0.52, cells: ['birch'], hang: true, lift: -0.3, outBias: 0.2 }, [0, 1]);
+        B.fill(new Crown(q.p.clone().add(new V3(0, -r * 0.6, 0)), r, r * 1.5, r, B.r, 0.2), 3, 0.72, { n: 3, radius: [0.5, 0.65], size: 0.54, cells: ['birch'], hang: true, lift: -0.3, outBias: 0.2 }, [0, 1]);
       }
     }
     return B.finish(crown, H, 'birch');
@@ -423,7 +423,7 @@ const SPECIES = {
     B.anchorsFrom(1, 0.4);
     for (const p of pads) {
       const r = B.rand(1.8, 2.5);
-      B.fill(new Crown(p.clone().add(new V3(0, 0.3, 0)), r, r * 0.4, r, B.r, 0.3), 9, 0.72, { n: 5, radius: [0.8, 1.0], size: 0.72, cells: ['pine'], flat: true, noTwig: true }, [0, 1]);
+      B.fill(new Crown(p.clone().add(new V3(0, 0.3, 0)), r, r * 0.4, r, B.r, 0.3), 9, 0.72, { n: 4, radius: [0.8, 1.0], size: 0.74, cells: ['pine'], flat: true, noTwig: true }, [0, 1]);
     }
     return B.finish(crown, H, 'pine', { pineBark: base });
   },
@@ -450,7 +450,7 @@ const SPECIES = {
           const q = B.at(br, 0.2 + (0.8 * (s + 1)) / sprays);
           const size = 0.5 + 0.28 * Math.min(1, len / 3);
           // Sprays droop off the branch, tilted well away from flat so they cover the tree seen from the side.
-          for (let c = 0; c < 3; c++) {
+          for (let c = 0; c < 2; c++) {
             const nrm = B.deviate(new V3(0, 1, 0), B.rand(0.5, 1.2), B.rand(0, TAU));
             const v = q.d.clone().addScaledVector(nrm, -q.d.dot(nrm)).normalize();
             const u = new V3().crossVectors(v, nrm).normalize();
@@ -562,6 +562,9 @@ function crownAO(crown, p) {
 
 /** Leaf cards as quads, with normals bent outwards from the crown and AO in the vertex colours. */
 function cardGeometry(tree, cards, atlas) {
+  // Outermost cards first: seen from outside a crown they are mostly in front, so the inner layers drawn after
+  // them fail the depth test before their (expensive) shading.
+  cards = cards.slice().sort((a, b) => tree.crown.f(b.c) - tree.crown.f(a.c));
   const n = cards.length;
   const pos = new Float32Array(n * 12), nor = new Float32Array(n * 12), uv = new Float32Array(n * 8), col = new Float32Array(n * 12);
   const idx = new Uint32Array(n * 6);
@@ -611,12 +614,16 @@ function cardGeometry(tree, cards, atlas) {
   return g;
 }
 
-/** The middle level of detail's cards: every third card, enlarged so the crown keeps its cover. */
+/**
+ * The middle level of detail's cards: every third card, enlarged a little. Their total area is about half the
+ * full set's, so a crown at middle distance is drawn with half the overdraw (foliage cost is all fill: fewer
+ * vertices alone would save nothing).
+ */
 function lighterCards(cards, keep = 3) {
   const out = [];
   for (let i = 0; i < cards.length; i += keep) {
     const c = cards[i];
-    const k = Math.sqrt(keep) * 0.92;
+    const k = 1.28;
     out.push({ ...c, u: c.u.clone().multiplyScalar(k), v: c.v.clone().multiplyScalar(k), c: c.c.clone().addScaledVector(c.v.clone().normalize(), c.v.length() * (k - 1) * 0.3) });
   }
   return out;
@@ -740,6 +747,13 @@ export const crispCoverage = /* glsl */ `
 #endif
 `;
 
+// Foliage reflects no sky: skipping the environment-reflection lookup saves real per-fragment work on many
+// overlapping leaf cards (the sheen was damped to almost nothing anyway); the sky's diffuse light stays.
+export const noSkyReflection = THREE.ShaderChunk.lights_fragment_maps.replace(
+  'vec3 iblRadiance = getIBLRadiance( geometryViewDir, geometryNormal, material.roughness );',
+  'vec3 iblRadiance = vec3( 0.0 );',
+);
+
 // Leaves are thin and translucent: sunlight wraps a little round each clump (a softer edge between the
 // sunny and shaded halves of a crown) and glows through the leaves when the sun is behind them.
 // (Only the diffuse term changes: the specular keeps the true N·L, or it blows up at grazing light.)
@@ -763,7 +777,7 @@ function leafMaterials(lib, level) {
       .replace('#include <alphatest_fragment>', crispCoverage)
       .replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''))
       .replace('#include <lights_physical_pars_fragment>', foliageLight)
-      .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>\n${dullSheen}`);
+      .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>\n${dullSheen}`).replace('#include <lights_fragment_maps>', noSkyReflection);
   };
   mat.customProgramCacheKey = () => 'spindown-leaves';
   const depth = new THREE.MeshDepthMaterial({ map: lib.atlas.texture, alphaTest: 0.5, side: THREE.DoubleSide });
@@ -805,7 +819,7 @@ function impostorMaterial(lib, level) {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <alphatest_fragment>', crispCoverage)
       .replace('#include <lights_physical_pars_fragment>', foliageLight)
-      .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>\n${dullSheen}`);
+      .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>\n${dullSheen}`).replace('#include <lights_fragment_maps>', noSkyReflection);
   };
   mat.customProgramCacheKey = () => 'spindown-impostor';
   return mat;
@@ -817,7 +831,7 @@ export function treeMaterials(level = 'medium') {
   const bark = new THREE.MeshStandardMaterial({ map: lib.bark.map, normalMap: level === 'low' ? null : lib.bark.normalMap, vertexColors: true, roughness: 1, metalness: 0 });
   // Bark is matte: no sky sheen down the sides of the trunk.
   bark.onBeforeCompile = (sh) => {
-    sh.fragmentShader = sh.fragmentShader.replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>\n${dullSheen}`);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>\n${dullSheen}`).replace('#include <lights_fragment_maps>', noSkyReflection);
   };
   bark.customProgramCacheKey = () => 'spindown-bark';
   const { mat: leaves, depth: leafDepth } = leafMaterials(lib, level);
@@ -855,7 +869,7 @@ function qualityLevel(opts) {
 
 // Full detail within R0 and the lighter trees within R1 (metres, for a 13 m tree; bigger trees keep their
 // detail further away), impostors beyond.
-const LOD_RANGES = { low: [26, 85], medium: [42, 140], high: [75, 230] };
+const LOD_RANGES = { low: [18, 60], medium: [22, 80], high: [32, 115] };
 // The prevailing wind (from the west-south-west): windswept trees lean towards +x turned to this heading.
 const DOWNWIND = 0.38;
 
@@ -957,7 +971,8 @@ export function buildTrees(placements, opts = {}) {
   }
 
   // Level of detail per tree from its distance to the camera (with a little hysteresis).
-  const [R0, R1] = LOD_RANGES[level];
+  // The detail ranges live on userData so they can be tuned (or tested) at run time; relod() forces an update.
+  const ranges = (group.userData.lodRanges = [...LOD_RANGES[level]]);
   const apply = (i, L) => {
     const id = geo[i];
     const bi = inst[i * 3], li = inst[i * 3 + 1], ii = inst[i * 3 + 2];
@@ -972,6 +987,7 @@ export function buildTrees(placements, opts = {}) {
   };
   let lastFrame = -1;
   const last = new V3(Infinity, 0, 0);
+  group.userData.relod = () => last.set(Infinity, 0, 0);
   const update = (cam) => {
     if (cam.distanceToSquared(last) < 0.25) return;
     last.copy(cam);
@@ -985,7 +1001,7 @@ export function buildTrees(placements, opts = {}) {
       if (d2 > max2) L = 3;
       else {
         const d = Math.sqrt(d2) / size[i];
-        L = d < R0 * (cur === 0 ? 1.06 : 0.97) ? 0 : d < R1 * (cur <= 1 ? 1.04 : 0.97) ? 1 : 2;
+        L = d < ranges[0] * (cur === 0 ? 1.06 : 0.97) ? 0 : d < ranges[1] * (cur <= 1 ? 1.04 : 0.97) ? 1 : 2;
       }
       if (L !== cur) apply(i, L);
     }
