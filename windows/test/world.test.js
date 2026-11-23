@@ -6,7 +6,7 @@ import * as P from '../src/core/world/progression.js';
 import { xpForLevel, levelFor, BIKES, TIERS, POWERUPS } from '../src/core/world/content.js';
 import fs from 'node:fs';
 import { makeDales as makeDalesFrom, medalFor } from '../src/core/world/worlds.js';
-import { WorldSim, RACE_PRESETS, timeAtDistance } from '../src/core/world/sim.js';
+import { WorldSim, RACE_PRESETS, timeAtDistance, raceFieldSize } from '../src/core/world/sim.js';
 
 const kmh = (v) => v * 3.6;
 const dalesData = JSON.parse(fs.readFileSync(new URL('../src/renderer/game3d/data/dales.json', import.meta.url), 'utf8'));
@@ -106,7 +106,7 @@ function freeSim(power = 220, profile = P.newProfile()) {
 
 test('free ride: bots of several tiers ride and animate; the player moves with power', () => {
   const sim = freeSim();
-  const bots = sim.riders.filter((r) => !r.isPlayer && !r.isGhost);
+  const bots = sim.riders.filter((r) => !r.isPlayer && !r.isGhost && !r.pacer);
   assert.ok(bots.length >= 12);
   assert.ok(new Set(bots.map((b) => b.tier.id)).size >= 4);
   const start = bots.map((b) => b.d);
@@ -178,7 +178,8 @@ test('race: a 30-minute race at FTP-ish power takes 27–33 minutes and ends wit
   const profile = P.newProfile();
   const preset = RACE_PRESETS.find((r) => r.id === 'dales30');
   const sim = new WorldSim({ route: makeDales(), profile, mode: 'race', race: preset, ftp: 230, seed: 11 });
-  assert.ok(sim.riders.length === preset.field + 1);
+  assert.equal(sim.riders.filter((x) => !x.unplaced).length, raceFieldSize(preset) + 1);
+  assert.ok(sim.riders.some((x) => x.name === 'Mark Potts' && x.unplaced), 'Mark Potts rides as a guest');
   sim.startCountdown(10);
   const events = [];
   let t = 0;
@@ -193,13 +194,13 @@ test('race: a 30-minute race at FTP-ish power takes 27–33 minutes and ends wit
   assert.ok(finish.time > 27 * 60 && finish.time < 33 * 60, `race took ${(finish.time / 60).toFixed(1)} min`);
   const board = sim.leaderboard();
   for (let i = 1; i < board.length; i++) assert.ok(board[i].time >= board[i - 1].time);
-  assert.equal(board.length, preset.field + 1);
+  assert.equal(board.length, raceFieldSize(preset) + 1);
   assert.ok(profile.stats.races === 1 && profile.xp > 150);
   // A spread of results: not everyone finishes together.
   const finished = board.filter((b) => !b.projected);
   assert.ok(finished.length >= 2);
   // The regulars fill the field, and Og Pog is the strongest rider in it.
-  const bots = sim.riders.filter((x) => !x.isPlayer);
+  const bots = sim.riders.filter((x) => !x.isPlayer && !x.unplaced);
   assert.ok(bots.filter((b) => b.regular).length >= preset.field - 1);
   const og = bots.find((b) => b.name === 'Og Pog');
   assert.ok(og && bots.every((b) => b === og || b.wkg < og.wkg));
@@ -213,7 +214,7 @@ test('free ride: the regulars ride, Og Pog is the fastest', () => {
   const names = sim.riders.map((r) => r.name);
   for (const n of ['Og Pog', 'Pootle', 'Grandma', 'Big Al', 'Magnum PI']) assert.ok(names.includes(n), n);
   const og = sim.riders.find((r) => r.name === 'Og Pog');
-  assert.ok(sim.riders.filter((r) => !r.isPlayer && !r.isGhost).every((b) => b === og || b.wkg <= og.wkg));
+  assert.ok(sim.riders.filter((r) => !r.isPlayer && !r.isGhost && r.fixedPower == null).every((b) => b === og || b.wkg <= og.wkg));
 });
 
 test('road-distance field matches a brute-force search', async () => {
@@ -260,7 +261,7 @@ test('races adapt to the rider: a wrong FTP still gives a real race, and effort 
 
 test('free ride: bots are set around your level and an FTP estimate comes from riding', () => {
   const sim = new WorldSim({ route: makeDales(), profile: P.newProfile(), mode: 'free', ftp: 170, seed: 2 });
-  const bots = sim.riders.filter((r) => !r.isPlayer && !r.isGhost);
+  const bots = sim.riders.filter((r) => !r.isPlayer && !r.isGhost && r.fixedPower == null);
   const mine = sim.player.wkg;
   assert.ok(bots.some((b) => b.wkg < mine) && bots.some((b) => b.wkg > mine * 1.2));
   assert.ok(bots.every((b) => b.wkg > mine * 0.7 && b.wkg < mine * 1.9));

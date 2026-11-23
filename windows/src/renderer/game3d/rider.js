@@ -45,6 +45,32 @@ function bikeMaterial() {
 function ghostMaterial() {
   return sharedMaterial('ghost', () => new THREE.MeshStandardMaterial({ color: '#bfefff', roughness: 0.5, metalness: 0, transparent: true, opacity: 0.36, depthWrite: false, emissive: new THREE.Color('#5ad1ff'), emissiveIntensity: 0.4 }));
 }
+/**
+ * A pacer's ghost: unlit and see-through in its own colour, glowing brightest at the silhouette (a Fresnel rim),
+ * and fading away when the camera is right on top of it so it never hides you. One per colour, shared.
+ */
+const pacerMaterials = new Map();
+function pacerGhostMaterial(hex) {
+  if (!pacerMaterials.has(hex)) {
+    const m = new THREE.MeshBasicMaterial({ color: new THREE.Color(hex), transparent: true, depthWrite: false, toneMapped: false, fog: true });
+    m.onBeforeCompile = (sh) => {
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vRimN;\nvarying vec3 vRimV;')
+        .replace('#include <project_vertex>', '#include <project_vertex>\nvRimN = normalize(transformedNormal);\nvRimV = -mvPosition.xyz;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vRimN;\nvarying vec3 vRimV;')
+        .replace('#include <opaque_fragment>', `float rimDist = length(vRimV);
+float facing = abs(dot(normalize(vRimN), vRimV / rimDist));
+float rim = pow(1.0 - facing, 2.2);
+outgoingLight = diffuseColor.rgb * (0.55 + 1.7 * rim) + vec3(rim * rim * 0.5);
+diffuseColor.a = (0.2 + 0.75 * rim) * smoothstep(2.0, 6.0, rimDist);
+#include <opaque_fragment>`);
+    };
+    m.customProgramCacheKey = () => 'spindown-pacer-ghost-v1';
+    pacerMaterials.set(hex, m);
+  }
+  return pacerMaterials.get(hex);
+}
 function shadowMaterial() {
   return sharedMaterial('shadow', () => new THREE.MeshBasicMaterial({ map: blobTexture(), transparent: true, depthWrite: false, opacity: 0.6, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6, toneMapped: false, color: '#000000' }));
 }
@@ -246,7 +272,7 @@ const between = (from, to, out) => out.setFromUnitVectors(_c.copy(from).normaliz
  * Builds a rider. kit: {jersey, helmet, bike, wheels} from content.js. options: {ghost, skin, hair, shadows}.
  */
 export class RiderModel {
-  constructor(kit, { ghost = false, skin = '#e0ac8a', hair = '#3a2718', shadows = true, body = 'm' } = {}) {
+  constructor(kit, { ghost = false, ghostColour = null, skin = '#e0ac8a', hair = '#3a2718', shadows = true, body = 'm' } = {}) {
     const assets = riderAssets();
     const meta = { ...assets.meta, ...(assets.meta.bodies[body] ?? assets.meta.bodies.m) };
     if (!assets.meta.bodies[body]) body = 'm';
@@ -316,12 +342,15 @@ export class RiderModel {
       return m;
     };
     const G = assets.geometries;
-    const bodyMat = ghost ? ghostMaterial() : kitMat(kit, skin, meta.landmarks, body, hair);
-    const gearMat = ghost ? ghostMaterial() : bikeMaterial();
+    const ghostMat = ghostColour ? pacerGhostMaterial(ghostColour) : ghostMaterial();
+    const bodyMat = ghost ? ghostMat : kitMat(kit, skin, meta.landmarks, body, hair);
+    const gearMat = ghost ? ghostMat : bikeMaterial();
+    // Pacer ghosts never use the full-detail figure: the middle level is plenty for a see-through glow.
+    this.lite = !!ghostColour;
     this.beard = ghost ? 0 : beardFor(body, skin, hair);
-    const nearBody = make(faceMorphs(G['body' + sfx]), bodyMat);
+    const nearBody = this.lite ? null : make(faceMorphs(G['body' + sfx]), bodyMat);
     // A face of their own: a mix of the face shapes, picked from their looks (so a rider keeps theirs).
-    if (nearBody.morphTargetInfluences) {
+    if (nearBody?.morphTargetInfluences) {
       const h = [...`${skin}${hair}${body}`].reduce((a, ch) => (a * 131 + ch.charCodeAt(0)) >>> 0, 11);
       const r = (k) => ((h >>> (k * 5)) % 97) / 96;
       const S = MORPH_SCALE;
@@ -329,11 +358,11 @@ export class RiderModel {
       nearBody.morphTargetInfluences[1] = (r(1) * 1.3 - 0.35) * S;
       nearBody.morphTargetInfluences[2] = r(2) * r(2) * S;
     }
-    this.near = [nearBody, make(bikeAndGear(kit, 'near', byName, assets, body), gearMat)];
+    this.near = this.lite ? [] : [nearBody, make(bikeAndGear(kit, 'near', byName, assets, body), gearMat)];
     if (!ghost) this.near.push(make(G['hair' + sfx], hairMaterial(hair, body === 'f' ? 'ponytail' : 'short'), false));
     this.mid = [make(faceMorphs(G['bodyMid' + sfx] ?? G['body' + sfx]), bodyMat), make(bikeAndGear(kit, 'mid', byName, assets, body), gearMat)];
     if (!ghost) this.mid.push(make(G['hair' + sfx], hairMaterial(hair, body === 'f' ? 'ponytail' : 'short'), false));
-    if (this.mid[0].morphTargetInfluences && nearBody.morphTargetInfluences) this.mid[0].morphTargetInfluences = nearBody.morphTargetInfluences;
+    if (this.mid[0].morphTargetInfluences && nearBody?.morphTargetInfluences) this.mid[0].morphTargetInfluences = nearBody.morphTargetInfluences;
     this.far = [make(G['bodyFar' + sfx], bodyMat), make(bikeAndGear(kit, 'far', byName, assets, body), gearMat)];
     this.detail = null;
     this.setDetail(true);
@@ -351,7 +380,8 @@ export class RiderModel {
    * body at all; distance (m, optional): from it, the middle level is used beyond MID_FROM.
    */
   setDetail(near, distance = 0) {
-    const level = !near ? 'far' : distance > MID_FROM ? 'mid' : 'near';
+    let level = !near ? 'far' : distance > MID_FROM ? 'mid' : 'near';
+    if (this.lite && level === 'near') level = 'mid';
     if (this.detail === level) return;
     this.detail = level;
     for (const k of ['near', 'mid', 'far']) for (const m of this[k]) m.visible = k === level;

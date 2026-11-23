@@ -3,12 +3,14 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { RiderModel } from './rider.js';
+import { FlameTrail } from './flames.js';
+import { PacerLabels } from './pacerlabels.js';
 import { buildDales } from './dales.js';
 import { buildYork } from './york.js';
 import * as C from './common.js';
 import { CROWD_TIME, CROWD_CAMERA, setCrowdDetail } from './crowd.js';
 import * as T from './textures.js';
-import { POWERUPS } from '../../core/world/content.js';
+import { POWERUPS, PACERS } from '../../core/world/content.js';
 
 export const QUALITY = {
   low: { pixelRatio: 0.75, shadows: false, shadowSize: 0, antialias: false, terrainStep: 16, treeDensity: 0.4, maxTrees: 1200, sceneryRadius: 300, far: 2600, fogNear: 120, fogFar: 1300, texDetail: 0.5 },
@@ -78,6 +80,13 @@ export class WorldScene {
     this.pmrem = new THREE.PMREMGenerator(this.renderer);
     this.skyScene = new THREE.Scene();
     this.envTarget = null;
+
+    // Rider effects: Mark Potts's fire (its light only on medium and high) and the pacers' labels.
+    this.effectsGroup = new THREE.Group();
+    this.scene.add(this.effectsGroup);
+    this.flames = new FlameTrail(this.effectsGroup, CROWD_TIME, { light: quality !== 'low' });
+    this.flameRider = null;
+    this.pacerLabels = new PacerLabels(this.effectsGroup, PACERS);
   }
 
   /** Builds a world. route from worlds.js; data: the map data for that world. Returns stats for diagnostics. */
@@ -178,16 +187,23 @@ export class WorldScene {
   syncRiders(sim) {
     const seen = new Set();
     const p = {};
+    this.flameRider = null;
+    this.pacerLabels.begin();
     for (const r of sim.riders) {
       seen.add(r.id);
+      if (r.flames) this.flameRider = r;
       let model = this.riders.get(r.id);
       if (!model || model.kitKey !== kitKey(r.kit)) {
         if (model) {
           this.scene.remove(model.root);
           model.dispose();
         }
-        model = new RiderModel(r.kit, { ghost: r.isGhost, shadows: this.q.shadows, skin: skinFor(r.id), hair: hairFor(r.id), body: bodyFor(r) });
+        model = new RiderModel(r.kit, { ghost: r.isGhost || !!r.pacer, ghostColour: r.pacer?.color ?? null, shadows: this.q.shadows, skin: skinFor(r.id), hair: hairFor(r.id), body: bodyFor(r) });
+        model.pacer = !!r.pacer;
         model.kitKey = kitKey(r.kit);
+        // Builds: Big Bird is tall (and rides a bigger bike), Barrel Rider is broad.
+        if (r.build === 'tall') model.root.scale.setScalar(1.12);
+        else if (r.build === 'broad') model.root.scale.set(1.3, 1.02, 1.08);
         this.riders.set(r.id, model);
         this.scene.add(model.root);
       }
@@ -198,12 +214,20 @@ export class WorldScene {
       const g = this.route.gradient(r.d);
       model.root.rotation.set(Math.atan(g), -p.heading, 0, 'YXZ');
       model.setPose(r.crank, r.wheel, r.lean);
+      if (r.pacer && !r.hidden) this.pacerLabels.place(PACERS.indexOf(r.pacer), p.x, p.y + 1.85, p.z);
     }
-    // Full detail for the riders nearest the camera; the rest use the lighter body.
+    this.pacerLabels.end(this.camera);
+    // Full detail for the riders nearest the camera; the rest use the lighter body. Pacer ghosts take no detailed
+    // slot: they use the middle level within 28 m and the light one beyond.
     const cam = this.camera.position;
-    const near = [...this.riders.values()].filter((m) => m.root.visible)
-      .map((m) => [m, m.root.position.distanceToSquared(cam)])
-      .sort((a, b) => a[1] - b[1]);
+    const near = [];
+    for (const m of this.riders.values()) {
+      if (!m.root.visible) continue;
+      const d2 = m.root.position.distanceToSquared(cam);
+      if (m.pacer) m.setDetail(d2 < 28 * 28, Math.sqrt(d2));
+      else near.push([m, d2]);
+    }
+    near.sort((a, b) => a[1] - b[1]);
     // Low: the nearest two riders (your own among them) get the middle level at most.
     const low = this.qualityName === 'low';
     const limit = low ? 2 : this.qualityName === 'high' ? 10 : 6;
@@ -309,6 +333,8 @@ export class WorldScene {
     this.time += dt;
     CROWD_TIME.value = this.time;
     CROWD_CAMERA.value.copy(this.camera.position);
+    if (this.flameRider) this.flames.update(sim.route, this.flameRider, this.camera, dt);
+    else if (this.flames.light) this.flames.light.intensity = 0;
     this.world?.update?.(this.time, this.camera);
     const skyU = this.sky.material.uniforms;
     if (skyU.time) skyU.time.value = this.time;
@@ -373,6 +399,8 @@ export class WorldScene {
 
   dispose() {
     for (const m of this.riders.values()) m.dispose();
+    this.flames.dispose();
+    this.pacerLabels.dispose();
     disposeTree(this.scene);
     if (this.envTarget) this.envTarget.dispose();
     this.pmrem.dispose();
@@ -392,6 +420,7 @@ function skinFor(id) {
 const HAIR = ['#3a2718', '#7a5632', '#c9a066', '#1d1a18', '#9a9a9a', '#5a3a22', '#a65e2e'];
 /** About a third of the other riders are women; your own rider (and your ghost) stays as it is. */
 function bodyFor(r) {
+  if (r.body) return r.body;
   if (r.isPlayer || r.isGhost) return 'm';
   return (r.id * 7 + 3) % 10 < 3 ? 'f' : 'm';
 }
