@@ -68,7 +68,7 @@ export function helmet(C, R, { aero = false, far = false } = {}) {
   const NT = far ? 36 : 72, NS = far ? 8 : 18;
   const rx = aero ? 0.097 : 0.104;
   const rzF = aero ? 0.136 : 0.14, rzB = aero ? 0.205 : 0.152;
-  const ry = aero ? 0.088 : 0.1;
+  const ry = aero ? 0.098 : 0.1;
   const y0 = C[1] + 0.004, z0 = C[2] + (aero ? 0.012 : 0.006);
   // Rim height (relative to C) round the head: just above the brow at the front, over the ears, low at the back.
   const rimY = (th) => {

@@ -247,6 +247,8 @@ export function buildBike(kit, bones, detail = 'near', fit = null) {
   const frameCol = new THREE.Color(kit.bike.color);
   const lum = frameCol.r * 0.3 + frameCol.g * 0.59 + frameCol.b * 0.11;
   const paint = kit.bike.color;
+  // Two-tone: fork and stays in a contrasting colour on most frames (black on light or bright frames, red on black).
+  const second = lum < 0.08 ? '#b3121f' : lum > 0.5 || frameCol.r > 0.5 ? '#141518' : paint;
   const dark = '#141518', carbon = '#1b1c1f', rubber = '#141414', alloy = '#b9bcc0', black = '#0d0d0e';
   const BB = A(FIT.BB), REAR = A(FIT.REAR), FRONT = A(FIT.FRONT), SADDLE = A((fit ?? FIT).SADDLE), HOOD = A((fit ?? FIT).HOOD);
   const RAD = Math.round(14 * R), RINGS = Math.round(16 * R);
@@ -270,7 +272,13 @@ export function buildBike(kit, bones, detail = 'near', fit = null) {
     { rings: RINGS, radial: RAD, lead: V(0, 0.3, -1).normalize(), uv: (u, x, y) => [x > 0 ? 0.92 - 0.88 * u : 0.04 + 0.88 * u, logoRow[0] + (logoRow[1] - logoRow[0]) * (0.5 - 0.42 * y)] }), paint, PAINT, bones.frame, 'keep');
   // Top tube: slopes down to the seat cluster, flattened, wider at the head tube.
   add(aeroTube([htTop.clone().add(V(0, -0.022, 0.012)), htTop.clone().lerp(cluster, 0.5).add(V(0, 0.004, 0)), cluster.clone().add(V(0, 0.004, -0.01))],
-    (u) => [0.02 - 0.004 * u, 0.0205 - 0.003 * u, 0.75], { rings: Math.round(10 * R), radial: RAD, lead: V(0, 1, 0) }), paint, PAINT);
+    (u) => [0.02 - 0.004 * u, 0.0205 - 0.003 * u, 0.75], { rings: Math.round(10 * R), radial: RAD, lead: V(0, 1, 0),
+      // A small wordmark near the seat cluster on each side (the text fills a quarter of the tube's length).
+      uv: (u, x, y) => {
+        const t = (u - 0.62) / 0.3;
+        if (t < 0 || t > 1 || Math.abs(y) > 0.75) return UV_WHITE;
+        return [x > 0 ? 0.04 + 0.88 * t : 0.92 - 0.88 * t, logoRow[0] + (logoRow[1] - logoRow[0]) * (0.5 + 0.55 * y)];
+      } }), paint, PAINT, bones.frame, 'keep');
   // Seat tube: aero, curving round the rear wheel near the bottom bracket.
   const stMid = onSeat(0.45).add(V(0, 0, 0.012));
   add(aeroTube([BB.clone().add(V(0, 0.02, 0.012)), stMid, onSeat(0.62), cluster.clone().add(V(0, 0.02, 0))], (u) => [0.019, 0.031 - 0.007 * u, 0.45], { rings: Math.round(12 * R), radial: RAD }), paint, PAINT);
@@ -281,16 +289,16 @@ export function buildBike(kit, bones, detail = 'near', fit = null) {
     // Chain stays: deep at the bottom bracket, tapering to the dropout.
     const dr = s > 0 ? dropR : dropL;
     add(aeroTube([BB.clone().add(V(0.038 * s, -0.004, 0.025)), BB.clone().lerp(dr, 0.5).add(V(0.018 * s, -0.008, 0)), dr.clone().add(V(0, 0.004, -0.012))],
-      (u) => [0.011 - 0.003 * u, 0.019 - 0.008 * u, 0.7], { rings: Math.round(10 * R), radial: Math.round(10 * R), lead: V(0, 1, 0) }), paint, PAINT);
+      (u) => [0.011 - 0.003 * u, 0.019 - 0.008 * u, 0.7], { rings: Math.round(10 * R), radial: Math.round(10 * R), lead: V(0, 1, 0) }), second, PAINT);
     // Dropped seat stays: thin aero, meeting the seat tube below the top tube.
     add(aeroTube([stayTop.clone().add(V(0.016 * s, 0.0, 0.006)), stayTop.clone().lerp(dr, 0.45).add(V(0.034 * s, 0, 0)), dr.clone().add(V(0, 0.014, 0.0))],
-      (u) => [0.0085, 0.013 - 0.003 * u, 0.6], { rings: Math.round(10 * R), radial: Math.round(10 * R) }), paint, PAINT);
+      (u) => [0.0085, 0.013 - 0.003 * u, 0.6], { rings: Math.round(10 * R), radial: Math.round(10 * R) }), second, PAINT);
     // Dropout.
-    add(boxAt(0.008, 0.036, 0.034, dr.clone().add(V(0, 0.006, 0))), paint, PAINT);
+    add(boxAt(0.008, 0.036, 0.034, dr.clone().add(V(0, 0.006, 0))), second, PAINT);
     // Fork blades: wide fore-aft, from the crown to the axle.
     const fk = s > 0 ? forkR : forkL;
     add(aeroTube([htBot.clone().add(V(0.034 * s, -0.03, -0.004)), htBot.clone().lerp(fk, 0.5).add(V(0.008 * s, 0, -0.008)), fk.clone().add(V(0, 0.012, 0.004))],
-      (u) => [0.011 - 0.002 * u, 0.027 - 0.01 * u, 0.45], { rings: Math.round(10 * R), radial: Math.round(10 * R) }), paint, PAINT);
+      (u) => [0.011 - 0.002 * u, 0.027 - 0.01 * u, 0.45], { rings: Math.round(10 * R), radial: Math.round(10 * R) }), second, PAINT);
   }
   // Fork crown, integrated with the head tube.
   add(new THREE.SphereGeometry(0.04, Math.round(14 * R), Math.round(8 * R)).scale(1.15, 0.55, 0.95).translate(htBot.x, htBot.y - 0.03, htBot.z - 0.002), paint, PAINT);
