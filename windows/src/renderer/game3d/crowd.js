@@ -225,7 +225,7 @@ export function crowd(points, { shadows = true, maxDistance = 300 } = {}) {
     const key = `${Math.floor(p.x / CHUNK)},${Math.floor(p.z / CHUNK)},${k}`;
     if (!cells.has(key)) cells.set(key, { k, items: [] });
     // Face the road, give or take; heights vary a little.
-    q.setFromAxisAngle(up, p.rot + Math.PI + (r() - 0.5) * 0.5);
+    q.setFromAxisAngle(up, p.rot + (r() - 0.5) * 0.5); // the people models face +z, towards the road
     const s = 0.94 + r() * 0.12;
     cells.get(key).items.push({
       matrix: new THREE.Matrix4().compose(new THREE.Vector3(p.x, p.y, p.z), q, new THREE.Vector3(s, s, s)),
