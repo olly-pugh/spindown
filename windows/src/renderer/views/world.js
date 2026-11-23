@@ -16,6 +16,7 @@ import * as P from '../../core/world/progression.js';
 import { ITEMS, ACHIEVEMENTS, CHALLENGES, POWERUPS, TIERS, MAX_LEVEL } from '../../core/world/content.js';
 import { riderParams, steadySpeed } from '../../core/world/physics.js';
 import yorkData from '../game3d/data/york.json';
+import dalesData from '../game3d/data/dales.json';
 
 // ---- Long-lived game state (kept across tab switches) ---------------------------------------------------
 const G = {
@@ -41,7 +42,7 @@ const G = {
 if (typeof window !== 'undefined') window.__spindownWorld = G;
 
 function route(id) {
-  if (!G.routes[id]) G.routes[id] = id === 'york' ? makeYork(yorkData) : makeDales();
+  if (!G.routes[id]) G.routes[id] = id === 'york' ? makeYork(yorkData) : makeDales(dalesData);
   return G.routes[id];
 }
 
@@ -90,7 +91,7 @@ function ensureScene(routeId) {
   }
   const r = route(routeId);
   if (G.scene.route !== r) {
-    G.scene.setWorld(r, yorkData);
+    G.scene.setWorld(r, r.world === 'york' ? yorkData : dalesData);
     G.scene.setAtmosphere(G.profile.settings.timeOfDay, G.profile.settings.weather);
   }
   return r;
@@ -375,7 +376,7 @@ function MainMenu({ app, onFreeRide, onRace, onWorkouts, open }) {
       <button class="btn big white" onClick=${() => open('progress')}>🏆 Progress</button>
       <button class="btn big white" onClick=${() => open('options')}>⚙️ World settings</button>
     </div>
-    <div class="small muted" style="margin-top:10px">Tip: just start pedalling to ride. Space uses a power-up · 1–6 change camera · ← → change lane · M menu. ${route('york').course.streets.length ? 'York map data © OpenStreetMap contributors (ODbL).' : ''}</div>
+    <div class="small muted" style="margin-top:10px">Tip: just start pedalling to ride. Space uses a power-up · 1–6 change camera · ← → change lane · M menu. Map data © OpenStreetMap contributors (ODbL). Terrain: Environment Agency LIDAR (© Environment Agency, Open Government Licence v3.0) and Mapzen/AWS Terrain Tiles. Imagery: Sentinel-2 cloudless 2016 by EOX IT Services GmbH (contains modified Copernicus Sentinel data 2016), CC BY 4.0. Photo textures: Poly Haven (CC0).</div>
   </div>`;
 }
 

@@ -4,10 +4,13 @@ import assert from 'node:assert/strict';
 import { riderParams, steadySpeed, stepSpeed, draftFraction, powerForSpeed } from '../src/core/world/physics.js';
 import * as P from '../src/core/world/progression.js';
 import { xpForLevel, levelFor, BIKES, TIERS, POWERUPS } from '../src/core/world/content.js';
-import { makeDales, medalFor } from '../src/core/world/worlds.js';
+import fs from 'node:fs';
+import { makeDales as makeDalesFrom, medalFor } from '../src/core/world/worlds.js';
 import { WorldSim, RACE_PRESETS, timeAtDistance } from '../src/core/world/sim.js';
 
 const kmh = (v) => v * 3.6;
+const dalesData = JSON.parse(fs.readFileSync(new URL('../src/renderer/game3d/data/dales.json', import.meta.url), 'utf8'));
+const makeDales = () => makeDalesFrom(dalesData);
 
 test('physics: realistic speeds for power and gradient', () => {
   const p = riderParams();
@@ -77,11 +80,18 @@ test('progression: riding earns XP, achievements and completes challenges', () =
   assert.ok(p.stats.draftTime >= 599);
 });
 
-test('courses: the Dales loop is rideable and has medal times', () => {
+test('courses: the Malham loop is real, rideable and has medal times', () => {
   const r = makeDales();
-  assert.ok(r.length > 7000 && r.length < 11000);
-  for (let d = 0; d < r.length; d += 5) assert.ok(Math.abs(r.gradient(d)) < 0.13, `gradient at ${d}`);
-  const fell = r.segments.find((s) => s.id === 'fell');
+  assert.ok(r.length > 9000 && r.length < 12000, `${r.length}`);
+  // Real Dales lanes: Cove Road and Malham Rakes have short bits near 20%, but nothing unrideable.
+  for (let d = 0; d < r.length; d += 5) assert.ok(Math.abs(r.gradient(d)) < 0.22, `gradient at ${d}`);
+  assert.ok(r.minY > 180 && r.maxY > 380 && r.maxY < 430, `${r.minY}–${r.maxY} m`);
+  assert.ok(r.climb > 200 && r.climb < 320, `climb ${r.climb}`);
+  assert.ok(Math.abs(r.elevation(0) - r.elevation(r.length - 0.01)) < 0.5, 'the road meets itself at the line');
+  assert.ok(r.landmarks.some((m) => m.name === 'Malham Cove') && r.landmarks.some((m) => m.name === 'Malham Tarn'));
+  const fell = r.segments.find((s) => s.id === 'cove');
+  assert.equal(fell.name, 'Cove Road');
+  assert.ok(r.elevation(fell.to) - r.elevation(fell.from) > 120, 'the KOM climbs over 120 m');
   assert.ok(fell.medals.gold < fell.medals.silver && fell.medals.silver < fell.medals.bronze);
   assert.equal(medalFor(fell, fell.medals.gold - 1), 'gold');
   assert.equal(medalFor(fell, fell.medals.bronze + 1), null);
@@ -103,7 +113,7 @@ test('free ride: bots of several tiers ride and animate; the player moves with p
   const crank0 = sim.player.crank;
   for (let i = 0; i < 5 * 60 * 10; i++) sim.step(1 / 10, { power: 220, cadence: 90 });
   bots.forEach((b, i) => assert.ok(b.d > start[i] + 250, `${b.name} moved`));
-  assert.ok(sim.player.d > 1500, `${sim.player.d}`);
+  assert.ok(sim.player.d > 900, `${sim.player.d}`); // the loop starts straight up Cove Road
   assert.equal(sim.player.cadence, 90);
   const c1 = sim.player.crank;
   sim.step(0.05, { power: 220, cadence: 90 });
@@ -146,11 +156,11 @@ test('segments: a zone gives a time, a medal and a PR; a full lap stores a ghost
   const sim = freeSim(320, profile);
   const events = [];
   // Ride hard for more than a lap.
-  for (let i = 0; i < 20 * 60 * 10 && !profile.ghosts.dales; i++) events.push(...sim.step(0.1, { power: 320 }));
+  for (let i = 0; i < 35 * 60 * 10 && !profile.ghosts.dales; i++) events.push(...sim.step(0.1, { power: 320 }));
   const ends = events.filter((e) => e.type === 'segment-end');
   assert.ok(ends.some((e) => e.segment.kind === 'zone' && e.medal), 'a speed-zone medal at 320 W');
   assert.ok(events.some((e) => e.type === 'medal'));
-  assert.ok(profile.prs.dales.fell.time > 0);
+  assert.ok(profile.prs.dales.cove.time > 0);
   assert.ok(profile.ghosts.dales.samples.length > 100);
   // Second lap: checkpoint deltas against the ghost, and the ghost rider appears.
   const sim2 = freeSim(320, profile);

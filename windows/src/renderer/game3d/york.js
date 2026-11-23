@@ -3,11 +3,20 @@
 // chimney pots; the streets; the Ouse and the Foss sunk between their quay walls; parks; the medieval city
 // walls with their wall-walk and battlements on grassy ramparts; and hand-built models of York Minster and
 // Clifford's Tower placed on their real footprints. The route follows the real inner ring road.
+// The city is modelled at street level and then laid onto York's real gentle relief (LIDAR, see
+// scripts/build-york-terrain.mjs), with the Vale of York around it draped in Sentinel-2 imagery.
 import * as THREE from 'three';
 import * as C from './common.js';
 import * as T from './textures.js';
+import * as B from './buildings.js'; // [buildings-pass]
+import * as L from './landmarks.js'; // [buildings-pass]
 import { RouteField } from '../../core/world/field.js';
 import { rng, hash2 } from '../../core/world/noise.js';
+import { HeightGrid } from '../../core/world/heightgrid.js';
+import { terrainMaterial, imageryTexture } from './ground.js';
+import { Outskirts } from './outskirts.js';
+import yorkNearUrl from './data/york-near.jpg';
+import yorkFarUrl from './data/york-far.jpg';
 
 const Y0 = 12; // street level, metres above sea level
 const YW = Y0 - 3.4; // river level
@@ -146,6 +155,12 @@ export function buildYork(route, data, q) {
     return m;
   };
   const std = (o) => new THREE.MeshStandardMaterial(o);
+  // Everything modelled at street level goes in `flat`, which is laid onto the relief at the end; things built
+  // from the route's own heights (the road, kerbs, bridges' decks, lamps, people) go straight into `group`.
+  const flat = new THREE.Group();
+  const relief = data.relief ? new HeightGrid(data.relief) : null;
+  const D = (x, z) => (relief ? relief.at(x, -z) : 0);
+  const im = data.imagery;
 
   // ---- Water: the rivers lie below street level, so the ground is cut away over them ----
   const waters = data.water.map(W).map((p) => ({ p, box: bbox(p) }));
@@ -181,7 +196,7 @@ export function buildYork(route, data, q) {
   const mask = new THREE.CanvasTexture(maskCanvas);
   mask.channel = 1;
   mask.flipY = false;
-  const groundGeo = new THREE.PlaneGeometry(gw, gd, 1, 1).rotateX(-Math.PI / 2);
+  const groundGeo = new THREE.PlaneGeometry(gw, gd, Math.ceil(gw / 10), Math.ceil(gd / 10)).rotateX(-Math.PI / 2);
   {
     // After the rotation the plane's u runs east and v runs north; the mask is drawn with z (south) downwards.
     const p = groundGeo.attributes.position, uv = groundGeo.attributes.uv;
@@ -192,16 +207,58 @@ export function buildYork(route, data, q) {
       uv.setXY(i, (p.getX(i) + gw / 2) / 12, (p.getZ(i) + gd / 2) / 12);
     }
     groundGeo.setAttribute('uv1', new THREE.BufferAttribute(uv1, 2));
+    groundGeo.setAttribute('detail', new THREE.BufferAttribute(new Float32Array(p.count * 3), 3));
   }
-  const ground = new THREE.Mesh(groundGeo, C.groundMaterial({ map: T.yardTexture(), alphaMap: mask, alphaTest: 0.5, roughness: 1 }));
+  // The suburbs, streets and fields beyond the modelled city (outskirts.js), painted into the ground here.
+  const outskirts = im && data.outskirts ? new Outskirts(data, q) : null;
+  const imageryOpts = im && {
+    near: { texture: imageryTexture(yorkNearUrl), rect: im.near },
+    far: { texture: imageryTexture(yorkFarUrl), rect: im.far },
+    paint: outskirts?.paint,
+  };
+  const ground = new THREE.Mesh(groundGeo, imageryOpts
+    ? terrainMaterial({ ...imageryOpts, detailMap: T.yardTexture(), saturation: 0.7, tint: [1.12, 1.0, 0.8] }, { alphaMap: mask, alphaTest: 0.5, roughness: 1 })
+    : C.groundMaterial({ map: T.yardTexture(), alphaMap: mask, alphaTest: 0.5, roughness: 1 }));
   ground.position.set(gx0 + gw / 2, Y0 - 0.1, gz0 + gd / 2);
   ground.receiveShadow = true;
-  group.add(ground);
+  flat.add(ground);
+  // Beyond the mapped city: the Vale of York to the horizon, imagery over the real relief.
+  if (imageryOpts && relief) {
+    const ext = 4400, cell = 40;
+    const n = Math.round((2 * ext) / cell) + 1;
+    const pos = new Float32Array(n * n * 3);
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const x = -ext + i * cell, z = -ext + j * cell, k = j * n + i;
+        pos[k * 3] = x;
+        pos[k * 3 + 1] = Y0 - 0.35;
+        pos[k * 3 + 2] = z;
+      }
+    }
+    const idx = [];
+    const inside = (x, z) => x > gx0 + 5 && x < gx0 + gw - 5 && z > gz0 + 5 && z < gz0 + gd - 5;
+    for (let j = 0; j < n - 1; j++) {
+      for (let i = 0; i < n - 1; i++) {
+        const x = -ext + i * cell, z = -ext + j * cell;
+        if (inside(x, z) && inside(x + cell, z + cell)) continue; // under the city ground
+        const a = j * n + i;
+        idx.push(a, a + n, a + 1, a + 1, a + n, a + n + 1);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('detail', new THREE.BufferAttribute(new Float32Array(n * n * 3), 3));
+    g.setIndex(idx);
+    const vale = new THREE.Mesh(g, terrainMaterial({ ...imageryOpts, saturation: 1.25, tint: [1.06, 1.0, 0.68] }));
+    vale.receiveShadow = true;
+    vale.userData.relaxNormals = true;
+    flat.add(vale);
+  }
 
   const waterNormal = T.waterNormalTexture();
   const waterMat = std({ color: '#52706a', roughness: 0.08, metalness: 0.1, normalMap: waterNormal, normalScale: new THREE.Vector2(0.18, 0.18), envMapIntensity: 1.1 });
   const waterGeo = C.mergeAll(waters.map((w) => shapeGeometry(w.p, YW, 9)).filter(Boolean));
-  group.add(receiving(new THREE.Mesh(waterGeo, waterMat)));
+  flat.add(receiving(new THREE.Mesh(waterGeo, waterMat)));
   // Quay walls down to the water.
   const quay = [];
   for (const w of waters) {
@@ -212,12 +269,12 @@ export function buildYork(route, data, q) {
     const g = C.profileAlong(p, [[-inward * 0.6, Y0 - 0.06], [0, Y0 - 0.06], [inward * 0.7, YW - 0.8]], { uvLength: 4, uvV: 4 });
     if (g) quay.push(g);
   }
-  if (quay.length) group.add(receiving(new THREE.Mesh(C.mergeAll(quay), std({ map: T.stoneWallTexture({ tone: 'rubble' }), color: '#c9c2b2', roughness: 0.95, side: THREE.DoubleSide }))));
+  if (quay.length) flat.add(receiving(new THREE.Mesh(C.mergeAll(quay), std({ map: T.stoneWallTexture({ tone: 'rubble' }), color: '#c9c2b2', roughness: 0.95, side: THREE.DoubleSide }))));
 
   // ---- Parks ----
   const greens = data.green.map(W);
   const greenGeo = C.mergeAll(greens.map((p) => shapeGeometry(p, Y0 - 0.06, 7)).filter(Boolean));
-  group.add(receiving(new THREE.Mesh(greenGeo, C.groundMaterial({ map: T.grassTexture(), color: '#dfeec8', roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }))));
+  flat.add(receiving(new THREE.Mesh(greenGeo, C.groundMaterial({ map: T.grassTexture(), color: '#dfeec8', roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }))));
 
   // ---- Streets ----
   const roadSets = { asphalt: [], cobbles: [], paving: [] };
@@ -243,10 +300,10 @@ export function buildYork(route, data, q) {
     cobbles: std({ map: T.cobbleTexture(), roughness: 0.85, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }),
     paving: std({ map: T.pavingTexture(), roughness: 0.95, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
   };
-  for (const [k, list] of Object.entries(roadSets)) if (list.length) group.add(receiving(new THREE.Mesh(C.mergeAll(list), streetMats[k])));
+  for (const [k, list] of Object.entries(roadSets)) if (list.length) flat.add(receiving(new THREE.Mesh(C.mergeAll(list), streetMats[k])));
   const limestone = std({ map: T.stoneWallTexture({ tone: 'limestone' }), roughness: 0.9 });
   const limestone2 = std({ map: T.stoneWallTexture({ tone: 'limestone' }), roughness: 0.9, side: THREE.DoubleSide });
-  if (skirts.length) group.add(shadowy(new THREE.Mesh(C.mergeAll(skirts), limestone2)));
+  if (skirts.length) flat.add(shadowy(new THREE.Mesh(C.mergeAll(skirts), limestone2)));
 
   // The route: full-width tarmac with double yellow lines, raised kerbs and stone-flagged pavements.
   group.add(receiving(new THREE.Mesh(C.ribbon(route, { left: -ROAD_HALF, right: ROAD_HALF, lift: 0.06, uvLength: 9, step: 2 }), C.roadMaterial({ centreLine: true, yellow: true }))));
@@ -260,29 +317,17 @@ export function buildYork(route, data, q) {
   group.add(receiving(new THREE.Mesh(C.mergeAll(paves), std({ map: T.pavingTexture(), roughness: 0.95, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }))));
 
   // ---- Buildings ----
-  const KINDS = ['brick', 'brick2', 'render', 'stone', 'shop', 'timber', 'church', 'office'];
-  const walls = Object.fromEntries(KINDS.map((k) => [k, []]));
-  const roofs = { slate: [], pantile: [], flat: [], lead: [] };
-  const plainBrick = [];
-  const crenels = [];
+  // [buildings-pass] Footprints go to buildings.js, which works out terraces, party walls and street fronts and
+  // builds each house with real openings, roofs along the street and chimneys on the party walls.
   const ring = W(data.route.points);
-  const paints = {
-    brick: ['#ffffff', '#f6ece4', '#fff0e2', '#ebe0d6', '#fff7ec', '#e9dacd', '#f2e4da'],
-    brick2: ['#ffffff', '#f3e9e4', '#ffeee6', '#e8dcd6', '#f6f0ea'],
-    shop: ['#ffffff', '#f6ece4', '#fff0e2', '#ece2d8'],
-    render: ['#ffffff', '#fbf3dc', '#f7e4d6', '#e4efe6', '#e1e9f2', '#f6e8c0', '#efd9d4', '#f0eaf3', '#f9efe4', '#dfe8dc'],
-    stone: ['#ffffff', '#f7f0e0', '#eee5cf'],
-    timber: ['#ffffff', '#fbf4e4', '#f6ecd6'],
-    church: ['#ffffff', '#f4ecd8'],
-    office: ['#ffffff', '#f0e8de', '#e8e2da', '#f4ece0'],
-  };
   // Where buildings stand (3 m cells), so street trees are not planted through a shop window.
   const occupied = new Set();
   const occKey = (x, z) => `${Math.floor(x / 3)},${Math.floor(z / 3)}`;
+  const cityList = [];
   let built = 0;
   for (const b of data.buildings) {
     if (b.k === 'cathedral' || b.n === "Clifford's Tower") continue;
-    const ringB = W(b.p);
+    let ringB = W(b.p);
     if (ringB.length > 6 && Math.hypot(ringB[0] - ringB[ringB.length - 2], ringB[1] - ringB[ringB.length - 1]) < 0.01) ringB.length -= 2;
     let cx = 0, cz = 0;
     const n = ringB.length / 2;
@@ -297,101 +342,32 @@ export function buildYork(route, data, q) {
     let tooClose = false;
     for (let i = 0; i < ringB.length && !tooClose; i += 2) if (field.query(ringB[i], ringB[i + 1], tmp).distance < ROAD_HALF + 2.9) tooClose = true;
     if (!tooClose && field.query(cx, cz, tmp).distance < ROAD_HALF + 2.9) tooClose = true;
-    if (tooClose) continue;
+    if (tooClose) {
+      // [buildings-pass] A house fronting the pavement is set back to the pavement line rather than dropped.
+      const fitted = B.pushBehind(ringB, (x, z) => {
+        field.query(x, z, tmp);
+        const p = route.position(tmp.along);
+        return { distance: tmp.distance, x: p.x, z: p.z };
+      }, ROAD_HALF + 3.0, 4.5);
+      if (!fitted) continue;
+      ringB = fitted;
+    }
     for (let i = 0; i < ringB.length; i += 2) {
       const j = (i + 2) % ringB.length;
       const len = Math.hypot(ringB[j] - ringB[i], ringB[j + 1] - ringB[i + 1]);
       for (let t = 0; t <= len; t += 2) occupied.add(occKey(ringB[i] + ((ringB[j] - ringB[i]) * t) / (len || 1), ringB[i + 1] + ((ringB[j + 1] - ringB[i + 1]) * t) / (len || 1)));
     }
-    const h = Math.max(4.5, b.h);
-    const hsh = hash2(Math.round(cx), Math.round(cz), 4);
-    const hsh2 = hash2(Math.round(cz), Math.round(cx), 9);
-    const hsh3 = hash2(Math.round(cx * 2), Math.round(cz * 2), 14);
-    const inside = pointInPolygon(cx, cz, ring); // within the ring road: the old city
-    const obb = orientedRect(ringB);
-    const footprint = Math.abs(signedArea(ringB));
-    let facade;
-    if (b.k === 'church') facade = 'church';
-    else if (b.k === 'castle') facade = 'stone';
-    else if (b.k !== 'house' && (footprint > 900 || h >= 17)) facade = hsh < 0.45 ? 'office' : hsh < 0.75 ? 'brick2' : hsh < 0.9 ? 'brick' : 'stone';
-    else if (inside && hsh2 < 0.17 && h < 11 && footprint < 240) facade = 'timber';
-    else if (b.k === 'commercial' || (inside && hsh2 < 0.5)) facade = hsh < 0.6 ? 'shop' : hsh < 0.82 ? 'brick' : 'render';
-    else facade = hsh < 0.46 ? 'brick' : hsh < 0.74 ? 'brick2' : hsh < 0.93 ? 'render' : 'stone';
-    const tintCol = paints[facade][Math.floor(hsh2 * 997) % paints[facade].length];
-    // Anything roughly rectangular and not too deep gets a pitched roof along its length: houses, and whole terraces.
-    const pitched = b.k !== 'castle' && h < 20 && obb.short > 3 && obb.short < (b.k === 'church' ? 24 : 17) && obb.long < 160 && footprint > obb.area * 0.55;
-    // Flat roofs sit a little below the wall head, which then reads as a parapet.
-    walls[facade].push(C.facadeRing(ringB, Y0 - 0.1, h + 0.1, tintCol));
-    if (pitched) {
-      const church = b.k === 'church';
-      const rh = church ? Math.min(7, obb.short * 0.5) : Math.min(4.4, obb.short * 0.42);
-      const brick = facade === 'brick' || facade === 'brick2' || facade === 'shop';
-      const hip = !brick || hsh3 < 0.3;
-      const gableTint = facade === 'brick2' ? '#b79a90' : tintCol;
-      const roofKind = church ? (hsh < 0.5 ? 'lead' : 'slate') : (inside ? hsh3 < 0.62 : hsh3 < 0.42) ? 'pantile' : 'slate';
-      const [ax, az] = obb.axis;
-      const { slopes, gables } = C.roofPrism({ cx: obb.centre[0], cz: obb.centre[1], ax, az, la: obb.long / 2, lb: obb.short / 2, y: Y0 + h, rh, hip, gableTint });
-      roofs[roofKind].push(slopes);
-      if (gables) plainBrick.push(gables);
-      if (!church && hsh2 > 0.2) {
-        const R = hip ? Math.max(0, obb.long / 2 - (obb.short / 2) * 0.85) : obb.long / 2;
-        for (const s of obb.long > 11 ? [-1, 1] : [hsh > 0.5 ? 1 : -1]) {
-          const off = Math.max(0, R - 0.6) * s;
-          plainBrick.push(C.chimney(obb.centre[0] + ax * off, Y0 + h + rh + 0.3, obb.centre[1] + az * off, Math.atan2(-ax, -az), brick ? gableTint : '#e6d6c8'));
-        }
-      }
-    } else if (b.k !== 'castle' && h < 22 && n <= 40) {
-      // Big or awkward footprints (whole blocks, L-shapes, courtyards): slopes rising from every wall to a
-      // smaller flat top, which reads as the jumble of hipped roofs such a block really has.
-      const k = Math.max(0.4, 1 - 5.5 / Math.max(6, obb.short));
-      const rise = Math.min(3.6, obb.short * 0.2);
-      const kind = (inside ? hsh3 < 0.55 : hsh3 < 0.35) ? 'pantile' : 'slate';
-      const top = [];
-      for (let i = 0; i < ringB.length; i += 2) top.push(cx + (ringB[i] - cx) * k, cz + (ringB[i + 1] - cz) * k);
-      const pos = [], uv = [];
-      for (let i = 0; i < ringB.length; i += 2) {
-        const j = (i + 2) % ringB.length;
-        const len = Math.hypot(ringB[j] - ringB[i], ringB[j + 1] - ringB[i + 1]);
-        if (len < 0.05) continue;
-        const sl = Math.hypot(rise, Math.hypot(top[i] - ringB[i], top[i + 1] - ringB[i + 1]));
-        const y0 = Y0 + h - 0.05, y1 = Y0 + h + rise;
-        pos.push(ringB[i], y0, ringB[i + 1], ringB[j], y0, ringB[j + 1], top[j], y1, top[j + 1], ringB[i], y0, ringB[i + 1], top[j], y1, top[j + 1], top[i], y1, top[i + 1]);
-        const inset = (len * (1 - k)) / 2;
-        uv.push(0, 0, len / 2.4, 0, (len - inset) / 2.4, sl / 2.4, 0, 0, (len - inset) / 2.4, sl / 2.4, inset / 2.4, sl / 2.4);
-      }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-      g.computeVertexNormals();
-      roofs[kind].push(g);
-      const cap = shapeGeometry(top, Y0 + h + rise, 2.4);
-      if (cap) roofs.flat.push(cap);
-    } else {
-      const cap = shapeGeometry(ringB, Y0 + h - (b.k === 'castle' ? 0.9 : 0.45), 2.4);
-      if (cap) roofs.flat.push(cap);
-    }
-    if (b.k === 'castle') {
-      for (let i = 0; i < ringB.length; i += 2) {
-        const j = (i + 2) % ringB.length;
-        const len = Math.hypot(ringB[j] - ringB[i], ringB[j + 1] - ringB[i + 1]);
-        for (let t = 0.6; t < len; t += 2.2) {
-          const f = t / len;
-          crenels.push({ x: ringB[i] + (ringB[j] - ringB[i]) * f, z: ringB[i + 1] + (ringB[j + 1] - ringB[i + 1]) * f, y: Y0 + h, rot: Math.atan2(ringB[j] - ringB[i], ringB[j + 1] - ringB[i + 1]) });
-        }
-      }
-    }
+    cityList.push({ ring: ringB, h: b.h, k: b.k, n: b.n });
     built++;
   }
   group.userData.buildingCount = built;
-  for (const [k, list] of Object.entries(walls)) if (list.length) group.add(shadowy(new THREE.Mesh(C.mergeAll(list, { colour: true }), std({ map: T.facadeTexture(k), vertexColors: true, roughness: 0.9 }))));
-  if (plainBrick.length) group.add(shadowy(new THREE.Mesh(C.mergeAll(plainBrick, { colour: true }), std({ map: T.brickTexture(), vertexColors: true, roughness: 0.9, side: THREE.DoubleSide }))));
-  const roofMats = {
-    slate: std({ map: T.roofTexture('slate'), roughness: 0.75, side: THREE.DoubleSide }),
-    pantile: std({ map: T.roofTexture('pantile'), roughness: 0.85, side: THREE.DoubleSide }),
-    lead: std({ map: T.roofTexture('lead'), roughness: 0.6, metalness: 0.15, side: THREE.DoubleSide }),
-    flat: std({ map: T.roofTexture('slate'), color: '#b9bcc0', roughness: 0.9 }),
-  };
-  for (const [k, list] of Object.entries(roofs)) if (list.length) group.add(shadowy(new THREE.Mesh(C.mergeAll(list), roofMats[k])));
+  const roadsForFronts = data.roads.map((rd) => {
+    const kind = rd.k === 'pedestrian' ? 'cobbles' : rd.k === 'footway' || rd.k === 'cycleway' ? 'paving' : 'asphalt';
+    return { p: W(rd.p), w: kind === 'asphalt' ? Math.max(3.2, rd.w * 1.5) : Math.max(2, rd.w), weight: kind === 'asphalt' ? 1 : kind === 'cobbles' ? 0.9 : 0.35 };
+  });
+  // The named bars and wall towers are built by landmarks.js from their footprints.
+  const city = B.cityBuildings(cityList, { q, y: Y0, roads: roadsForFronts, roadHalf: ROAD_HALF, routeDistance: (x, z) => field.query(x, z, tmp).distance, inside: (x, z) => pointInPolygon(x, z, ring), walls: data.walls.map(W), routeRing: ring });
+  flat.add(city.group);
 
   // ---- City walls on their ramparts (cut where the route passes through) ----
   let ccx = 0, ccz = 0;
@@ -401,7 +377,7 @@ export function buildYork(route, data, q) {
   }
   ccx /= ring.length / 2;
   ccz /= ring.length / 2;
-  const wallParts = [], rampartParts = [];
+  const rampartParts = [];
   const gates = [];
   const wallRuns = [];
   for (const wl of data.walls) {
@@ -415,19 +391,8 @@ export function buildYork(route, data, q) {
         const k2 = Math.min(run.length - 2, k + 2), k1 = k2 - 2;
         const dx = run[k2] - run[k1], dz = run[k2 + 1] - run[k1 + 1];
         const out = (-dz) * (run[k1] - ccx) + dx * (run[k1 + 1] - ccz) > 0 ? 1 : -1;
-        const prof = [[-1.15, 2.9], [-1.15, 5.1], [0.45, 5.1], [0.45, 6.05], [1.15, 6.05], [1.15, 2.9]].map(([o, y]) => [o * out, Y0 + y]);
-        if (out < 0) prof.reverse();
-        const wg = C.profileAlong(run, prof, { uvLength: 4, uvV: 4 });
-        if (wg) wallParts.push(wg);
         rampartParts.push(rampart(run, clear));
-        wallRuns.push({ run, out, clear });
-        for (let i = 0; i < run.length - 2; i += 2) {
-          const ax = run[i], az = run[i + 1], bx = run[i + 2], bz = run[i + 3];
-          const len = Math.hypot(bx - ax, bz - az);
-          if (len < 0.01) continue;
-          const nx = (-(bz - az) / len) * out, nz = ((bx - ax) / len) * out;
-          for (let t = 0.6; t < len; t += 2.3) crenels.push({ x: ax + ((bx - ax) * t) / len + nx * 0.8, z: az + ((bz - az) * t) / len + nz * 0.8, y: Y0 + 6.05, rot: Math.atan2(bx - ax, bz - az) });
-        }
+        wallRuns.push({ run, out, clear }); // [buildings-pass] the wall itself is built by landmarks.cityWalls
       }
       run = [];
       clear = [];
@@ -477,30 +442,19 @@ export function buildYork(route, data, q) {
     g.computeVertexNormals();
     return g;
   }
-  if (wallParts.length) group.add(shadowy(new THREE.Mesh(C.mergeAll(wallParts), limestone2)));
-  if (rampartParts.length) group.add(receiving(new THREE.Mesh(C.mergeAll(rampartParts), C.groundMaterial({ map: T.grassTexture(), color: '#e4f2c8', roughness: 1, side: THREE.DoubleSide }))));
-  // Merlons (battlements), instanced.
-  {
-    const m = new THREE.Matrix4(), qq = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-    const items = crenels.map((c) => {
-      qq.setFromAxisAngle(up, c.rot);
-      return { matrix: m.clone().compose(new THREE.Vector3(c.x, c.y, c.z), qq, new THREE.Vector3(1, 1, 1)) };
-    });
-    const mg = new THREE.BoxGeometry(0.7, 0.85, 1.25).translate(0, 0.42, 0);
-    const uv = mg.attributes.uv;
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 0.3, uv.getY(i) * 0.22);
-    group.add(C.chunked(mg, limestone, items, { chunk: 250, shadows: q.shadows, maxDistance: 600 }));
-  }
+  flat.add(L.cityWalls(wallRuns, { y0: Y0, q })); // [buildings-pass]
+  if (rampartParts.length) flat.add(receiving(new THREE.Mesh(C.mergeAll(rampartParts), C.groundMaterial({ map: T.grassTexture(), color: '#e4f2c8', roughness: 1, side: THREE.DoubleSide }))));
 
   // ---- York Minster and Clifford's Tower ----
-  group.add(minster(q));
-  group.add(cliffordsTower(data, q));
+  flat.add(minster(q));
+  flat.add(cliffordsTower(data, q));
 
   // ---- Bridges: where the route rises over the Ouse ----
   const spans = [];
   let spanStart = null;
   for (let d = 0; d <= route.length; d += 2) {
-    const up = route.elevation(d) > Y0 + 0.25;
+    const bp = route.position(d);
+    const up = route.elevation(d) > Y0 + D(bp.x, bp.z) + 0.35;
     if (up && spanStart == null) spanStart = d;
     if (!up && spanStart != null) {
       spans.push([spanStart, d]);
@@ -582,9 +536,9 @@ export function buildYork(route, data, q) {
     if (onBridge(d) || nearGate(d)) continue;
     const p = route.position(d + 9, s * (ROAD_HALF + 1.7));
     if (blocked(p.x, p.z, 3) || nearWall(p.x, p.z) || inWater(p.x, p.z)) continue;
-    streetTrees.push({ x: p.x, z: p.z, y: Y0 + 0.4, kind: 'broad', s: 0.55 + r() * 0.2, rot: r() * 6.3, hue: r() * 0.6 - 0.1, sx: 0.85, sy: 1.25 });
+    streetTrees.push({ x: p.x, z: p.z, y: Y0 + 0.4, kind: 'broad', s: 0.55 + r() * 0.2, rot: r() * 6.3, hue: r() * 0.6 - 0.1, sx: 0.85, sy: 1.25, pit: true });
   }
-  group.add(C.trees([...streetTrees, ...treeSpots.slice(0, q.maxTrees)], { shadows: q.shadows, maxDistance: 1200, lod: 200 }));
+  flat.add(C.trees([...streetTrees, ...treeSpots.slice(0, q.maxTrees)], { shadows: q.shadows, maxDistance: 1200, lod: 200, q }));
 
   const lamps = [], people = [];
   for (let d = 0; d < route.length; d += 30) {
@@ -611,6 +565,8 @@ export function buildYork(route, data, q) {
   }
   group.add(C.lampPosts(lamps, { shadows: q.shadows }));
   group.add(C.spectators(people));
+  // Street furniture (bins, benches, bollards, railings, signs), clear of bridges, the bars and the finish.
+  group.add(C.roadside(route, { world: 'york', roadHalf: ROAD_HALF, ground: (x, z, d) => route.elevation(d) + 0.19, avoid: (d) => onBridge(d) || nearGate(d) || route.wrap(d) < 75 || route.wrap(d) > route.length - 75, q }));
   // Crowd barriers with sponsor boards along the finish straight.
   const barrierMat = std({ map: T.textTexture('SPINDOWN  ·  YORK  ·  SPINDOWN', { width: 1024, height: 64, bg: '#1d7f46', font: '700 40px Arial' }), color: '#b4b4b4', roughness: 0.9, envMapIntensity: 0.3, side: THREE.DoubleSide });
   const barriers = [];
@@ -647,13 +603,14 @@ export function buildYork(route, data, q) {
       parts.push(C.tint(new THREE.CylinderGeometry(0.022, 0.016, 0.05, 5, 1, true).rotateX(Math.PI * 0.6 - Math.PI / 2).translate(dx, 0.345, dz - 0.045), '#ff9a1f'));
     }
     parts.push(C.tint(new THREE.ConeGeometry(0.1, 0.3, 4, 1, true).translate(0.02, 0.15, 0.04), '#5b8c32'));
-    group.add(C.chunked(C.mergeAll(parts, { colour: true, uv: false }), std({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide }), daffs, { shadows: false, maxDistance: 110, chunk: 70 }));
+    flat.add(C.chunked(C.mergeAll(parts, { colour: true, uv: false }), std({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide }), daffs, { shadows: false, maxDistance: 110, chunk: 70 }));
   }
 
   // Gatehouses ("bars") where the route passes through the walls.
   if (gates.length) {
-    const parts = gates.map((g) => gatehouse(route, g.along));
-    group.add(shadowy(new THREE.Mesh(C.mergeAll(parts), limestone)));
+    // [buildings-pass] No invented gatehouse where a real bar stands close by (Bootham Bar at St Leonard's Place).
+    const parts = gates.filter((g) => !city.nearBar(route.position(g.along), 60)).map((g) => gatehouse(route, g.along));
+    if (parts.length) flat.add(shadowy(new THREE.Mesh(C.mergeAll(parts), limestone)));
   }
 
   // ---- Start/finish and zone arches ----
@@ -663,13 +620,63 @@ export function buildYork(route, data, q) {
     group.add(C.arch(route, s.to, 'FINISH ▸', { width: 2 * ROAD_HALF + 1.4, colour: '#333', height: 6 }));
   }
 
-  const update = (t) => {
+  layOnRelief(flat, D);
+  group.add(flat);
+  if (outskirts) group.add(outskirts.build((x, z) => Y0 + D(x, z)));
+
+  const update = (t, camera) => {
     waterNormal.offset.set(t * 0.012, t * 0.02);
+    outskirts?.update(camera, Y0);
   };
-  return { group, heightAt: () => Y0, roadHalf: ROAD_HALF, buildingCount: built, update };
+  /** A little more haze distance so the Vale of York reads around the city from the aerial cameras. */
+  const atmosphere = (view) => {
+    const fog = view.scene.fog;
+    if (!fog || !imageryOpts) return;
+    if (fog.far >= view.q.fogFar * 0.8) fog.far = Math.max(fog.far * 1.6, 4200);
+    view.camera.far = Math.max(view.camera.far, Math.min(7000, fog.far * 1.1));
+    view.camera.updateProjectionMatrix();
+    view.sky.scale.setScalar(view.camera.far * 0.9);
+  };
+  return { group, heightAt: (x, z) => Y0 + D(x, z), roadHalf: ROAD_HALF, buildingCount: built, update, atmosphere };
 }
 
 /** A medieval gatehouse ("bar") straddling the route: a tower over an arch, with corner turrets. One geometry. */
+/**
+ * Lays geometry built at street level onto the relief: every vertex (or instance) is raised by D at its
+ * position. York's slopes are a few percent at most, so buildings stay square to the eye and their feet stay
+ * on the ground; within ~15 m of the rivers D is zero, so quays, water and bridges keep their heights.
+ */
+function layOnRelief(root, D) {
+  root.updateMatrixWorld(true);
+  const seen = new Set();
+  const v = new THREE.Vector3(), m4 = new THREE.Matrix4(), pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+  root.traverse((o) => {
+    if (o.isInstancedMesh) {
+      for (let i = 0; i < o.count; i++) {
+        o.getMatrixAt(i, m4);
+        m4.decompose(pos, quat, scl);
+        pos.y += D(pos.x, pos.z);
+        o.setMatrixAt(i, m4.compose(pos, quat, scl));
+      }
+      o.instanceMatrix.needsUpdate = true;
+      o.computeBoundingSphere();
+      if (o.userData.centre) o.userData.centre.copy(o.boundingSphere.center);
+      return;
+    }
+    if (!o.isMesh || seen.has(o.geometry)) return;
+    seen.add(o.geometry);
+    const p = o.geometry.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld);
+      p.setY(i, p.getY(i) + D(v.x, v.z));
+    }
+    p.needsUpdate = true;
+    if (o.userData.relaxNormals || o.geometry.index) o.geometry.computeVertexNormals();
+    o.geometry.computeBoundingSphere();
+    if (o.userData.centre) o.userData.centre.copy(o.geometry.boundingSphere.center).applyMatrix4(o.matrixWorld);
+  });
+}
+
 function gatehouse(route, along) {
   const p = route.position(along);
   const w = 2 * ROAD_HALF + 1.6, depth = 8, side = 4.2, top = 13;
@@ -702,160 +709,12 @@ function gatehouse(route, along) {
   return g;
 }
 
-/**
- * York Minster on its real footprint: nave and choir with their aisles and clerestory, transepts, the
- * central tower, twin pinnacled west towers, the great west and east windows and the chapter house.
- */
+/** York Minster: built by landmarks.js with its real Gothic massing. [buildings-pass] */
 function minster(q) {
-  const g = new THREE.Group();
-  const cream = '#fff8e6';
-  const bayMat = new THREE.MeshStandardMaterial({ map: T.minsterTexture('bay'), color: cream, roughness: 0.85 });
-  const towerMat = new THREE.MeshStandardMaterial({ map: T.minsterTexture('tower'), color: cream, roughness: 0.85 });
-  const plainMat = new THREE.MeshStandardMaterial({ map: T.minsterTexture('plain'), color: cream, roughness: 0.85 });
-  const frontMat = new THREE.MeshStandardMaterial({ map: T.westFrontTexture(), color: cream, roughness: 0.85, side: THREE.DoubleSide });
-  const stone = new THREE.MeshStandardMaterial({ map: T.stoneWallTexture({ tone: 'limestone' }), color: '#fbf2da', roughness: 0.85 });
-  const lead = new THREE.MeshStandardMaterial({ map: T.roofTexture('lead'), roughness: 0.55, metalness: 0.2, side: THREE.DoubleSide });
-  const sets = new Map([[bayMat, []], [towerMat, []], [plainMat, []], [frontMat, []], [stone, []], [lead, []]]);
-  const add = (mat, geo) => sets.get(mat).push(geo);
-  const z = (y) => -y; // data y (north) to world z
-  const AISLE = 12, H = 31;
-  // Nave and choir: x −72…75, aisles out to y 229…268; the high vessel is 19 m wide.
-  const cx = 1.5, len = 147, cy = 248.5, wide = 39, vessel = 19;
-  const bays = Math.round(len / 10);
-  add(bayMat, uvBox(len, AISLE, wide, bays, 4, 0, 0.428).translate(cx, Y0 + AISLE / 2, z(cy)));
-  add(bayMat, uvBox(len, H - AISLE, vessel, bays, 2, 0.428, 1).translate(cx, Y0 + AISLE + (H - AISLE) / 2, z(cy)));
-  add(lead, C.roofPrism({ cx, cz: z(cy), ax: 1, az: 0, la: len / 2, lb: vessel / 2, y: Y0 + H, rh: 8.5, overhang: 0.3 }).slopes);
-  // Lean-to aisle roofs.
-  for (const s of [-1, 1]) {
-    const y0 = cy + (s * wide) / 2, y1 = cy + (s * vessel) / 2;
-    const pos = [cx - len / 2, Y0 + AISLE, z(y0), cx + len / 2, Y0 + AISLE, z(y0), cx + len / 2, Y0 + AISLE + 3, z(y1), cx - len / 2, Y0 + AISLE, z(y0), cx + len / 2, Y0 + AISLE + 3, z(y1), cx - len / 2, Y0 + AISLE + 3, z(y1)];
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, len / 2.4, 0, len / 2.4, 4, 0, 0, len / 2.4, 4, 0, 4], 2));
-    geo.computeVertexNormals();
-    add(lead, geo);
-  }
-  // Transepts: x −22…8, y 212…298.
-  const tw = 30, tlen = 86, tcy = 255, tcx = -7;
-  add(bayMat, uvBox(tw, H, tlen, 3, 8, 0, 1).translate(tcx, Y0 + H / 2, z(tcy)));
-  add(lead, C.roofPrism({ cx: tcx, cz: z(tcy), ax: 0, az: 1, la: tlen / 2, lb: tw * 0.36, y: Y0 + H, rh: 8.5, overhang: 0.3 }).slopes);
-  // Gables of the nave (east) and transepts (north and south), in stone.
-  const gable = (x0, z0, x1, z1, half, rh) => {
-    const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute([x0, Y0 + H, z0, x1, Y0 + H, z1, mx, Y0 + H + rh, mz], 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, half / 2, 0, half / 4, rh / 4], 2));
-    geo.computeVertexNormals();
-    return geo;
-  };
-  const gableMat = new THREE.MeshStandardMaterial({ map: T.stoneWallTexture({ tone: 'limestone' }), color: '#fbf2da', roughness: 0.85, side: THREE.DoubleSide });
-  sets.set(gableMat, []);
-  add(gableMat, gable(cx + len / 2, z(cy - vessel / 2), cx + len / 2, z(cy + vessel / 2), vessel, 8.5));
-  add(gableMat, gable(cx - len / 2 - 6, z(cy - vessel / 2), cx - len / 2 - 6, z(cy + vessel / 2), vessel, 8.5));
-  for (const s of [-1, 1]) add(gableMat, gable(tcx - tw * 0.36, z(tcy + (s * tlen) / 2), tcx + tw * 0.36, z(tcy + (s * tlen) / 2), tw * 0.72, 8.5));
-  // Central tower: 71 m, with tall belfry windows above the roofs.
-  add(plainMat, uvBox(24, 40, 24, 2.4, 2.4, 0, 1).translate(tcx, Y0 + 20, z(cy)));
-  add(towerMat, uvBox(24.4, 31, 24.4, 1, 1, 0, 1).translate(tcx, Y0 + 55.5, z(cy)));
-  for (let i = 0; i < 4; i++) {
-    for (let t = -11; t <= 11; t += 2.75) {
-      const [dx, dy] = [[t, -11.9], [t, 11.9], [-11.9, t], [11.9, t]][i];
-      add(stone, new THREE.BoxGeometry(1.3, 1.7, 1.3).translate(tcx + dx, Y0 + 71.8, z(cy + dy)));
-    }
-  }
-  for (const [dx, dy] of [[-12, -12], [12, -12], [-12, 12], [12, 12]]) add(stone, new THREE.ConeGeometry(1.3, 6.5, 6).translate(tcx + dx, Y0 + 74.2, z(cy + dy)));
-  // West towers (60 m) with crocketed pinnacles; the west front between them carries the great window.
-  for (const ty of [235, 262]) {
-    add(plainMat, uvBox(15, H, 14, 1.5, 1.4, 0, 1).translate(-78, Y0 + H / 2, z(ty)));
-    add(towerMat, uvBox(15.2, 29, 14.2, 1, 1, 0, 1).translate(-78, Y0 + H + 14.5, z(ty)));
-    for (const [dx, dy] of [[-7.2, -6.7], [7.2, -6.7], [-7.2, 6.7], [7.2, 6.7]]) {
-      add(stone, new THREE.BoxGeometry(1.5, 3, 1.5).translate(-78 + dx, Y0 + 61.5, z(ty + dy)));
-      add(stone, new THREE.ConeGeometry(1.15, 7.5, 6).translate(-78 + dx, Y0 + 66.7, z(ty + dy)));
-    }
-    for (const [dx, dy] of [[0, -6.7], [0, 6.7], [-7.2, 0], [7.2, 0]]) add(stone, new THREE.ConeGeometry(0.75, 4.5, 5).translate(-78 + dx, Y0 + 62.2, z(ty + dy)));
-    for (let t = -5; t <= 5; t += 2.5) for (const [dx, dy] of [[t, -6.9], [t, 6.9]]) add(stone, new THREE.BoxGeometry(1.1, 1.3, 0.8).translate(-78 + dx, Y0 + 60.6, z(ty + dy)));
-  }
-  add(stone, new THREE.BoxGeometry(13.4, H, 13.4).translate(-78.8, Y0 + H / 2, z(cy))); // nave end between the towers
-  const front = (x, face) => {
-    const geo = new THREE.PlaneGeometry(13.6, H).rotateY(face * Math.PI / 2).translate(x, Y0 + H / 2, z(cy));
-    const uv = geo.attributes.uv;
-    for (let i = 0; i < uv.count; i++) uv.setX(i, 0.28 + uv.getX(i) * 0.44); // the window and door, not the flanking niches
-    return geo;
-  };
-  add(frontMat, front(-85.6, -1));
-  // The great east window.
-  const east = new THREE.PlaneGeometry(vessel, H).rotateY(Math.PI / 2).translate(cx + len / 2 + 0.12, Y0 + H / 2, z(cy));
-  {
-    const uv = east.attributes.uv;
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, 0.26 + uv.getX(i) * 0.48, 0.34 + uv.getY(i) * 0.66);
-  }
-  add(frontMat, east);
-  // Buttresses with pinnacles along both aisles, and flying up to the clerestory.
-  for (let x = -66; x <= 72; x += 10) {
-    if (x > -26 && x < 12) continue;
-    for (const side of [-1, 1]) {
-      const y = cy + side * (wide / 2 + 1.1);
-      add(stone, new THREE.BoxGeometry(1.8, AISLE + 3, 2.6).translate(x + 0.2, Y0 + (AISLE + 3) / 2, z(y)));
-      add(stone, new THREE.ConeGeometry(0.85, 5, 5).translate(x + 0.2, Y0 + AISLE + 5.5, z(y)));
-      add(stone, new THREE.ConeGeometry(0.6, 4, 5).translate(x + 0.2, Y0 + H + 1.6, z(cy + side * (vessel / 2 + 0.3))));
-    }
-  }
-  // Chapter house: an octagon with a tall conical roof, north-east.
-  const ch = new THREE.CylinderGeometry(11, 11, 20, 8, 1, true);
-  {
-    const uv = ch.attributes.uv;
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 8, 0.36 + uv.getY(i) * 0.64);
-  }
-  add(bayMat, ch.translate(25.4, Y0 + 10, z(294.4)));
-  add(lead, new THREE.ConeGeometry(11.8, 15, 8).translate(25.4, Y0 + 27.5, z(294.4)));
-  for (let k = 0; k < 8; k++) {
-    const a = ((k + 0.5) / 8) * Math.PI * 2;
-    add(stone, new THREE.BoxGeometry(1.6, 21, 1.6).translate(25.4 + Math.sin(a) * 11.2, Y0 + 10.5, z(294.4) + Math.cos(a) * 11.2));
-    add(stone, new THREE.ConeGeometry(0.8, 4, 5).translate(25.4 + Math.sin(a) * 11.2, Y0 + 23, z(294.4) + Math.cos(a) * 11.2));
-  }
-  for (const [mat, list] of sets) {
-    if (!list.length) continue;
-    const mesh = new THREE.Mesh(C.mergeAll(list), mat);
-    mesh.castShadow = q.shadows;
-    mesh.receiveShadow = true;
-    g.add(mesh);
-  }
-  return g;
+  return L.minster(q, { y0: Y0 });
 }
 
+/** Clifford's Tower on its motte: built by landmarks.js. [buildings-pass] */
 function cliffordsTower(data, q) {
-  const lm = data.landmarks.cliffordsTower;
-  const g = new THREE.Group();
-  const grass = C.groundMaterial({ map: T.grassTexture(), color: '#dcecc0', roughness: 1 });
-  const stone = new THREE.MeshStandardMaterial({ map: T.stoneWallTexture({ tone: 'limestone' }), roughness: 0.9, side: THREE.DoubleSide });
-  // The motte: a steep grassy mound with a rounded shoulder.
-  const prof = [[0.01, 15], [15, 15], [17.5, 14.2], [34, 1.2], [38, 0]].map(([x, y]) => new THREE.Vector2(x, y));
-  const moundGeo = new THREE.LatheGeometry(prof, 40);
-  const muv = moundGeo.attributes.uv, mp = moundGeo.attributes.position;
-  for (let i = 0; i < muv.count; i++) muv.setXY(i, mp.getX(i) / 7, mp.getZ(i) / 7);
-  const mound = new THREE.Mesh(moundGeo, grass);
-  mound.receiveShadow = true;
-  g.add(mound);
-  // The quatrefoil keep: four overlapping round lobes, open to the sky.
-  const parts = [];
-  for (let i = 0; i < 4; i++) {
-    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
-    const lobe = new THREE.CylinderGeometry(6.9, 7.2, 11, 24, 1, true);
-    const uv = lobe.attributes.uv;
-    for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * 11, uv.getY(k) * 2.75);
-    parts.push(lobe.translate(Math.cos(a) * 5.2, 15 + 5.5, Math.sin(a) * 5.2));
-    for (let k = 0; k < 12; k++) {
-      const b = a + ((k - 5.5) / 12) * Math.PI * 1.35;
-      parts.push(new THREE.BoxGeometry(1.5, 0.9, 0.7).rotateY(-b + Math.PI / 2).translate(Math.cos(a) * 5.2 + Math.cos(b) * 6.9, 26.9, Math.sin(a) * 5.2 + Math.sin(b) * 6.9));
-    }
-  }
-  // Forebuilding and the long flight of steps up the mound.
-  parts.push(new THREE.BoxGeometry(5, 9, 4).translate(0, 19.5, 10.5));
-  const steps = new THREE.BoxGeometry(2.6, 0.5, 27).rotateX(0.61).translate(0, 7.2, 23.5);
-  parts.push(steps);
-  const keep = new THREE.Mesh(C.mergeAll(parts), stone);
-  keep.castShadow = q.shadows;
-  keep.receiveShadow = true;
-  g.add(keep);
-  g.position.set(lm.x, Y0 - 0.1, -lm.y);
-  return g;
+  return L.cliffordsTower(data.landmarks.cliffordsTower, q, { y0: Y0 });
 }

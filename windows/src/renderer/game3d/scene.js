@@ -6,6 +6,7 @@ import { RiderModel } from './rider.js';
 import { buildDales } from './dales.js';
 import { buildYork } from './york.js';
 import * as C from './common.js';
+import { CROWD_TIME, CROWD_CAMERA, setCrowdDetail } from './crowd.js';
 import * as T from './textures.js';
 import { POWERUPS } from '../../core/world/content.js';
 
@@ -14,6 +15,11 @@ export const QUALITY = {
   medium: { pixelRatio: 1, shadows: true, shadowSize: 2048, antialias: true, terrainStep: 12, treeDensity: 0.75, maxTrees: 2600, sceneryRadius: 450, far: 5000, fogNear: 220, fogFar: 2600, texDetail: 1 },
   high: { pixelRatio: 1.5, shadows: true, shadowSize: 4096, antialias: true, terrainStep: 10, treeDensity: 1, maxTrees: 4200, sceneryRadius: 600, far: 7000, fogNear: 300, fogFar: 3800, texDetail: 1 },
 };
+// Natural ground cover near the camera (groundcover.js): detail level (0 verge grass and boulders only, 1, 2) and
+// how far plants and boulders reach (metres).
+Object.assign(QUALITY.low, { cover: 0, coverRadius: 28, rockRadius: 90 });
+Object.assign(QUALITY.medium, { cover: 1, coverRadius: 45, rockRadius: 140 });
+Object.assign(QUALITY.high, { cover: 2, coverRadius: 65, rockRadius: 200 });
 
 /** Sun position and light colour for each time of day; weather tweaks haze and light. */
 const TIMES = {
@@ -74,16 +80,17 @@ export class WorldScene {
     this.envTarget = null;
   }
 
-  /** Builds a world. route from worlds.js; yorkData for York. Returns stats for diagnostics. */
-  setWorld(route, yorkData) {
+  /** Builds a world. route from worlds.js; data: the map data for that world. Returns stats for diagnostics. */
+  setWorld(route, data) {
     if (this.world) {
       this.scene.remove(this.world.group);
       disposeTree(this.world.group);
     }
     const t0 = performance.now();
     T.setDetail(this.q.texDetail ?? 1);
+    setCrowdDetail(this.qualityName);
     this.route = route;
-    this.world = route.world === 'york' ? buildYork(route, yorkData, this.q) : buildDales(route, this.q);
+    this.world = route.world === 'york' ? buildYork(route, data, this.q) : buildDales(route, data, this.q);
     this.scene.add(this.world.group);
     // Power-up tokens at the spots.
     for (const t of this.tokens) this.scene.remove(t);
@@ -135,6 +142,7 @@ export class WorldScene {
     const fogColour = new THREE.Color(overcast ? '#b1b8be' : t.fog);
     this.scene.fog = new THREE.Fog(fogColour, this.q.fogNear * (weather === 'rain' ? 0.5 : 1), this.q.fogFar * (weather === 'rain' ? 0.45 : overcast ? 0.7 : 1));
     this.scene.background = null;
+    this.world?.atmosphere?.(this); // per-world haze and draw distance (the Dales' distant fells)
     // Rain streaks near the camera.
     if (this.rain) {
       this.scene.remove(this.rain);
@@ -178,7 +186,7 @@ export class WorldScene {
           this.scene.remove(model.root);
           model.dispose();
         }
-        model = new RiderModel(r.kit, { ghost: r.isGhost, shadows: this.q.shadows, skin: skinFor(r.id) });
+        model = new RiderModel(r.kit, { ghost: r.isGhost, shadows: this.q.shadows, skin: skinFor(r.id), hair: hairFor(r.id), body: bodyFor(r) });
         model.kitKey = kitKey(r.kit);
         this.riders.set(r.id, model);
         this.scene.add(model.root);
@@ -191,6 +199,15 @@ export class WorldScene {
       model.root.rotation.set(Math.atan(g), -p.heading, 0, 'YXZ');
       model.setPose(r.crank, r.wheel, r.lean);
     }
+    // Full detail for the riders nearest the camera; the rest use the lighter body.
+    const cam = this.camera.position;
+    const near = [...this.riders.values()].filter((m) => m.root.visible)
+      .map((m) => [m, m.root.position.distanceToSquared(cam)])
+      .sort((a, b) => a[1] - b[1]);
+    // Low: the nearest two riders (your own among them) get the middle level at most.
+    const low = this.qualityName === 'low';
+    const limit = low ? 2 : this.qualityName === 'high' ? 10 : 6;
+    near.forEach(([m, d2], i) => m.setDetail(i < limit && d2 < 28 * 28, low ? Infinity : Math.sqrt(d2) * (this.qualityName === 'high' ? 0.7 : 1)));
     for (const [id, model] of this.riders) {
       if (!seen.has(id)) {
         this.scene.remove(model.root);
@@ -254,6 +271,9 @@ export class WorldScene {
     // Keep the camera above the ground (Dales slopes).
     const ground = this.world.heightAt(want.x, want.z);
     if (want.y < ground + 0.8) want.y = ground + 0.8;
+    // A camera cut: show and hide scenery chunks for the new view this frame (the crowd picks each person's
+    // level of detail from the camera, so stale chunk visibility would leave nearby people missing).
+    if (!this.camInit) this.cullTimer = 0;
     const k = this.camInit ? 1 - Math.exp(-dt * (mode === 'first' ? 30 : 6)) : 1;
     this.camPos.lerp(want, k);
     this.camLook.lerp(look, this.camInit ? 1 - Math.exp(-dt * 10) : 1);
@@ -287,7 +307,9 @@ export class WorldScene {
   /** Spins power-up tokens; hides the one the player just took until they come round again. */
   updateTokens(sim, dt) {
     this.time += dt;
-    this.world?.update?.(this.time);
+    CROWD_TIME.value = this.time;
+    CROWD_CAMERA.value.copy(this.camera.position);
+    this.world?.update?.(this.time, this.camera);
     const skyU = this.sky.material.uniforms;
     if (skyU.time) skyU.time.value = this.time;
     const lapPos = sim.route.wrap(sim.player.d);
@@ -366,6 +388,15 @@ function kitKey(kit) {
 const SKINS = ['#f1c7a5', '#e0ac8a', '#c68863', '#8d5a3b', '#f5d2b8', '#a86f4c'];
 function skinFor(id) {
   return SKINS[id % SKINS.length];
+}
+const HAIR = ['#3a2718', '#7a5632', '#c9a066', '#1d1a18', '#9a9a9a', '#5a3a22', '#a65e2e'];
+/** About a third of the other riders are women; your own rider (and your ghost) stays as it is. */
+function bodyFor(r) {
+  if (r.isPlayer || r.isGhost) return 'm';
+  return (r.id * 7 + 3) % 10 < 3 ? 'f' : 'm';
+}
+function hairFor(id) {
+  return HAIR[(id * 3 + 1) % HAIR.length];
 }
 
 function disposeTree(root) {

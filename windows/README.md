@@ -57,6 +57,15 @@ node scripts/build-york.mjs      # rebuilds src/renderer/game3d/data/york.json f
 
 York map data © OpenStreetMap contributors, available under the Open Database Licence (ODbL).
 
+Riders and spectators are MakeHuman 1.1 figures (CC0), shaped, posed, dressed and packed offline; the bikes,
+kit, helmets and glasses are drawn by the game's own code. Sources and licences:
+`src/renderer/game3d/people/LICENSE.md`. To rebuild them (the outputs are committed):
+
+```sh
+node scripts/people/build-people.mjs --mh <makehuman data dir>   # meshes: rider.bin, crowd.bin (see the script header)
+python3 scripts/people/textures.py <makehuman data dir>          # skins, hair, the spectators' atlas (needs Pillow)
+```
+
 ## Developing
 
 ```sh

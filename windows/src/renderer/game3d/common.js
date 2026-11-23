@@ -2,9 +2,14 @@
 // lamp posts and spectators. Everything repeated is instanced or merged, and split into square chunks so the
 // renderer can skip what is off screen and the scene can hide (or simplify) what is far away.
 import * as THREE from 'three';
+import { crowd } from './crowd.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as T from './textures.js';
+import { villageBuildings } from './buildings.js';
 import { rng, hash2 } from '../../core/world/noise.js';
+import { walls, hedges } from './boundaries.js';
+import { buildTrees } from './vegetation.js';
+import * as F from './furniture.js';
 
 /** A colour from a CSS string, in the renderer's linear working space (for vertex and instance colours). */
 export const colour = (c) => new THREE.Color(c);
@@ -301,180 +306,26 @@ export function arch(route, d, text, { width = 9, colour: bg = '#1d7f46', height
   return g;
 }
 
-/** A lumpy sphere: an icosahedron pushed in and out by smooth noise. */
-function lump(radius, detail, seed, amount = 0.22) {
-  const g = new THREE.IcosahedronGeometry(radius, detail);
-  const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-    const k = 1 + amount * (Math.sin(x * 2.1 / radius + seed) * Math.sin(y * 2.7 / radius + seed * 1.7) + Math.sin(z * 2.3 / radius + seed * 0.6) * 0.7);
-    p.setXYZ(i, x * k, y * k, z * k);
-  }
-  return g;
-}
-
-/** Tree geometry templates: trunks, a full canopy of several lumps and a cheap far stand-in, each for broadleaf and conifer. */
-export function treeTemplates() {
-  const r = rng(77);
-  // Broadleaf: a main dome with smaller lumps around and below it.
-  const centre = new THREE.Vector3(0, 5.4, 0);
-  const blobs = [lump(2.5, 1, 1).scale(1.05, 0.9, 1.05).translate(0, 6.0, 0)];
-  for (let i = 0; i < 4; i++) {
-    const a = (i / 4) * Math.PI * 2 + r() * 0.8;
-    const rad = 1.5 + r() * 0.6;
-    blobs.push(lump(rad, 1, 3 + i * 2.3).scale(1, 0.85, 1).translate(Math.cos(a) * 1.9, 4.5 + r() * 1.2, Math.sin(a) * 1.9));
-  }
-  const soften = (geo, c, low, high, yMin, yMax) => {
-    // Blend each lump's normals towards "outwards from the whole crown" so it lights as one soft mass, and
-    // darken the underside and the inside.
-    const g = geo.index ? geo.toNonIndexed() : geo;
-    const p = g.attributes.position, n = g.attributes.normal;
-    const col = new Float32Array(p.count * 3);
-    const v = new THREE.Vector3(), o = new THREE.Vector3();
-    for (let i = 0; i < p.count; i++) {
-      v.fromBufferAttribute(n, i);
-      o.fromBufferAttribute(p, i).sub(c);
-      const out = o.length();
-      o.normalize();
-      v.lerp(o, 0.6).normalize();
-      n.setXYZ(i, v.x, v.y, v.z);
-      const t = Math.min(1, Math.max(0, (p.getY(i) - yMin) / (yMax - yMin)));
-      const k = (low + (high - low) * t) * (0.8 + 0.2 * Math.min(1, out / 2.6));
-      col[i * 3] = k * (0.92 + 0.08 * t);
-      col[i * 3 + 1] = k;
-      col[i * 3 + 2] = k * (0.8 + 0.1 * (1 - t));
-    }
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    return g;
-  };
-  const canopy = soften(mergeAll(blobs, { uv: true }), centre, 0.5, 1.12, 3.0, 8.2);
-  const farTrunk = new THREE.CylinderGeometry(0.22, 0.34, 3.6, 4, 1, true).translate(0, 1.8, 0);
-  const canopyFar = soften(mergeAll([lump(2.9, 0, 1).scale(1.15, 0.95, 1.15).translate(0, 5.6, 0)], { uv: true }), centre, 0.6, 1.05, 3.0, 8.2);
-  const withTrunk = (crown) => {
-    // The stand-in keeps a stub of trunk (tinted by the crown's colour, so drawn warm to come out brown).
-    const t = tint(farTrunk.clone(), new THREE.Color(1.5, 0.7, 0.9));
-    return mergeAll([crown, t], { colour: true });
-  };
-  // Trunk with two boughs reaching into the crown.
-  const trunk = mergeAll([
-    new THREE.CylinderGeometry(0.2, 0.36, 3.6, 7).translate(0, 1.8, 0),
-    new THREE.CylinderGeometry(0.09, 0.17, 2.6, 5).rotateZ(0.6).translate(-0.75, 4.2, 0),
-    new THREE.CylinderGeometry(0.09, 0.17, 2.4, 5).rotateZ(-0.5).rotateY(0.9).translate(0.55, 4.3, 0.3),
-  ]);
-  shadeY(trunk, 0.75, 1.05);
-  // Conifer: stacked drooping cones.
-  const cones = [];
-  for (let i = 0; i < 4; i++) cones.push(new THREE.ConeGeometry(2.3 - i * 0.5, 3.0, 9, 1, true).translate(0, 2.6 + i * 1.75, 0));
-  const conifer = soften(mergeAll(cones, { uv: true }), new THREE.Vector3(0, 5, 0), 0.5, 1.1, 1.2, 9.4);
-  const coniferFar = soften(mergeAll([new THREE.ConeGeometry(2.3, 8.2, 6, 1, true).translate(0, 5.2, 0)], { uv: true }), new THREE.Vector3(0, 5, 0), 0.55, 1.05, 1.2, 9.4);
-  return { trunk, canopy, canopyFar: withTrunk(canopyFar), conifer, coniferFar: withTrunk(coniferFar) };
+/**
+ * Instanced trees at the given placements [{x, y, z, s (scale), kind: 'broad'|'conifer', species?, hue, sx,
+ * sy, rot}]: real species (oak, ash, sycamore, hawthorn, birch, lime, Scots pine, spruce), each drawn in full
+ * near the camera, lighter further off and as a camera-facing impostor beyond (see vegetation.js). opts:
+ * {shadows, maxDistance, q (the quality preset), setting: 'dales'|'town'}; `lod` is still accepted but the
+ * detail ranges now follow the quality preset.
+ */
+export function trees(placements, opts = {}) {
+  return buildTrees(placements, opts);
 }
 
 /**
- * Instanced trees at the given placements [{x, y, z, s (scale), kind: 'broad'|'conifer', hue, sx, sy, rot}],
- * in chunks: full crowns close by, a single low-poly lump each beyond `lod` metres.
+ * Field boundaries that follow the ground: segments [{x1,z1,x2,z2,y1,y2}] (joined into lines where they meet).
+ * kind 'wall': a dry-stone wall (pale limestone; opts.tone 'gritstone' for brown gritstone), battered from a
+ * 0.85 m foot to 0.5 m under upright coping stones, with throughstones, stiles, wall heads and gates in the
+ * gateways (see boundaries.js). kind 'hedge': a flailed hawthorn hedge about 1.7 m high whose height and width
+ * wander, with a ragged leafy outline. opts: {shadows, maxDistance, chunk, q (quality preset)}.
  */
-export function trees(placements, { shadows = true, maxDistance = 1800, lod = 240 } = {}) {
-  const group = new THREE.Group();
-  const t = treeTemplates();
-  const trunkMat = new THREE.MeshStandardMaterial({ map: T.barkTexture(), vertexColors: true, roughness: 0.95 });
-  const broadMat = new THREE.MeshStandardMaterial({ map: T.leafTexture('oak'), vertexColors: true, roughness: 0.92 });
-  const conMat = new THREE.MeshStandardMaterial({ map: T.leafTexture('conifer'), vertexColors: true, roughness: 0.92 });
-  const q = new THREE.Quaternion(), e = new THREE.Euler();
-  const items = placements.map((p) => {
-    e.set(0, p.rot ?? 0, 0);
-    q.setFromEuler(e);
-    const m = M4().compose(new THREE.Vector3(p.x, p.y - 0.25, p.z), q, new THREE.Vector3(p.s * (p.sx ?? 1), p.s * (p.sy ?? 1), p.s * (p.sx ?? 1)));
-    const c = new THREE.Color();
-    const h = p.hue ?? 0;
-    if (p.kind === 'conifer') c.setHSL(0.36 + h * 0.04, 0.4, 0.14 + h * 0.03);
-    else c.setHSL(0.27 + h * 0.06, 0.5 + h * 0.1, 0.235 + h * 0.05);
-    return { matrix: m, colour: c, kind: p.kind };
-  });
-  const broad = items.filter((i) => i.kind !== 'conifer'), con = items.filter((i) => i.kind === 'conifer');
-  const chunk = 160;
-  group.add(chunked(t.trunk, trunkMat, items.map((i) => ({ matrix: i.matrix })), { chunk, shadows, maxDistance: lod }));
-  group.add(chunked(t.canopy, broadMat, broad, { chunk, shadows, maxDistance: lod }));
-  group.add(chunked(t.conifer, conMat, con, { chunk, shadows, maxDistance: lod }));
-  group.add(chunked(t.canopyFar, broadMat, broad, { chunk, shadows: false, minDistance: lod * 0.82, maxDistance }));
-  group.add(chunked(t.coniferFar, conMat, con, { chunk, shadows: false, minDistance: lod * 0.82, maxDistance }));
-  return group;
-}
-
-/**
- * Field boundaries as continuous extruded strips that follow the ground: segments [{x1,z1,x2,z2,y1,y2}].
- * kind 'wall': a dry-stone wall 1.25 m high, 0.6 m at the foot tapering to 0.34 m under its coping stones.
- * kind 'hedge': a clipped but shaggy hawthorn hedge about 1.6 m high whose height and width wander.
- * Merged into one mesh per chunk.
- */
-export function linear(segments, kind, { shadows = true, maxDistance = 700, chunk = 200 } = {}) {
-  const cells = new Map();
-  const wall = kind === 'wall';
-  const cellFor = (x, z) => {
-    const key = `${Math.floor(x / chunk)},${Math.floor(z / chunk)}`;
-    let c = cells.get(key);
-    if (!c) cells.set(key, (c = { pos: [], nrm: [], uv: [], col: [], idx: [] }));
-    return c;
-  };
-  // Cross-sections as [offset, height, normalX (across), normalY, v, shade].
-  const wallProfile = [[-0.3, -0.2, -1, 0.12, 0, 0.8], [-0.17, 1.25, -1, 0.12, 1, 1], [-0.17, 1.25, 0, 1, 0.9, 1.05], [0.17, 1.25, 0, 1, 0.97, 1.05], [0.17, 1.25, 1, 0.12, 1, 1], [0.3, -0.2, 1, 0.12, 0, 0.8]];
-  const hedgeProfile = [[-0.62, -0.2, -1, 0.05, 0, 0.5], [-0.72, 0.75, -1, 0.25, 0.3, 0.8], [-0.42, 1.5, -0.6, 0.8, 0.55, 1.05], [0.42, 1.5, 0.6, 0.8, 0.8, 1.1], [0.72, 0.75, 1, 0.25, 1.05, 0.85], [0.62, -0.2, 1, 0.05, 1.35, 0.5]];
-  const profile = wall ? wallProfile : hedgeProfile;
-  const green = colour('#648f47');
-  for (const sg of segments) {
-    const dx = sg.x2 - sg.x1, dz = sg.z2 - sg.z1;
-    const len = Math.hypot(dx, dz);
-    if (len < 0.05) continue;
-    const ax = -dz / len, az = dx / len; // across
-    const c = cellFor((sg.x1 + sg.x2) / 2, (sg.z1 + sg.z2) / 2);
-    const base = c.pos.length / 3;
-    // U runs along the wall from a position hash so neighbouring segments line up closely enough.
-    const u0 = (sg.x1 * 0.37 + sg.z1 * 0.61) / (wall ? 2.6 : 2.5), u1 = u0 + len / (wall ? 2.6 : 2.5);
-    const ends = [[sg.x1, sg.y1, sg.z1, u0], [sg.x2, sg.y2, sg.z2, u1]];
-    for (let e = 0; e < 2; e++) {
-      const [x, y, z, u] = ends[e];
-      // Hedges wander in height and width; the wobble depends only on the point, so segment ends meet.
-      const hs = wall ? 1 : 0.85 + 0.45 * hash2(Math.round(x * 3), Math.round(z * 3), 31);
-      const ws = wall ? 1 : 0.85 + 0.4 * hash2(Math.round(z * 3), Math.round(x * 3), 32);
-      const tone = wall ? 1 : 0.85 + 0.3 * hash2(Math.round(x), Math.round(z), 33);
-      for (const [o, h, nx, ny, v, sh] of profile) {
-        c.pos.push(x + ax * o * ws, y + h * (h > 0 ? hs : 1), z + az * o * ws);
-        const l = Math.hypot(nx, ny);
-        c.nrm.push((ax * nx) / l, ny / l, (az * nx) / l);
-        c.uv.push(u, v);
-        if (wall) c.col.push(sh, sh, sh);
-        else c.col.push(green.r * sh * tone, green.g * sh * tone, green.b * sh * (2 - tone));
-      }
-    }
-    const n = profile.length;
-    for (let j = 0; j < n - 1; j++) {
-      if (wall && j % 2 === 1) continue; // the wall profile lists each face's two edges separately
-      const a = base + j, b = base + j + 1, a2 = base + n + j, b2 = base + n + j + 1;
-      c.idx.push(a, b, a2, b, b2, a2);
-    }
-  }
-  const mat = wall
-    ? new THREE.MeshStandardMaterial({ map: T.stoneWallTexture(), vertexColors: true, roughness: 0.95, side: THREE.DoubleSide })
-    : new THREE.MeshStandardMaterial({ map: T.leafTexture('oak'), vertexColors: true, roughness: 0.95, side: THREE.DoubleSide });
-  const group = new THREE.Group();
-  for (const c of cells.values()) {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(c.pos, 3));
-    g.setAttribute('normal', new THREE.Float32BufferAttribute(c.nrm, 3));
-    g.setAttribute('uv', new THREE.Float32BufferAttribute(c.uv, 2));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(c.col, 3));
-    g.setIndex(c.idx);
-    g.computeBoundingSphere();
-    const mesh = new THREE.Mesh(g, mat);
-    mesh.castShadow = shadows;
-    mesh.receiveShadow = true;
-    mesh.userData.centre = g.boundingSphere.center.clone();
-    mesh.userData.radius = g.boundingSphere.radius;
-    mesh.userData.maxDistance = maxDistance;
-    mesh.userData.minDistance = 0;
-    group.add(mesh);
-  }
-  return group;
+export function linear(segments, kind, opts = {}) {
+  return kind === 'wall' ? walls(segments, opts) : hedges(segments, opts);
 }
 
 /**
@@ -600,121 +451,35 @@ export function chimney(x, y, z, rot, stackTint = '#ffffff') {
 }
 
 /**
- * A row of village buildings. items: [{x, y, z, rot, w (frontage along the street), d (depth), h, kind
- * (facade kind), roof: 'slate'|'pantile'|'stone', tint?, hip?, chimney?}]. The ridge runs along the street.
- * Returns a group of merged meshes (walls per facade kind, roofs per roof kind, gables and chimneys).
+ * Village buildings and field barns. items: [{x, y, z, rot, w (frontage along the street), d (depth), h, kind
+ * ('cottage'|'render'|'barn'), roof: 'slate'|'pantile'|'stone', tint?, chimney?, storey?, footprint? (the true
+ * outline, flat world [x, z, ...])}]. Built by buildings.js (real openings, stone surrounds, quoins, coped gables,
+ * gable stacks, stone-slate roofs); returns a Group of chunked meshes.
  */
-export function buildings(items, { shadows = true, gableTexture = null } = {}) {
-  const byWall = new Map(), byRoof = new Map(), plain = [];
-  for (const b of items) {
-    const ax = -Math.sin(b.rot), az = -Math.cos(b.rot), bx = -az, bz = ax;
-    const la = b.w / 2, lb = b.d / 2;
-    const ring = [];
-    for (const [u, v] of [[-la, -lb], [la, -lb], [la, lb], [-la, lb]]) ring.push(b.x + ax * u + bx * v, b.z + az * u + bz * v);
-    const walls = facadeRing(ring, b.y - 0.6, b.h + 0.6, b.tint ?? '#ffffff', { storey: b.storey ?? 2.8 });
-    (byWall.get(b.kind) ?? byWall.set(b.kind, []).get(b.kind)).push(walls);
-    const rh = Math.min(3.4, b.d * 0.4);
-    const { slopes, gables } = roofPrism({ cx: b.x, cz: b.z, ax, az, la, lb, y: b.y + b.h, rh, hip: !!b.hip, gableTint: b.gableTint ?? '#ffffff' });
-    (byRoof.get(b.roof) ?? byRoof.set(b.roof, []).get(b.roof)).push(slopes);
-    if (gables) plain.push(gables);
-    if (b.chimney !== false) {
-      const off = la - 0.5;
-      for (const s of b.w > 8 ? [-1, 1] : [1]) plain.push(chimney(b.x + ax * off * s, b.y + b.h + rh + 0.35, b.z + az * off * s, Math.atan2(-bz, bx), b.gableTint ?? '#ffffff'));
-    }
-  }
-  const group = new THREE.Group();
-  for (const [kind, list] of byWall) {
-    const mesh = new THREE.Mesh(mergeAll(list, { colour: true }), new THREE.MeshStandardMaterial({ map: T.facadeTexture(kind), vertexColors: true, roughness: 0.92 }));
-    mesh.castShadow = shadows;
-    mesh.receiveShadow = true;
-    group.add(mesh);
-  }
-  for (const [kind, list] of byRoof) {
-    const mesh = new THREE.Mesh(mergeAll(list), new THREE.MeshStandardMaterial({ map: T.roofTexture(kind), roughness: 0.85, side: THREE.DoubleSide }));
-    mesh.castShadow = shadows;
-    mesh.receiveShadow = true;
-    group.add(mesh);
-  }
-  if (plain.length) {
-    const mesh = new THREE.Mesh(mergeAll(plain, { colour: true }), new THREE.MeshStandardMaterial({ map: gableTexture ?? T.stoneWallTexture({ tone: 'rubble' }), vertexColors: true, roughness: 0.92, side: THREE.DoubleSide }));
-    mesh.castShadow = shadows;
-    mesh.receiveShadow = true;
-    group.add(mesh);
-  }
-  return group;
+export function buildings(items, { shadows = true } = {}) {
+  return villageBuildings(items, { shadows }).group;
 }
 
-/** Lamp posts: Victorian cast-iron columns with a glazed lantern, instanced in chunks. */
-export function lampPosts(points, { shadows = false } = {}) {
-  const iron = '#1f2426';
-  const geo = mergeAll([
-    tint(new THREE.CylinderGeometry(0.11, 0.15, 0.9, 8).translate(0, 0.45, 0), iron), // fluted base
-    tint(new THREE.CylinderGeometry(0.15, 0.15, 0.08, 8).translate(0, 0.94, 0), iron),
-    tint(new THREE.CylinderGeometry(0.045, 0.07, 3.0, 8).translate(0, 2.4, 0), iron),
-    tint(new THREE.CylinderGeometry(0.02, 0.02, 0.6, 5).rotateZ(Math.PI / 2).translate(0, 3.55, 0), iron), // ladder bar
-    tint(new THREE.CylinderGeometry(0.09, 0.05, 0.14, 8).translate(0, 3.95, 0), iron),
-    tint(new THREE.CylinderGeometry(0.2, 0.13, 0.42, 6).translate(0, 4.23, 0), '#f3e6b8'), // lantern glass
-    tint(new THREE.ConeGeometry(0.27, 0.24, 6).translate(0, 4.56, 0), iron),
-    tint(new THREE.SphereGeometry(0.045, 6, 5).translate(0, 4.71, 0), iron),
-  ], { colour: true, uv: false });
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.3 });
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-  const items = points.map((p) => {
-    q.setFromAxisAngle(up, p.rot);
-    return { matrix: m.clone().compose(new THREE.Vector3(p.x, p.y, p.z), q, new THREE.Vector3(1, 1, 1)) };
-  });
-  return chunked(geo, mat, items, { chunk: 300, shadows, maxDistance: 420 });
+/**
+ * Lamp posts: York's black heritage columns (fluted base, collars, ladder bar, glazed lantern with a finial),
+ * instanced in chunks (see furniture.js). points: [{x, y, z, rot}].
+ */
+export function lampPosts(points, opts = {}) {
+  return F.lampPosts(points, opts);
 }
 
-/** Standing spectators: people with heads, hair, arms and legs, in varied clothes (instanced in chunks). */
-export function spectators(points) {
-  const coatCols = ['#24479c', '#b33a3a', '#34704a', '#e0ac1a', '#6a7076', '#ece6d4', '#7a4a8e', '#127c90', '#cf6a12', '#32485a', '#d65f8c', '#8a5a34'];
-  const variants = [];
-  const r = rng(99);
-  const limb = (r0, r1, len) => new THREE.CylinderGeometry(r0, r1, len, 7);
-  for (let v = 0; v < 8; v++) {
-    const coat = coatCols[(v * 5 + 1) % coatCols.length];
-    const legs = ['#26324a', '#33343a', '#5a4e44', '#46597a'][v % 4];
-    const skin = ['#f1c7a5', '#e0ac8a', '#c68863', '#8d5a3b'][v % 4];
-    const hair = ['#3a2718', '#7a5632', '#d2ae6a', '#222222', '#a7a7a7'][v % 5];
-    const cheer = v % 3 === 1, wave = v % 3 === 2;
-    // Torso: a lathed coat, fuller at the shoulders and flared at the hem.
-    const torso = new THREE.LatheGeometry([[0.001, 0.82], [0.17, 0.84], [0.185, 0.95], [0.165, 1.15], [0.2, 1.36], [0.19, 1.45], [0.1, 1.52], [0.001, 1.53]].map(([x, y]) => new THREE.Vector2(x, y)), 10);
-    torso.scale(1.12, 1, 0.72);
-    const arm = (side, raise) => {
-      const g = mergeAll([limb(0.058, 0.05, 0.6).translate(0, -0.3, 0), tint(new THREE.SphereGeometry(0.055, 6, 5).translate(0, -0.63, 0), skin)].map((x, i) => (i === 0 ? tint(x, coat) : x)), { colour: true, uv: false });
-      g.rotateZ(side * raise);
-      g.translate(side * 0.235, 1.42, 0);
-      return g;
-    };
-    const parts = [
-      tint(limb(0.085, 0.065, 0.84).translate(-0.095, 0.44, 0), legs),
-      tint(limb(0.085, 0.065, 0.84).translate(0.095, 0.44, 0), legs),
-      tint(new THREE.SphereGeometry(0.085, 7, 5).scale(1, 0.55, 1.75).translate(-0.095, 0.045, -0.05), '#1c1c1e'),
-      tint(new THREE.SphereGeometry(0.085, 7, 5).scale(1, 0.55, 1.75).translate(0.095, 0.045, -0.05), '#1c1c1e'),
-      shadeY(torso, 0.8, 1.05, coat),
-      arm(-1, cheer ? 2.7 : 0.14),
-      arm(1, cheer || wave ? 2.5 : 0.14),
-      tint(limb(0.05, 0.06, 0.1).translate(0, 1.56, 0), skin),
-      tint(new THREE.SphereGeometry(0.118, 10, 8).scale(0.92, 1.08, 1).translate(0, 1.71, 0), skin),
-      tint(new THREE.SphereGeometry(0.126, 10, 7, 0, Math.PI * 2, 0, Math.PI * 0.55).scale(0.95, 1, 1.03).translate(0, 1.73, 0.012), hair),
-    ];
-    if (v % 4 === 3) parts.push(tint(new THREE.CylinderGeometry(0.2, 0.2, 0.02, 10).translate(0, 1.79, -0.03), coat), tint(new THREE.CylinderGeometry(0.115, 0.125, 0.1, 10).translate(0, 1.84, 0), coat)); // a hat
-    variants.push(mergeAll(parts, { colour: true, uv: false }));
-  }
-  const group = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 });
-  const buckets = variants.map(() => []);
-  const q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-  points.forEach((p) => {
-    q.setFromAxisAngle(up, p.rot + Math.PI);
-    const s = 0.9 + r() * 0.18;
-    buckets[Math.floor(r() * variants.length)].push({ matrix: M4().compose(new THREE.Vector3(p.x, p.y, p.z), q, new THREE.Vector3(s, s, s)) });
-  });
-  buckets.forEach((list, k) => {
-    if (list.length) group.add(chunked(variants[k], mat, list, { chunk: 400, shadows: true, maxDistance: 260 }));
-  });
-  return group;
+/**
+ * Street and lane furniture along the route (furniture.js): bins, benches, bollards, railings and 30 mph signs
+ * in York; bend and steep-hill warnings, the national speed limit, passing places and a telegraph line in the
+ * Dales. opts: {world, roadHalf, ground(x, z, d) → y, avoid(d) → bool, q}.
+ */
+export function roadside(route, opts) {
+  return F.roadside(route, opts);
+}
+
+/** Standing spectators along the road: smooth, individually coloured people who cheer and wave (crowd.js). */
+export function spectators(points, opts) {
+  return crowd(points, opts);
 }
 
 /** A floating, spinning power-up token with a glow ring; `icon` is an emoji drawn on a sprite. */

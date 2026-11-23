@@ -1,72 +1,106 @@
-// The courses: the Yorkshire Dales loop (procedural countryside) and York (built from OpenStreetMap data).
+// The courses: Malham in the Yorkshire Dales and York, both built from OpenStreetMap and open terrain data.
 // Each course has segments (speed zones, climbs, the lap), checkpoints for live PR deltas, power-up spots
 // and landmarks for on-screen banners.
 import { Route } from './route.js';
-import { fbm } from './noise.js';
 import { riderParams, stepSpeed, steadySpeed } from './physics.js';
+import { HeightGrid } from './heightgrid.js';
 
-// ---- Yorkshire Dales -------------------------------------------------------------------------------
+// ---- Yorkshire Dales: Malham ---------------------------------------------------------------------
+//
+// A real loop from Malham village (data from scripts/build-dales.mjs: OpenStreetMap roads and features, road
+// heights from the Mapzen/AWS terrain tiles): up Cove Road past Malham Cove, across the limestone plateau on
+// Henside Road below Malham Tarn, along the lane to Street Gate, then down Malham Rakes back into the village.
 
-const DALES_SEED = 1873;
-
-/** The Dales loop centreline: a star-shaped closed curve (never crosses itself) with bends. */
-function dalesPoints() {
-  const pts = [];
-  const N = 720;
-  for (let i = 0; i < N; i++) {
-    const t = (i / N) * Math.PI * 2;
-    const r = 1250 * (1 + 0.22 * Math.sin(2 * t + 0.6) + 0.12 * Math.sin(3 * t + 2.1) + 0.05 * Math.sin(7 * t + 0.3) + 0.022 * Math.sin(13 * t + 1.7));
-    pts.push(Math.sin(t) * r, -Math.cos(t) * r);
-  }
-  return pts;
+/** The first named feature in the data matching `re` (optionally of the given kinds), or null. */
+function feature(data, re, kinds = null) {
+  return (data.names ?? []).find((n) => re.test(n.n) && (!kinds || kinds.includes(n.k))) ?? null;
 }
 
-/**
- * Road height along the Dales loop (metres): the village by the river at the start, a long drag up the fell
- * to a summit at ~3.4 km, a fast descent, rolling moor and a short sharp climb before dropping back home.
- */
-export function dalesProfile(d, L) {
-  const f = d / L;
-  const bump = (centre, width, height) => {
-    const x = (f - centre) / width;
-    return Math.abs(x) >= 1 ? 0 : height * (0.5 + 0.5 * Math.cos(Math.PI * x));
+export function makeDales(data) {
+  if (!data?.route) throw new Error('makeDales needs the Malham map data (src/renderer/game3d/data/dales.json)');
+  const points = yorkWorldPoints(data.route.points);
+  // Road height: the elevation profile from the build (one value per point, decimetres), by distance.
+  const cum = [0];
+  for (let i = 2; i < points.length; i += 2) cum.push(cum[cum.length - 1] + Math.hypot(points[i] - points[i - 2], points[i + 1] - points[i - 1]));
+  const elev = data.route.elev;
+  const elevation = (d) => {
+    let lo = 0, hi = cum.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (cum[mid] <= d) lo = mid;
+      else hi = mid;
+    }
+    const f = cum[hi] > cum[lo] ? Math.min(1, Math.max(0, (d - cum[lo]) / (cum[hi] - cum[lo]))) : 0;
+    return (elev[lo] + (elev[hi] - elev[lo]) * f) / 10;
   };
-  return 140
-    + bump(0.37, 0.24, 115) // the fell climb and descent
-    + bump(0.66, 0.06, 28) // rolling moor
-    + bump(0.78, 0.05, 22)
-    + bump(0.895, 0.05, 20) // short sharp climb
-    + 6 * (fbm(f * 40, 3.3, 3, DALES_SEED) - 0.5);
-}
+  const route = new Route({ id: 'dales', name: 'Malham Cove and Tarn', points, elevation, step: 2 });
+  route.version = `malham-${Math.round(route.length)}`;
+  const L = route.length;
+  const street = (name) => (data.route.streets ?? []).find((s) => s.n === name);
+  const cove = street('Cove Road') ?? { from: 0, to: 0.4 * L };
+  const rakes = street('Malham Rakes') ?? { from: 0.66 * L, to: 0.97 * L };
+  const henside = street('Henside Road') ?? { from: 0.42 * L, to: 0.56 * L };
 
-export function makeDales() {
-  const points = dalesPoints();
-  let L = 0;
-  for (let i = 0; i < points.length; i += 2) {
-    const j = (i + 2) % points.length;
-    L += Math.hypot(points[j] - points[i], points[j + 1] - points[i + 1]);
+  // The climb: from the last low point at the foot of Cove Road to the summit of the loop.
+  let top = cove.from, topY = -Infinity;
+  for (let d = cove.from; d <= cove.to + 400; d += 4) if (route.elevation(d) > topY) [top, topY] = [d, route.elevation(d)];
+  let foot = cove.from, footY = Infinity;
+  for (let d = cove.from; d < top - 600; d += 4) if (route.elevation(d) <= footY) [foot, footY] = [d, route.elevation(d)];
+  const climbLen = top - foot, climbGain = topY - footY;
+  // The KOM is the steep heart of it, past the Cove: the 1.6 km with the most height gained.
+  let komFrom = foot, best = -Infinity;
+  for (let d = foot; d + 1600 <= top; d += 10) {
+    const gain = route.elevation(d + 1600) - route.elevation(d);
+    if (gain > best) [best, komFrom] = [gain, d];
   }
-  const route = new Route({ id: 'dales', name: 'Dales Loop', points, elevation: (d) => dalesProfile(d, L), step: 2 });
-  L = route.length;
+  const komTo = komFrom + 1600;
+
+  // Where a named feature is nearest the road, and on which side.
+  const near = (f) => {
+    if (!f) return null;
+    const n = route.nearest(f.x, -f.y);
+    const p = route.position(n.along);
+    const side = (f.x - p.x) * Math.cos(p.heading) + (-f.y - p.z) * Math.sin(p.heading) > 0 ? 'right' : 'left';
+    return { at: n.along, side, distance: n.distance };
+  };
+  const cliff = near(feature(data, /^Malham Cove$/, ['cliff']));
+  const tarn = near(feature(data, /^Malham Tarn$/, ['water']));
+  const gordale = near(feature(data, /^Gordale Scar$/, ['attraction', 'viewpoint', 'information']));
+  const sinks = near(feature(data, /^Water Sinks$/, ['parking']));
+  const streetGate = near(feature(data, /^Street Gate$/, ['locality']));
+  const landmarks = [
+    { at: 0, name: 'Malham', text: 'Malham: the Buck Inn, the beck and the green' },
+    { at: komFrom, name: 'Cove Road', text: `Cove Road climb: ${((komTo - komFrom) / 1000).toFixed(1)} km at ${Math.round(best / 16)}%, ${(climbLen / 1000).toFixed(1)} km to the top` },
+    cliff && { at: Math.max(foot + 60, cliff.at), name: 'Malham Cove', text: `Malham Cove, the great limestone cliff, on your ${cliff.side}` },
+    { at: top, name: 'Top of Cove Road', text: `Top of Cove Road, ${Math.round(topY)} m` },
+    sinks && { at: sinks.at, name: 'Water Sinks', text: 'Water Sinks, where the stream from the tarn drops underground' },
+    tarn && { at: tarn.at, name: 'Malham Tarn', text: `Malham Tarn up on the moor to your ${tarn.side}` },
+    streetGate && { at: streetGate.at, name: 'Street Gate', text: 'Street Gate, on the old Mastiles Lane drove road' },
+    { at: rakes.from + 160, name: 'Malham Rakes', text: 'Down Malham Rakes: steep, take care' },
+    gordale && { at: gordale.at, name: 'Gordale Scar', text: `Gordale Scar's gorge away to your ${gordale.side}` },
+    { at: L - 60, name: 'New Bridge', text: 'Over Malham Beck into the village' },
+  ].filter(Boolean).sort((a, b) => a.at - b.at);
+
+  // Speed trap on the flattest 400 m of the plateau.
+  let trap = henside.from + 100, flattest = Infinity;
+  for (let d = henside.from + 50; d < Math.max(henside.from + 60, rakes.from - 450); d += 20) {
+    let s = 0;
+    for (let k = 0; k < 400; k += 20) s += Math.abs(route.gradient(d + k));
+    if (s < flattest) [flattest, trap] = [s, d];
+  }
   return withCourse(route, {
     world: 'dales',
     title: 'Yorkshire Dales',
-    blurb: 'Stone walls, sheep and a proper climb up the fell.',
-    village: { from: L - 260, to: 420, name: 'Thornby' },
-    river: { at: 0.03 * L, name: 'River Thorn' },
-    landmarks: [
-      { at: 0, name: 'Thornby village green', text: 'Welcome to Thornby' },
-      { at: 0.03 * L, name: 'Thorn Bridge', text: 'Over the old packhorse bridge' },
-      { at: 0.2 * L, name: 'Foot of the fell', text: 'The climb starts here: 3 km to the top' },
-      { at: 0.37 * L, name: 'Fell Top', text: 'Fell Top — what a view!' },
-      { at: 0.66 * L, name: 'High Moor', text: 'Out on the moor' },
-      { at: 0.855 * L, name: 'Kirk Bank', text: 'Kirk Bank: short and steep' },
-    ],
+    blurb: `Malham: up Cove Road past the Cove, over the moor by Malham Tarn and down Malham Rakes. ${(L / 1000).toFixed(1)} km, ${Math.round(route.climb)} m of climbing.`,
+    attribution: data.attribution,
+    village: { from: L - 320, to: 140, name: 'Malham' },
+    landmarks,
+    streets: data.route.streets ?? [],
+    climb: { foot, top, gain: climbGain },
     segments: [
-      { id: 'fell', name: 'Fell Climb', kind: 'kom', from: 0.2 * L, to: 0.37 * L },
-      { id: 'kirk', name: 'Kirk Bank', kind: 'kom', from: 0.855 * L, to: 0.895 * L },
-      { id: 'valley-sprint', name: 'Valley Speed Trap', kind: 'zone', from: 0.055 * L, to: 0.055 * L + 400 },
-      { id: 'village-sprint', name: 'Village Sprint', kind: 'zone', from: 0.94 * L, to: 0.94 * L + 300 },
+      { id: 'village-sprint', name: 'Malham Village Sprint', kind: 'zone', from: 20, to: Math.min(340, komFrom - 40) },
+      { id: 'cove', name: 'Cove Road', kind: 'kom', from: komFrom, to: komTo },
+      { id: 'moor-trap', name: 'Malham Moor Speed Trap', kind: 'zone', from: trap, to: trap + 400 },
     ],
   });
 }
@@ -85,10 +119,14 @@ export function yorkWorldPoints(flat) {
 
 export function makeYork(data) {
   const points = yorkWorldPoints(data.route.points);
-  // Bridges over the Ouse get a gentle hump; the rest of York is flat (about 12 m above sea level).
+  // York's real relief (from LIDAR, see scripts/build-york-terrain.mjs): street level by the Ouse is the
+  // game's 12 m and the ground rises gently away from the river (the Minster stands ~6 m higher). Bridges over
+  // the Ouse get a gentle hump.
+  const relief = data.relief ? new HeightGrid(data.relief) : null;
+  const base = (x, z) => 12 + (relief ? relief.at(x, -z) : 0);
   const bridges = ['lendalBridge', 'skeldergateBridge'].map((k) => data.landmarks?.[k]).filter(Boolean).map((b) => ({ x: b.x, z: -b.y }));
   const elevation = (_d, x, z) => {
-    let h = 12;
+    let h = base(x, z);
     for (const b of bridges) {
       const r = Math.hypot(x - b.x, z - b.z);
       if (r < 70) h += 3.2 * (0.5 + 0.5 * Math.cos((Math.PI * r) / 70));
@@ -111,6 +149,7 @@ export function makeYork(data) {
     blurb: "Real streets: the city walls, the Minster, the Ouse bridges and Clifford's Tower.",
     landmarks: marks.sort((a, b) => a.at - b.at),
     streets: data.route.streets ?? [],
+    baseElevation: base,
     segments: [
       { id: 'walls-sprint', name: 'City Walls Sprint', kind: 'zone', from: 0.12 * L, to: 0.12 * L + 400 },
       { id: 'ouse-sprint', name: 'Ouse Speed Trap', kind: 'zone', from: 0.45 * L, to: 0.45 * L + 350 },

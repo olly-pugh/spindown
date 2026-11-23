@@ -50,7 +50,8 @@ export function stepSpeed(v, power, gradient, dt, p, draft = 0) {
   const h = dt / steps;
   const mEff = p.mass + WHEEL_INERTIA_MASS;
   for (let i = 0; i < steps; i++) {
-    const drive = (Math.max(0, power) * DRIVETRAIN_EFFICIENCY * (p.powerFactor ?? 1)) / Math.max(v, 1.0);
+    // Force is power over speed, held finite near a standstill (0.4 m/s: enough to get going up a 20% lane).
+    const drive = (Math.max(0, power) * DRIVETRAIN_EFFICIENCY * (p.powerFactor ?? 1)) / Math.max(v, 0.4);
     const a = (drive - resistance(v, gradient, p, draft)) / mEff;
     v = Math.min(MAX_SPEED, Math.max(0, v + a * h));
   }

@@ -12,6 +12,11 @@ export function setDetail(d) {
   DETAIL = d;
 }
 
+/** The current texture resolution multiplier. */
+export function getDetail() {
+  return DETAIL;
+}
+
 /** A canvas drawn in logical pixels (w × h) but stored at the current detail scale. */
 function canvas(w, h = w, scale = 1) {
   const c = document.createElement('canvas');

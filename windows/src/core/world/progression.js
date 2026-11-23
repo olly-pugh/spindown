@@ -15,6 +15,7 @@ export function newProfile() {
     prs: {}, // routeId -> segmentId -> {time, date}
     medals: {}, // routeId -> zoneId -> 'bronze'|'silver'|'gold' (best)
     ghosts: {}, // routeId -> {time, samples: [distance at each second]}
+    courses: {}, // routeId -> course version the PRs, medals and ghost above were set on
     settings: { quality: 'auto', camera: 'chase', timeOfDay: 'morning', weather: 'fair', sound: true, riderMass: 75, units: null },
     lastRoute: 'york',
     ftpEstimate: null, // watts, from your best efforts in the game
@@ -38,6 +39,7 @@ export function migrateProfile(raw) {
   if (raw.prs && typeof raw.prs === 'object') p.prs = raw.prs;
   if (raw.medals && typeof raw.medals === 'object') p.medals = raw.medals;
   if (raw.ghosts && typeof raw.ghosts === 'object') p.ghosts = raw.ghosts;
+  if (raw.courses && typeof raw.courses === 'object') p.courses = { ...raw.courses };
   if (raw.settings && typeof raw.settings === 'object') p.settings = { ...p.settings, ...raw.settings };
   if (typeof raw.lastRoute === 'string') p.lastRoute = raw.lastRoute;
   if (Number.isFinite(raw.ftpEstimate) && raw.ftpEstimate > 40 && raw.ftpEstimate < 600) p.ftpEstimate = raw.ftpEstimate;
@@ -222,6 +224,20 @@ export function recordRace(p, place, field) {
     events.push(...grant(p, 'race-win'));
   }
   return events;
+}
+
+/**
+ * When a course is rebuilt (a new version), PRs, medals and the ghost set on the old one no longer mean
+ * anything: clear them for that route once. Courses without a version are left alone.
+ */
+export function syncCourse(p, routeId, version) {
+  if (!version) return;
+  p.courses ??= {};
+  if (p.courses[routeId] === version) return;
+  delete p.prs[routeId];
+  delete p.medals[routeId];
+  delete p.ghosts[routeId];
+  p.courses[routeId] = version;
 }
 
 /** A segment or zone time; returns {events, previous, improved}. Lower time is better. */
