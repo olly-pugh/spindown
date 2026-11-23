@@ -7,6 +7,85 @@ import * as THREE from 'three';
 import limestoneUrl from './data/tex/limestone.jpg';
 import limestoneNormalUrl from './data/tex/limestone-n.jpg';
 import lichenUrl from './data/tex/lichen.jpg';
+import pastureUrl from './data/tex/pasture.jpg';
+import pastureNUrl from './data/tex/pasture-n.jpg';
+import limegrassUrl from './data/tex/limegrass.jpg';
+import limegrassNUrl from './data/tex/limegrass-n.jpg';
+import roughUrl from './data/tex/rough.jpg';
+import roughNUrl from './data/tex/rough-n.jpg';
+import screeUrl from './data/tex/scree.jpg';
+import screeNUrl from './data/tex/scree-n.jpg';
+import gravelUrl from './data/tex/gravel.jpg';
+import gravelNUrl from './data/tex/gravel-n.jpg';
+
+/**
+ * The close-up ground photos as two texture arrays (one sampler each, so the terrain shader stays within the 16
+ * texture units older graphics chips allow): colour (1024²) and normals (512²), layers in GROUND_LAYERS order.
+ * `means` holds each layer's average colour (linear) once loaded, so the shader can use the photos for texture and
+ * the aerial imagery for colour.
+ */
+export const GROUND_LAYERS = ['pasture', 'limegrass', 'rough', 'limestone', 'scree', 'gravel'];
+let groundArrays = null;
+export function groundDetailArrays() {
+  if (groundArrays) return groundArrays;
+  const colourUrls = [pastureUrl, limegrassUrl, roughUrl, limestoneUrl, screeUrl, gravelUrl];
+  const normalUrls = [pastureNUrl, limegrassNUrl, roughNUrl, limestoneNormalUrl, screeNUrl, gravelNUrl];
+  const make = (size, fill, srgb) => {
+    const n = colourUrls.length;
+    const data = new Uint8Array(size * size * 4 * n);
+    for (let i = 0; i < data.length; i += 4) data.set(fill, i);
+    const t = new THREE.DataArrayTexture(data, size, size, n);
+    t.format = THREE.RGBAFormat;
+    t.type = THREE.UnsignedByteType;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.generateMipmaps = true;
+    t.anisotropy = 8;
+    t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    t.needsUpdate = true;
+    return t;
+  };
+  const colour = make(1024, [188, 188, 188, 255], true);
+  const normal = make(512, [128, 128, 255, 255], false);
+  const means = colourUrls.map(() => new THREE.Vector3(0.5, 0.5, 0.5));
+  groundArrays = { colour, normal, means, ready: false };
+  const load = (url, size, tex, layer, mean) => new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const g = c.getContext('2d', { willReadFrequently: true });
+      g.drawImage(img, 0, 0, size, size);
+      const px = g.getImageData(0, 0, size, size).data;
+      tex.image.data.set(px, layer * size * size * 4);
+      if (mean) {
+        // Average colour in linear light.
+        let r = 0, gg = 0, b = 0;
+        const toLin = (v) => Math.pow(v / 255, 2.2);
+        for (let i = 0; i < px.length; i += 64) {
+          r += toLin(px[i]);
+          gg += toLin(px[i + 1]);
+          b += toLin(px[i + 2]);
+        }
+        const n = px.length / 64;
+        mean.set(r / n, gg / n, b / n);
+      }
+      resolve();
+    };
+    img.onerror = () => resolve();
+    img.src = url;
+  });
+  Promise.all([
+    ...colourUrls.map((u, i) => load(u, 1024, colour, i, means[i])),
+    ...normalUrls.map((u, i) => load(u, 512, normal, i, null)),
+  ]).then(() => {
+    colour.needsUpdate = true;
+    normal.needsUpdate = true;
+    groundArrays.ready = true;
+  });
+  return groundArrays;
+}
 
 const cache = new Map();
 /** A repeating photo texture (loaded once per URL and settings). */
@@ -20,6 +99,56 @@ export function loadTex(url, srgb = true, repeat = 1) {
   t.repeat.set(repeat, repeat);
   cache.set(key, t);
   return t;
+}
+
+/**
+ * Limestone boulders and blocks (instanced, no UVs): the rock photo projected from three sides, lichen on top, a
+ * darker skirt where they sit in the turf. Instance colour tints each stone.
+ */
+export function boulderMaterial() {
+  const map = loadTex(limestoneUrl, true, 1);
+  const lichen = loadTex(lichenUrl, true, 1);
+  const m = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.92, metalness: 0 });
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.rockMap = { value: map };
+    shader.uniforms.lichenMap = { value: lichen };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vBWorld;
+        varying vec3 vBNormal;
+        varying float vBLocalY;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vBLocalY = position.y;
+        #ifdef USE_INSTANCING
+          vBWorld = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
+          vBNormal = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * objectNormal);
+        #else
+          vBWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
+          vBNormal = normalize(mat3(modelMatrix) * objectNormal);
+        #endif`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        uniform sampler2D rockMap, lichenMap;
+        varying vec3 vBWorld;
+        varying vec3 vBNormal;
+        varying float vBLocalY;`)
+      .replace('#include <map_fragment>', `
+        vec3 bw = abs(normalize(vBNormal));
+        bw = pow(bw, vec3(4.0));
+        bw /= (bw.x + bw.y + bw.z);
+        vec3 tx = texture2D(rockMap, vBWorld.zy / 1.6).rgb, ty = texture2D(rockMap, vBWorld.xz / 1.6).rgb, tz = texture2D(rockMap, vBWorld.xy / 1.6).rgb;
+        vec3 rt = tx * bw.x + ty * bw.y + tz * bw.z;
+        float rl = dot(rt, vec3(0.299, 0.587, 0.114));
+        vec3 stone = mix(vec3(rl), rt, 0.3) * 1.25;
+        vec3 li = texture2D(lichenMap, vBWorld.xz / 2.3).rgb;
+        stone = mix(stone, li, smoothstep(0.5, 0.95, vBNormal.y) * 0.45);
+        // Earthy and darker where it sits in the ground.
+        stone *= mix(0.55, 1.0, smoothstep(-0.45, 0.05, vBLocalY));
+        diffuseColor.rgb *= stone;
+      `);
+  };
+  m.customProgramCacheKey = () => 'boulder-v1';
+  return m;
 }
 
 /**

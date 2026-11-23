@@ -14,6 +14,11 @@ export const QUALITY = {
   medium: { pixelRatio: 1, shadows: true, shadowSize: 2048, antialias: true, terrainStep: 12, treeDensity: 0.75, maxTrees: 2600, sceneryRadius: 450, far: 5000, fogNear: 220, fogFar: 2600, texDetail: 1 },
   high: { pixelRatio: 1.5, shadows: true, shadowSize: 4096, antialias: true, terrainStep: 10, treeDensity: 1, maxTrees: 4200, sceneryRadius: 600, far: 7000, fogNear: 300, fogFar: 3800, texDetail: 1 },
 };
+// Natural ground cover near the camera (groundcover.js): detail level (0 verge grass and boulders only, 1, 2) and
+// how far plants and boulders reach (metres).
+Object.assign(QUALITY.low, { cover: 0, coverRadius: 28, rockRadius: 90 });
+Object.assign(QUALITY.medium, { cover: 1, coverRadius: 45, rockRadius: 140 });
+Object.assign(QUALITY.high, { cover: 2, coverRadius: 65, rockRadius: 200 });
 
 /** Sun position and light colour for each time of day; weather tweaks haze and light. */
 const TIMES = {

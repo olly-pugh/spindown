@@ -11,11 +11,13 @@ import * as C from './common.js';
 import * as T from './textures.js';
 import { RouteField } from '../../core/world/field.js';
 import { rng, hash2 } from '../../core/world/noise.js';
-import { nestedTerrain, Raster, terrainMaterial, imageryTexture } from './ground.js';
+import { nestedTerrain, Raster, imageryTexture, landMaterial, normalTexture, classTexture, roadDistanceTexture, ImagerySampler } from './ground.js';
 import { Scars } from './cliffs.js';
-import { limestoneFaceMaterial } from './nature.js';
+import { limestoneFaceMaterial, groundDetailArrays, boulderMaterial } from './nature.js';
+import { GroundCover } from './groundcover.js';
 import nearImageUrl from './data/dales-near.jpg';
 import farImageUrl from './data/dales-far.jpg';
+import reliefUrl from './data/dales-relief.jpg';
 
 const ROAD_HALF = 2.5; // Malham's lanes are single track: ~5 m of tarmac
 const BED = 14; // half-width of the road bed (verges and the cut or fill slopes) drawn along the road
@@ -100,16 +102,31 @@ export function buildDales(route, data, q) {
   const rectOf = (g) => ({ x0: g.x0, y0: g.y0, x1: g.x1 ?? g.x0 + (g.nx - 1) * g.cell, y1: g.y1 ?? g.y0 + (g.ny - 1) * g.cell });
   const im = data.imagery ?? {};
   const wallTex = wallLineTexture(data, im.near ?? rectOf(mid));
-  const ground = terrainMaterial({
+  // The land's shape for lighting: the 2 m LIDAR relief near the loop, 40 m normals from the terrain beyond.
+  const reliefTex = new THREE.TextureLoader().load(reliefUrl);
+  reliefTex.colorSpace = THREE.NoColorSpace;
+  reliefTex.anisotropy = 4;
+  const farN = normalTexture((x, y) => terrain.grids[0].at(x, y), rectOf(data.terrain.far), 40);
+  // What the ground is made of, from the map: rock, scree, rough grazing and moor, limestone pavement.
+  const classes = classTexture(cls, {
+    [CLS.rock]: [1, 0, 0, 0], [CLS.quarry]: [1, 0, 0, 0], [CLS.pavement]: [1, 0, 0, 1], [CLS.scree]: [0, 1, 0, 0],
+    [CLS.heath]: [0, 0, 1, 0], [CLS.scrub]: [0, 0, 0.8, 0], [CLS.wet]: [0, 0, 0.9, 0], [CLS.wood]: [0, 0, 0.7, 0],
+  });
+  const landOpts = {
     near: { texture: imageryTexture(nearImageUrl), rect: im.near ?? rectOf(mid) },
     far: { texture: imageryTexture(farImageUrl), rect: im.far ?? rectOf(data.terrain.far) },
     walls: { texture: wallTex, rect: im.near ?? rectOf(mid) },
-  }, { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
-  const bedMat = ground.clone();
-  bedMat.onBeforeCompile = ground.onBeforeCompile;
-  bedMat.customProgramCacheKey = ground.customProgramCacheKey;
-  bedMat.polygonOffsetFactor = -1;
-  bedMat.polygonOffsetUnits = -1;
+    relief: data.relief ? { texture: reliefTex, rect: data.relief } : null,
+    farNormal: farN,
+    classes,
+    road: roadDistanceTexture(field),
+    layers: groundDetailArrays(),
+    saturation: 0.9, gamma: 0.8, gain: 1.95, tint: [1.05, 1.1, 0.24],
+  };
+  const ground = landMaterial(landOpts, { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+  // The road bed's cuttings and embankments are not in the survey: lit by their own shape.
+  const bedMat = landMaterial(landOpts, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  bedMat.userData.uniforms.reliefStrength.value = 0;
 
   /** Per-vertex ground detail: rock, moor, verge weights from the class raster and the road. */
   function detailAt(x, z, roadD) {
@@ -123,6 +140,7 @@ export function buildDales(route, data, q) {
   }
 
   // ---- Limestone faces from the 1 m LIDAR (cliffs.js): the terrain is cut away in their 20 m cells ----
+  const tMat = performance.now();
   const scars = new Scars(data.scars, { roadDistance, q, detailAt, ground, rock: limestoneFaceMaterial() });
   const SCAR_LEVEL = 2; // tiles drawn at this detail or finer show the 3D faces (and have their cells cut out)
   const apronOut = {};
@@ -684,6 +702,41 @@ export function buildDales(route, data, q) {
     group.add(C.spectators(pts));
   }
 
+  // ---- Ground cover near the camera: verge grass, tussocks, rushes, bracken, boulders (groundcover.js) ----
+  const imgNear = new ImagerySampler(nearImageUrl, im.near ?? rectOf(mid), landOpts, () => cover.reset());
+  const fallbackGreen = [0.05, 0.11, 0.025, 0.08];
+  const probeCol = [0, 0, 0, 0];
+  const probe = (x, z, p) => {
+    const rd = roadDistance(x, z);
+    const c = cls.get(x, z);
+    p.skip = rd < ROAD_HALF + 0.15 || wet.get(x, z) > 0 || c === CLS.village || c === CLS.yard || c === CLS.quarry;
+    if (p.skip) return p;
+    p.h = heightAt(x, z);
+    p.under = scars.underFace(x, z);
+    const col = imgNear.colour(x, -z, probeCol) ? probeCol : fallbackGreen;
+    p.colour = [col[0], col[1], col[2], col[3]];
+    p.verge = rd < ROAD_HALF + 3.6 ? 1 : 0;
+    const sx = dem(x + 2, z) - dem(x - 2, z), sz = dem(x, z + 2) - dem(x, z - 2);
+    const slope = Math.hypot(sx, sz) / 4;
+    p.high = p.h > 330;
+    p.field = c === 0 || c === CLS.meadow || c === CLS.grass;
+    p.rough = c === CLS.heath ? 1 : c === CLS.scrub ? 0.8 : c === CLS.wet ? 0.7 : c === CLS.wood ? 0.6 : 0;
+    // Pale grey pixels in the imagery are bare rock.
+    const lum = col[3] ?? 0.08, grey = Math.abs(col[1] - col[0]) < 0.03;
+    const bare = Math.min(1, Math.max(0, (lum - 0.06) / 0.05)) * (grey ? 1 : 0.4);
+    p.rock = c === CLS.rock || c === CLS.pavement ? 0.25 + 0.75 * bare : slope > 0.75 ? 0.5 : 0;
+    p.scree = c === CLS.scree ? 1 : 0;
+    // Soft rush: in the wet ground, and in patches in the flatter fields.
+    const patch = hash2(Math.floor(x / 11), Math.floor(z / 11), 5);
+    p.rushPatch = c === CLS.wet ? 0.5 : p.field && slope < 0.18 && patch < 0.09 ? 0.35 * (1 - patch / 0.09) + 0.1 : 0;
+    // Bracken on the slopes of the rough ground and the dale sides.
+    const bp = hash2(Math.floor(x / 15), Math.floor(z / 15), 9);
+    p.bracken = slope > 0.14 && slope < 0.8 && (p.rough > 0.5 || (p.field && !p.high && bp < 0.22)) ? 0.4 : 0;
+    return p;
+  };
+  const cover = new GroundCover({ probe, q, rockMaterial: boulderMaterial() });
+  group.add(cover.group);
+
   // ---- Start/finish arch and zone banners ----
   group.add(C.arch(route, 0, 'SPINDOWN · MALHAM', { width: 2 * ROAD_HALF + 1.6 }));
   for (const s of route.zones) {
@@ -691,13 +744,18 @@ export function buildDales(route, data, q) {
     group.add(C.arch(route, s.to, 'FINISH ▸', { width: 2 * ROAD_HALF + 1.6, colour: '#333' }));
   }
 
+  const tScene = performance.now();
   // Warm the terrain detail around the start so the first frame is sharp.
   const start = route.position(0);
   updateTerrain({ position: new THREE.Vector3(start.x, start.y, start.z) }, 1e9);
 
+  const tWarm = performance.now();
+  let lastT = null;
   const update = (t, camera) => {
     waterNormal.offset.set(t * 0.03, t * 0.012);
     updateTerrain(camera);
+    cover.update(camera, lastT == null ? 0.016 : Math.min(0.1, t - lastT));
+    lastT = t;
     // Wires are a pixel wide at any distance, so only draw the ones near enough to really see.
     if (camera) for (const w of power.userData.wires) w.visible = camera.position.distanceTo(w.geometry.boundingSphere.center) - w.geometry.boundingSphere.radius < 450;
   };
@@ -713,7 +771,7 @@ export function buildDales(route, data, q) {
     view.sky.scale.setScalar(view.camera.far * 0.9);
   };
   const ms = Math.round(performance.now() - t0);
-  console.log(`[world] Malham built in ${ms} ms: ${tiles.length} terrain tiles, ${group.userData.wallSegments} wall segments, ${group.userData.trees} trees, ${group.userData.buildings} buildings`);
+  console.log(`[world] Malham built in ${ms} ms (materials ${Math.round(tMat - t0)}, scenery ${Math.round(tScene - tMat)}, terrain warm-up ${Math.round(tWarm - tScene)}): ${tiles.length} terrain tiles, ${group.userData.wallSegments} wall segments, ${group.userData.trees} trees, ${group.userData.buildings} buildings`);
   return { group, heightAt, roadHalf: ROAD_HALF, update, atmosphere, buildingCount: group.userData.buildings, buildMs: ms, debug: { tiles, lastCam: () => lastCam } };
 }
 
