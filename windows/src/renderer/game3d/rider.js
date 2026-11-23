@@ -337,6 +337,7 @@ export class RiderModel {
       m.boundingSphere = sphere;
       m.frustumCulled = true;
       m.castShadow = cast && shadows && !ghost;
+      m.userData.casts = m.castShadow;
       m.receiveShadow = false;
       this.lean.add(m);
       return m;
@@ -385,6 +386,13 @@ export class RiderModel {
     if (this.detail === level) return;
     this.detail = level;
     for (const k of ['near', 'mid', 'far']) for (const m of this[k]) m.visible = k === level;
+  }
+
+  /** Sun shadows on or off (riders far from the camera keep only their contact shadow, to save the shadow pass). */
+  setShadow(on) {
+    if (this.shadowOn === on) return;
+    this.shadowOn = on;
+    for (const k of ['near', 'mid', 'far']) for (const m of this[k]) m.castShadow = on && m.userData.casts;
   }
 
   /** crank: crank angle (rad), wheel: wheel angle (rad), lean: roll (rad, positive leaning right). */

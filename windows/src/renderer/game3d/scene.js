@@ -231,7 +231,11 @@ export class WorldScene {
     // Low: the nearest two riders (your own among them) get the middle level at most.
     const low = this.qualityName === 'low';
     const limit = low ? 2 : this.qualityName === 'high' ? 10 : 6;
-    near.forEach(([m, d2], i) => m.setDetail(i < limit && d2 < 28 * 28, low ? Infinity : Math.sqrt(d2) * (this.qualityName === 'high' ? 0.7 : 1)));
+    near.forEach(([m, d2], i) => {
+      m.setDetail(i < limit && d2 < 28 * 28, low ? Infinity : Math.sqrt(d2) * (this.qualityName === 'high' ? 0.7 : 1));
+      // Sun shadows only within 35 m (the shadow map covers 70 m either way; beyond, the blob is enough).
+      m.setShadow(d2 < 35 * 35);
+    });
     for (const [id, model] of this.riders) {
       if (!seen.has(id)) {
         this.scene.remove(model.root);
