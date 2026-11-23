@@ -308,3 +308,20 @@ table.leaderboard { width: 100%; border-collapse: collapse; font-size: 14px; }
 .device-btn { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: inherit; font: inherit; font-size: 17px; cursor: pointer; margin-bottom: 8px; text-align: left; }
 .device-btn:hover { background: var(--panel-strong); }
 .checklist { margin: 0; padding-left: 22px; line-height: 1.7; font-size: 17px; }
+
+/* Taking a World ride's picture: nothing that names another rider, and no menus, dialogs or buttons. */
+body.world-shot .plates,
+body.world-shot .riderlist,
+body.world-shot .toasts,
+body.world-shot .grid-call,
+body.world-shot .countdown,
+body.world-shot .powerups,
+body.world-shot .bottom-right,
+body.world-shot .close-menu,
+body.world-shot .menu-backdrop,
+body.world-shot .side-panel,
+body.world-shot .overlay { display: none !important; }
+
+/* A World ride's picture in its summary. */
+.ride-picture { width: 100%; border-radius: 10px; display: block; background: #000; }
+.ride-picture-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }

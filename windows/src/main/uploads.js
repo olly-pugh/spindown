@@ -2,7 +2,8 @@
 // accepts the ride or rejects it for good. Upload state lives in each ride's record.json, so pending uploads
 // survive restarts. Port of UploadCoordinator.swift.
 import { GarminConnectClient, StravaClient, ServiceError } from '../core/services.js';
-import { exportFIT, exportFileName } from '../core/fit.js';
+import { exportFIT, exportFileName, isVirtualRide } from '../core/fit.js';
+import { uploadText } from '../core/worldride.js';
 import { Destinations, destinationName, uploadNeedsWork, describeUpload } from '../core/recorder.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -31,6 +32,8 @@ export class UploadCoordinator {
     this.notBefore = new Map();
     this.processAgain = false;
     this.listeners = new Set();
+    /** Wait between Strava upload status checks. */
+    this.pollDelayMs = 3000;
   }
 
   onState(fn) {
@@ -188,8 +191,14 @@ export class UploadCoordinator {
     const k = this.key(id, destination);
     try {
       let outcome;
+      const photoTargets = [];
+      const notePhotos = (o) => {
+        if (o?.photoTargets) photoTargets.push(...o.photoTargets);
+        if (o) delete o.photoTargets; // pre-signed URLs are never saved
+        return o;
+      };
       if (state.status === 'processing' && destination === 'strava') {
-        outcome = await this.pollStrava(state.ref);
+        outcome = await this.pollStrava(state.ref, notePhotos);
       } else {
         const ride = this.store.exportable(id);
         const fit = exportFIT(ride);
@@ -198,15 +207,17 @@ export class UploadCoordinator {
         if (destination === 'garmin') {
           outcome = await this.garmin.upload(fit, exportFileName(ride, 'fit'));
         } else {
-          const first = await this.strava.upload(fit, ride.record.name, 'Indoor ride on a Kinetic Road Machine (inRide), recorded with Spindown.', id);
+          const { name, description } = uploadText(ride.record);
+          const first = notePhotos(await this.strava.upload(fit, name, description, id, { virtual: isVirtualRide(ride) }));
           if (first.status === 'processing') {
             this.store.setUpload(id, destination, first);
-            outcome = await this.pollStrava(first.ref);
+            outcome = await this.pollStrava(first.ref, notePhotos);
           } else {
             outcome = first;
           }
         }
       }
+      if (destination === 'strava' && outcome.status === 'uploaded') outcome = await this.finishStravaRide(id, outcome, photoTargets);
       this.store.setUpload(id, destination, outcome);
       this.attempts.set(k, 0);
       this.notBefore.delete(k);
@@ -238,14 +249,55 @@ export class UploadCoordinator {
     }
   }
 
-  async pollStrava(ref) {
+  async pollStrava(ref, notePhotos = (o) => o) {
     let outcome = { status: 'processing', ref };
     for (let i = 0; i < 10; i++) {
-      await sleep(3000);
-      outcome = await this.strava.checkUpload(ref);
+      await sleep(this.pollDelayMs);
+      outcome = notePhotos(await this.strava.checkUpload(ref));
       if (outcome.status !== 'processing') break;
     }
     return outcome;
+  }
+
+  /**
+   * After Strava has made the activity: a ride in Spindown World is set to sport type VirtualRide, and its
+   * picture is attached if Strava offered a photo upload target. Strava only offers one to approved partner
+   * apps, so normally the picture is marked for adding by hand (photo: 'manual'). Neither step can fail the
+   * upload: the activity is already on Strava.
+   */
+  async finishStravaRide(id, outcome, photoTargets) {
+    let ride;
+    try {
+      ride = this.store.exportable(id);
+    } catch {
+      return outcome;
+    }
+    if (!isVirtualRide(ride)) return outcome;
+    const done = { ...outcome };
+    try {
+      await this.strava.setSportType(outcome.activityID, 'VirtualRide');
+      done.sportType = 'VirtualRide';
+    } catch (e) {
+      done.sportType = 'unchanged';
+      this.log.log(`Strava: could not mark the ride as a virtual ride (${e.message}); the FIT file still says virtual`, 'warning');
+    }
+    const picture = this.store.picture?.(id);
+    if (picture) {
+      if (!photoTargets.length) {
+        done.photo = 'manual';
+        this.log.log('Strava did not offer a photo upload (only approved partner apps can attach photos); the picture can be added by hand');
+      } else {
+        try {
+          await this.strava.uploadPhoto(photoTargets[0], picture);
+          done.photo = 'attached';
+          this.log.log('Strava: ride picture attached');
+        } catch (e) {
+          done.photo = 'failed';
+          this.log.log(`Strava: could not attach the ride picture (${e.message})`, 'warning');
+        }
+      }
+    }
+    return done;
   }
 
   /** Network came back: retry everything now rather than waiting out the back-off. */

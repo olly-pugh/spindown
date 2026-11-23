@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('spindown', {
     setRidePhase: invoke('app:setRidePhase'),
     readyToClose: invoke('app:readyToClose'),
     saveText: invoke('app:saveText'),
+    capturePicture: invoke('app:capturePicture'),
     installUpdate: invoke('app:installUpdate'),
     checkForUpdates: invoke('app:checkForUpdates'),
     onUpdate: on('app:update'),
@@ -52,6 +53,9 @@ contextBridge.exposeInMainWorld('spindown', {
     delete: invoke('rides:delete'),
     export: invoke('rides:export'),
     exportRaw: invoke('rides:exportRaw'),
+    picture: invoke('rides:picture'),
+    copyPicture: invoke('rides:copyPicture'),
+    savePicture: invoke('rides:savePicture'),
     onChange: on('rides:changed'),
   },
   uploads: {
