@@ -4,8 +4,9 @@
 // blends between them on a shared clock (each with their own timing and energy), so they cheer, wave, clap,
 // film on a phone or stand about. Each instance has its own top, trouser, skin and hair colours.
 //
-// Near people are the clothed, textured figures (5-8k triangles); beyond about 16 m a 1.5k-triangle body with
-// the outfit's colours. Instanced in chunks with distance culling: a few draw calls for hundreds of people.
+// Three levels of detail, chosen per person in the vertex shader from the camera distance: the clothed, textured
+// figures within 16 m (5-8k triangles), a 1.5k-triangle body coloured from the outfit to 55 m, and a
+// 440-triangle one beyond. Instanced in chunks with distance culling: a few draw calls for hundreds of people.
 import * as THREE from 'three';
 import crowdBin from './people/crowd.bin';
 import atlasUrl from './people/crowd-atlas.jpg';
@@ -63,12 +64,11 @@ function measure(tex) {
     }
     const mean = (p) => (acc[p] ? acc[p].slice(0, 3).map((x) => x / acc[p][3]) : [0.5, 0.5, 0.5]);
     const lum = (m) => Math.max(0.03, m[0] * 0.3 + m[1] * 0.59 + m[2] * 0.11);
-    const s = data.stats.get(v.name);
-    if (s) {
-      s.topLum.value = lum(mean(1));
-      s.botLum.value = lum(mean(2));
-      s.skinMean.value.setRGB(...mean(0));
-    }
+    // Every variant, used yet or not: a world built later shares these uniforms.
+    const s = variantStats(v.name);
+    s.topLum.value = lum(mean(1));
+    s.botLum.value = lum(mean(2));
+    s.skinMean.value.setRGB(...mean(0));
   }
 }
 
