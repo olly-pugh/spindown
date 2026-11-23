@@ -6,6 +6,7 @@
 //    limestone scar, power line and pole, in its real place.
 // Map data © OpenStreetMap contributors (ODbL).
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as C from './common.js';
 import * as T from './textures.js';
 import { RouteField } from '../../core/world/field.js';
@@ -213,6 +214,22 @@ export function buildDales(route, data, q) {
 
   // Every tile at the coarsest detail up front (the horizon), finer ones as the camera comes near.
   for (const t of tiles) buildTile(t, 3);
+  // The coarse tiles are also merged into blocks of 4×4, one draw call each, used wherever no tile in the
+  // block needs more detail (most of the horizon).
+  const blocks = new Map();
+  for (const t of tiles) {
+    const key = `${Math.floor((t.x - fx0) / (TILE * 4))},${Math.floor((t.z - fz0) / (TILE * 4))}`;
+    if (!blocks.has(key)) blocks.set(key, { tiles: [] });
+    blocks.get(key).tiles.push(t);
+    t.block = blocks.get(key);
+  }
+  for (const b of blocks.values()) {
+    const g = mergeGeometries(b.tiles.map((t) => t.meshes[3].geometry), false);
+    g.computeBoundingSphere();
+    b.mesh = new THREE.Mesh(g, ground);
+    b.mesh.receiveShadow = true;
+    terrainGroup.add(b.mesh);
+  }
   let lastCam = null;
   function updateTerrain(camera, budget = 3) {
     if (!camera) return;
@@ -231,11 +248,16 @@ export function buildDales(route, data, q) {
     }
     work.sort((a, b) => a.d - b.d);
     for (const t of work.slice(0, budget)) buildTile(t, t.want);
+    for (const b of blocks.values()) {
+      b.merged = b.tiles.every((t) => t.want >= 3);
+      b.mesh.visible = b.merged;
+    }
     for (const t of tiles) {
-      // Show the wanted level if built, else the finest built level coarser than... any built level.
-      let show = t.meshes[t.want] ? t.want : -1;
-      if (show < 0) for (let k = t.want + 1; k < LOD_STEPS.length && show < 0; k++) if (t.meshes[k]) show = k;
-      if (show < 0) for (let k = t.want - 1; k >= 0 && show < 0; k--) if (t.meshes[k]) show = k;
+      // Show the wanted level if built, else the nearest built level (coarser first); nothing if the block
+      // is drawn merged.
+      let show = t.block.merged ? -1 : t.meshes[t.want] ? t.want : -1;
+      if (show < 0 && !t.block.merged) for (let k = t.want + 1; k < LOD_STEPS.length && show < 0; k++) if (t.meshes[k]) show = k;
+      if (show < 0 && !t.block.merged) for (let k = t.want - 1; k >= 0 && show < 0; k--) if (t.meshes[k]) show = k;
       t.meshes.forEach((m, k) => {
         if (!m) return;
         m.visible = k === show;
@@ -384,7 +406,7 @@ export function buildDales(route, data, q) {
     };
     add(data.walls ?? [], true, segs, wallR);
     add(data.hedges ?? [], true, hedgeSegs, wallR);
-    group.add(C.linear(segs, 'wall', { shadows: q.shadows, maxDistance: Math.max(700, wallR * 0.9) }));
+    group.add(C.linear(segs, 'wall', { shadows: q.shadows, maxDistance: Math.max(600, wallR * 0.75) }));
     if (hedgeSegs.length) group.add(C.linear(hedgeSegs, 'hedge', { shadows: q.shadows }));
     group.userData.wallSegments = segs.length;
   }
@@ -430,7 +452,7 @@ export function buildDales(route, data, q) {
       }
     }
     spots.sort((a, b) => a.pri - b.pri);
-    const cap = Math.round(q.maxTrees * 1.6);
+    const cap = q.maxTrees;
     const placements = spots.slice(0, cap).map((s) => ({ x: s.x, z: s.z, y: heightAt(s.x, s.z), kind: s.kind, s: s.s, rot: r() * 6.28, hue: r() - 0.5, sx: 0.85 + r() * 0.3, sy: 0.85 + r() * 0.35 }));
     group.add(C.trees(placements, { shadows: q.shadows, maxDistance: 2600 }));
     group.userData.trees = placements.length;
