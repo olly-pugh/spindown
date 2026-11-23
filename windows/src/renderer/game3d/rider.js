@@ -5,10 +5,11 @@
 //
 // Each frame the legs are solved with two-bone IK so the feet stay on the pedals through the stroke (with
 // ankling), the hips and shoulders sway a little with each stroke, the arms are solved so the hands stay on the
-// hoods, and the head steadies itself and looks about now and then. Riders further away use a 3k-triangle
-// body and a lighter bike. Units are metres; the rider faces -z.
+// hoods, and the head steadies itself and looks about now and then. Three levels of detail: the full figure
+// near the camera, a body simplified to a third with a lighter bike in the middle distance, and a 3k-triangle
+// body beyond. Units are metres; the rider faces -z.
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { blobTexture } from './textures.js';
 import { buildBike, bikeAtlas } from './bike.js';
 import { riderAssets, hairTexture } from './people/assets.js';
@@ -56,16 +57,15 @@ function hairMaterial(hex, kind) {
   return hairMaterials.get(key);
 }
 const kitMaterials = new Map();
-let lastBeard = 0;
+/** Some men have stubble (0.35) or a beard (1), picked from their looks so a rider keeps his. */
+function beardFor(body, skin, hair) {
+  if (body !== 'm') return 0;
+  const h = [...`${skin}${hair}`].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7) % 100;
+  return h < 30 ? 0.35 : h < 45 ? 1 : 0;
+}
 function kitMat(kit, skin, landmarks, body, hair) {
-  // Some men have stubble or a beard (picked from their looks, so a rider keeps his).
-  let beard = 0;
-  if (body === 'm') {
-    const h = [...`${skin}${hair}`].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7) % 100;
-    beard = h < 30 ? 0.35 : h < 45 ? 1 : 0;
-  }
+  const beard = beardFor(body, skin, hair);
   const key = `${kit.jersey.id}|${skin}|${body}|${hair}|${beard}`;
-  lastBeard = beard;
   if (!kitMaterials.has(key)) kitMaterials.set(key, kitMaterial(kit, skin, landmarks, { beard, hair }));
   return kitMaterials.get(key);
 }
@@ -184,7 +184,7 @@ function bikeAndGear(kit, lod, boneIdx, assets, body) {
     ...pedals({ footR: boneIdx['foot.R'], footL: boneIdx['foot.L'] }),
   ];
   for (const p of parts) for (const k of Object.keys(p.attributes)) if (!['position', 'normal', 'uv', 'color', 'surf', 'skinIndex', 'skinWeight'].includes(k)) p.deleteAttribute(k);
-  const merged = mergeGeometries(parts.map((p) => (p.index ? p.toNonIndexed() : p)), false);
+  const merged = compact(mergeVertices(mergeGeometries(parts.map((p) => (p.index ? p.toNonIndexed() : p)), false), 1e-5));
   merged.computeBoundingSphere();
   bikeCache.set(key, merged);
   return merged;
@@ -205,6 +205,26 @@ function faceMorphs(geo) {
   }
   geo.userData.morphsReady = true;
   return geo;
+}
+
+/**
+ * Smaller vertex data for a merged bike: 16-bit normals and colours, 8-bit surface, bone indices and weights
+ * (about 40 bytes a vertex instead of 76; the geometry is also indexed, so 4-5 times fewer vertices).
+ */
+function compact(g) {
+  const q = (name, Type, scale, normalized) => {
+    const a = g.attributes[name];
+    if (!a) return;
+    const out = new Type(a.array.length);
+    for (let i = 0; i < out.length; i++) out[i] = Math.round(a.array[i] * scale);
+    g.setAttribute(name, new THREE.BufferAttribute(out, a.itemSize, normalized));
+  };
+  q('normal', Int16Array, 32767, true);
+  q('color', Uint16Array, 65535, true);
+  q('surf', Uint8Array, 255, true);
+  q('skinIndex', Uint8Array, 1, false);
+  q('skinWeight', Uint8Array, 255, true);
+  return g;
 }
 
 // ---- IK helpers ------------------------------------------------------------------------------------------------
@@ -298,7 +318,7 @@ export class RiderModel {
     const G = assets.geometries;
     const bodyMat = ghost ? ghostMaterial() : kitMat(kit, skin, meta.landmarks, body, hair);
     const gearMat = ghost ? ghostMaterial() : bikeMaterial();
-    this.beard = ghost ? 0 : lastBeard;
+    this.beard = ghost ? 0 : beardFor(body, skin, hair);
     const nearBody = make(faceMorphs(G['body' + sfx]), bodyMat);
     // A face of their own: a mix of the face shapes, picked from their looks (so a rider keeps theirs).
     if (nearBody.morphTargetInfluences) {
@@ -345,7 +365,7 @@ export class RiderModel {
     B.front.rotation.x = -wheel;
     this.lean.rotation.z = -lean;
     const t = performance.now() / 1000 + this.seed;
-    const s1 = Math.sin(crank), c1 = Math.cos(crank);
+    const s1 = Math.sin(crank);
 
     // Rider-space rotations of the trunk: hips rock with the stroke, the chest counters a little, the head
     // steadies itself and now and then glances about.
@@ -390,7 +410,7 @@ export class RiderModel {
     for (const R of this.arms) {
       local(R.clav, qChest, qChest);
       const sh = place(R.shoulder, pv.chest, chestPos, qChest, _sh);
-      _pole.copy(R.elbow).sub(R.shoulder).addScaledVector(_d1.copy(R.wrist).sub(R.shoulder).normalize(), -0.0).normalize();
+      _pole.copy(R.elbow).sub(R.shoulder).normalize(); // elbows keep bending the way they do at the bind pose
       const el = ikJoint(sh, R.wrist, R.a, R.b, _pole, _el);
       between(_d1.copy(R.elbow).sub(R.shoulder), _d2.copy(el).sub(sh), _qu);
       between(_d1.copy(R.wrist).sub(R.elbow), _d2.copy(R.wrist).sub(el), _qfo);
