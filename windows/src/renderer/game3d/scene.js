@@ -6,7 +6,7 @@ import { RiderModel } from './rider.js';
 import { buildDales } from './dales.js';
 import { buildYork } from './york.js';
 import * as C from './common.js';
-import { CROWD_TIME } from './crowd.js';
+import { CROWD_TIME, CROWD_CAMERA } from './crowd.js';
 import * as T from './textures.js';
 import { POWERUPS } from '../../core/world/content.js';
 
@@ -296,6 +296,7 @@ export class WorldScene {
   updateTokens(sim, dt) {
     this.time += dt;
     CROWD_TIME.value = this.time;
+    CROWD_CAMERA.value.copy(this.camera.position);
     this.world?.update?.(this.time);
     const skyU = this.sky.material.uniforms;
     if (skyU.time) skyU.time.value = this.time;

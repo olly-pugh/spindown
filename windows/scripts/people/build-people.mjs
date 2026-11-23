@@ -17,6 +17,7 @@ import { cyclingPose } from './pose.mjs';
 import { assemble, vertexNormals, pack } from './meshkit.mjs';
 import * as FIT from '../../src/renderer/game3d/people/fit.js';
 import { riderGear } from './gear.mjs';
+import { buildCrowd } from './crowd-build.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = path.join(ROOT, 'src/renderer/game3d/people');
@@ -208,6 +209,20 @@ const bin = pack(JSON.parse(JSON.stringify(meta, (k, v) => r6(v))), meshes);
 fs.mkdirSync(OUT, { recursive: true });
 fs.writeFileSync(path.join(OUT, 'rider.bin'), bin);
 console.log('rider.bin', (bin.length / 1024).toFixed(0), 'KB;', Object.entries(meshes).map(([k, m]) => `${k} ${m.count}v ${m.index.length / 3}t`).join(', '));
+
+// ---- Spectators -------------------------------------------------------------------------------------------
+if (!args.includes('--no-crowd')) {
+  const crowd = buildCrowd({ base, shaped, skelDef, mhWeights, SYS });
+  const cbin = pack({ source: 'MakeHuman 1.1 bodies, clothes, shoes, hair and eyes (CC0)', ...crowd.meta }, crowd.meshes);
+  fs.writeFileSync(path.join(OUT, 'crowd.bin'), cbin);
+  fs.writeFileSync(path.join(ROOT, 'scripts/people/crowd-atlas.json'), JSON.stringify(crowd.atlasLayout, null, 1));
+  console.log('crowd.bin', (cbin.length / 1024).toFixed(0), 'KB');
+  if (DEBUG) {
+    for (const [k, m] of Object.entries(crowd.meshes)) {
+      fs.writeFileSync(path.join(DEBUG, 'crowd-' + k.replace(':', '-') + '.json'), JSON.stringify({ position: Array.from(m.position), index: Array.from(m.index), uv: Array.from(m.uv, (x) => x / 65535) }));
+    }
+  }
+}
 
 if (DEBUG) {
   fs.mkdirSync(DEBUG, { recursive: true });

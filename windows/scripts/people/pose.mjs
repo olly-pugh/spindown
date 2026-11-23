@@ -30,6 +30,89 @@ const curl = (skel, name, axis, angle) => {
 };
 
 /**
+ * Arm and hand poses for spectators: per side, the world direction of the upper arm (shoulder to elbow) and of
+ * the forearm (elbow to wrist) for the right arm (the left mirrors x unless given), and how much the fingers curl.
+ * Each pose has two key frames, A and B; the game blends between them to animate.
+ */
+const ARMS = {
+  down: { R: [[0.1, -1, 0.04], [0.05, -1, -0.16]], curl: 0.35 },
+  cheer: { A: { R: [[0.5, 0.82, -0.16], [0.22, 1, -0.12]] }, B: { R: [[0.32, 0.95, -0.1], [0.06, 1, -0.04]] }, curl: 1.25 },
+  wave: { A: { R: [[0.85, 0.42, -0.25], [0.2, 1, -0.18]], L: [[-0.1, -1, 0.04], [-0.05, -1, -0.16]] }, B: { R: [[0.85, 0.42, -0.25], [0.72, 0.72, -0.18]], L: [[-0.1, -1, 0.04], [-0.05, -1, -0.16]] }, curl: 0.12 },
+  clap: { A: { R: [[0.22, -0.82, -0.52], [-0.3, 0.18, -1]] }, B: { R: [[0.18, -0.82, -0.55], [-0.62, 0.2, -0.78]] }, curl: 0.15 },
+  flag: { A: { R: [[0.5, 0.85, -0.22], [-0.25, 1, -0.12]], L: [[-0.32, 0.92, -0.22], [0.42, 0.95, -0.12]] }, B: { R: [[0.32, 0.92, -0.22], [-0.42, 0.95, -0.12]], L: [[-0.5, 0.85, -0.22], [0.25, 1, -0.12]] }, curl: 1.1 },
+  phone: { A: { R: [[0.32, -0.32, -0.9], [-0.25, 0.78, -0.58]], L: [[-0.1, -1, 0.04], [-0.05, -1, -0.16]] }, B: { R: [[0.3, -0.3, -0.9], [-0.22, 0.8, -0.56]], L: [[-0.1, -1, 0.04], [-0.05, -1, -0.16]] }, curl: 0.8 },
+  folded: { R: [[0.3, -0.72, -0.6], [-1, 0.18, -0.22]], curl: 0.6 },
+  hips: { R: [[0.92, -0.38, 0.12], [-0.55, -0.78, 0.02]], curl: 0.5 },
+};
+
+/**
+ * A standing spectator. spec: {arms: key of ARMS, frame: 'A'|'B', lean: hip shift (-1..1), turn: head yaw (rad)}.
+ * The figure faces -z with the soles of the feet on y = 0 (the caller re-centres). Returns the key points.
+ */
+export function standingPose(skel, spec) {
+  const B = skel.bones;
+  skel.reset();
+  const def = ARMS[spec.arms] ?? ARMS.down;
+  const frame = def[spec.frame ?? 'A'] ?? def;
+  // Legs: feet under the hips, a little apart; weight on one leg bends the other knee slightly.
+  for (const s of ['R', 'L']) {
+    const sgn = s === 'R' ? 1 : -1;
+    skel.solve();
+    const hip = B[`upperleg01.${s}`].pos, ankle = B[`foot.${s}`].pos;
+    const want = [sgn * (0.095 + 0.02 * Math.max(0, sgn * (spec.lean ?? 0))), ankle[1], ankle[2] + 0.01 * sgn];
+    aimPoint(skel, `upperleg01.${s}`, ankle, want);
+    // Feet point a little outwards.
+    skel.solve();
+    skel.rotateWorld(`foot.${s}`, M3.axisAngle([0, 1, 0], -sgn * 0.12));
+  }
+  // Weight shift: the pelvis drops a touch on the relaxed side; the relaxed knee bends.
+  const lean = spec.lean ?? 0;
+  if (lean) {
+    skel.rotateWorld('root', M3.axisAngle([0, 0, 1], 0.035 * lean));
+    const relaxed = lean > 0 ? 'L' : 'R';
+    skel.solve();
+    skel.rotateWorld(`lowerleg01.${relaxed}`, M3.axisAngle([1, 0, 0], -0.12));
+    skel.rotateWorld(`upperleg01.${relaxed}`, M3.axisAngle([1, 0, 0], 0.06));
+  }
+  // Arms.
+  for (const s of ['R', 'L']) {
+    const sgn = s === 'R' ? 1 : -1;
+    const mirror = (d) => [d[0] * sgn, d[1], d[2]];
+    const [ua, fa] = frame[s] ?? frame.R.map(mirror);
+    skel.solve();
+    const sh = B[`upperarm01.${s}`].pos;
+    aimPoint(skel, `upperarm01.${s}`, B[`lowerarm01.${s}`].pos, add(sh, norm(ua)));
+    skel.solve();
+    const el = B[`lowerarm01.${s}`].pos;
+    aimPoint(skel, `lowerarm01.${s}`, B[`wrist.${s}`].pos, add(el, norm(fa)));
+    // Hand along the forearm, then the fingers curl.
+    skel.solve();
+    const w = B[`wrist.${s}`].pos, k3 = B[`finger3-1.${s}`].pos;
+    aimPoint(skel, `wrist.${s}`, k3, add(w, scale(norm(fa), len(sub(k3, w)))));
+    skel.solve();
+    const k2 = B[`finger2-1.${s}`].pos, k5 = B[`finger5-1.${s}`].pos;
+    const f = norm(sub(B[`finger3-1.${s}`].pos, B[`wrist.${s}`].pos));
+    let n = cross(sub(k2, w), sub(k5, w));
+    n = norm(sub(n, scale(f, dot(n, f))));
+    // Palm normal sign: towards the body at rest (computed from the rest skeleton).
+    const restN = cross(sub(B[`finger2-1.${s}`].head, B[`wrist.${s}`].head), sub(B[`finger5-1.${s}`].head, B[`wrist.${s}`].head));
+    if (dot(restN, [-sgn, 0, 0]) < 0) n = scale(n, -1);
+    const axis = cross(f, n);
+    const c = def.curl ?? 0.4;
+    for (const fg of [2, 3, 4, 5]) {
+      curl(skel, `finger${fg}-1.${s}`, axis, c * 0.8);
+      curl(skel, `finger${fg}-2.${s}`, axis, c);
+      curl(skel, `finger${fg}-3.${s}`, axis, c * 0.7);
+    }
+    curl(skel, `finger1-2.${s}`, axis, c * 0.4);
+  }
+  // Head: a little turned, chin level.
+  if (spec.turn) skel.rotateWorld('neck02', M3.axisAngle([0, 1, 0], spec.turn));
+  if (spec.nod) skel.rotateWorld('head', M3.axisAngle([1, 0, 0], spec.nod));
+  skel.solve();
+}
+
+/**
  * The road cyclist on the hoods. fit: {hip, shoulderY, hood, pedal(side) -> {ankle, pitch}, headPitch}.
  * Returns the posed key points (for fitting the bike to the rider).
  */

@@ -100,6 +100,7 @@ export function assemble(src) {
 export const LAYOUT = {
   position: [3, false], normal: [3, true], uv: [2, true], skinIndex: [4, false], skinWeight: [4, true], rest: [3, true], kit: [4, true],
   color: [3, true], region: [1, false], arm: [1, true], uv2: [2, true], edge: [1, true],
+  positionB: [3, false], normalB: [3, true], part: [1, false],
 };
 const TYPES = { Float32Array: 'f32', Int8Array: 'i8', Uint8Array: 'u8', Int16Array: 'i16', Uint16Array: 'u16', Uint32Array: 'u32', Int32Array: 'i32' };
 

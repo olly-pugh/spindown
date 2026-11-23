@@ -370,12 +370,13 @@ export function buildBike(kit, bones, detail = 'near') {
   const wheel = (at, bone, rear) => {
     const W = [];
     const put = (g, colour, surf, uvKeep) => W.push(part(g.translate(at.x, at.y, at.z), colour, surf, bone, uvKeep ? 'keep' : undefined));
-    const seg = Math.round(56 * R);
+    const seg = near ? 56 : 18;
     // Tyre: round section with a sidewall label band (atlas row 3).
     const tyreR = 0.0125, tyreC = FIT.WHEEL_R - tyreR;
     const tyreProf = [];
-    for (let k = 0; k <= 12; k++) {
-      const a = -Math.PI / 2 + (k / 12) * Math.PI * 2 * 0.999;
+    const TP = near ? 12 : 6;
+    for (let k = 0; k <= TP; k++) {
+      const a = -Math.PI / 2 + (k / TP) * Math.PI * 2 * 0.999;
       tyreProf.push([tyreC + Math.cos(a) * tyreR * 0.95, Math.sin(a) * tyreR]);
     }
     put(lathe(tyreProf, seg), '#161616', RUBBER);
@@ -388,7 +389,7 @@ export function buildBike(kit, bones, detail = 'near') {
     // Hub and flanges.
     put(lathe([[0.012, -0.05], [0.014, -0.04], [0.026, -0.036], [0.026, -0.03], [0.016, -0.026], [0.016, 0.026], [0.024, 0.03], [0.024, 0.036], [0.014, 0.04], [0.012, 0.05]], Math.round(16 * R)), '#1c1d20', SATIN);
     // Bladed spokes.
-    const n = rear ? 24 : 20;
+    const n = near ? (rear ? 24 : 20) : 10;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2, s = i % 2 ? 1 : -1;
       const h = V(0.033 * s, Math.cos(a + 0.2 * s) * 0.024, Math.sin(a + 0.2 * s) * 0.024);
@@ -402,9 +403,9 @@ export function buildBike(kit, bones, detail = 'near') {
       put(g, '#16171a', SATIN);
     }
     // Disc rotor (left side) and its carrier.
-    put(lathe([[0.079, -0.0442], [0.08, -0.0436], [0.08, -0.0424], [0.079, -0.0418], [0.062, -0.0418], [0.061, -0.0424], [0.061, -0.0436], [0.062, -0.0442], [0.079, -0.0442]], Math.round(36 * R)), '#7e8287', [0.42, 0.6]);
-    put(lathe([[0.061, -0.0432], [0.022, -0.042], [0.022, -0.04], [0.061, -0.041]], Math.round(16 * R)), '#1a1b1d', SATIN);
-    if (rear) {
+    if (near) put(lathe([[0.079, -0.0442], [0.08, -0.0436], [0.08, -0.0424], [0.079, -0.0418], [0.062, -0.0418], [0.061, -0.0424], [0.061, -0.0436], [0.062, -0.0442], [0.079, -0.0442]], Math.round(36 * R)), '#7e8287', [0.42, 0.6]);
+    if (near) put(lathe([[0.061, -0.0432], [0.022, -0.042], [0.022, -0.04], [0.061, -0.041]], Math.round(16 * R)), '#1a1b1d', SATIN);
+    if (rear && near) {
       // Cassette: a stack of sprockets on the right.
       for (let k = 0; k < 7; k++) put(lathe([[0.024 + k * 0.0045, 0.018 + k * 0.0042], [0.024 + k * 0.0045, 0.0205 + k * 0.0042]], Math.round(28 * R)), '#9a9da2', METAL);
     }
@@ -421,7 +422,7 @@ export function buildBike(kit, bones, detail = 'near') {
   // Chainrings 52/36 on a four-arm spider (right side).
   const cx = 0.052;
   for (const [r, x] of [[0.106, cx], [0.074, cx - 0.005]]) putC(lathe([[r - 0.012, x - 0.002], [r, x - 0.0015], [r + 0.002, x], [r, x + 0.0015], [r - 0.012, x + 0.002]], Math.round(48 * R)).translate(BB.x, BB.y, BB.z), '#2a2b2e', METAL);
-  for (let k = 0; k < 4; k++) {
+  for (let k = 0; k < (near ? 4 : 0); k++) {
     const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
     putC(aeroTube([V(cx + 0.006, BB.y, BB.z), V(cx + 0.002, BB.y + Math.cos(a) * 0.098, BB.z + Math.sin(a) * 0.098)], (u) => [0.004, 0.011 - 0.004 * u, 0.9], { rings: 2, radial: 6 }), '#1d1e21', ALLOY);
   }
@@ -439,11 +440,11 @@ export function buildBike(kit, bones, detail = 'near') {
   const top0 = V(cx, BB.y + ring, BB.z + 0.006), top1 = V(cx - 0.004, REAR.y + cog, REAR.z - 0.004);
   const pulleyA = V(cx - 0.004, REAR.y - 0.055, REAR.z + 0.01), pulleyB = V(cx - 0.004, REAR.y - 0.105, REAR.z - 0.012);
   const bot0 = V(cx, BB.y - ring, BB.z + 0.004);
-  add(roundTube([top0, top0.clone().lerp(top1, 0.5), top1], 0.0034, { rings: 12, radial: 5 }), '#5d5f63', METAL);
-  add(roundTube([REAR.clone().add(V(cx - 0.004, -cog, 0.012)), pulleyA, pulleyB, pulleyB.clone().lerp(bot0, 0.5), bot0], 0.0034, { rings: 16, radial: 5 }), '#5d5f63', METAL);
+  if (near) add(roundTube([top0, top0.clone().lerp(top1, 0.5), top1], 0.0034, { rings: 12, radial: 5 }), '#5d5f63', METAL);
+  if (near) add(roundTube([REAR.clone().add(V(cx - 0.004, -cog, 0.012)), pulleyA, pulleyB, pulleyB.clone().lerp(bot0, 0.5), bot0], 0.0034, { rings: 16, radial: 5 }), '#5d5f63', METAL);
   // Rear derailleur: cage plates and pulleys, body on the hanger.
   add(boxAt(0.006, 0.075, 0.024, V(cx + 0.004, REAR.y - 0.08, REAR.z), 0.3), '#1b1c1f', ALLOY);
-  for (const p of [pulleyA, pulleyB]) add(new THREE.CylinderGeometry(0.011, 0.011, 0.006, 12).rotateZ(Math.PI / 2).translate(p.x, p.y, p.z), '#2b2c2f', SATIN);
+  if (near) for (const p of [pulleyA, pulleyB]) add(new THREE.CylinderGeometry(0.011, 0.011, 0.006, 12).rotateZ(Math.PI / 2).translate(p.x, p.y, p.z), '#2b2c2f', SATIN);
   add(boxAt(0.016, 0.03, 0.03, V(cx + 0.012, REAR.y - 0.025, REAR.z + 0.02), 0.5), '#202124', ALLOY);
   // Front derailleur on the seat tube.
   add(boxAt(0.02, 0.022, 0.05, onSeat(BB.y + 0.13).add(V(0.028, 0, -0.03)), 0.3), '#202124', ALLOY);
@@ -458,7 +459,7 @@ export function buildBike(kit, bones, detail = 'near') {
     const capAt = a.clone().addScaledVector(axis, 0.215);
     const cap = new THREE.CylinderGeometry(0.014, 0.024, 0.03, 12).applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), axis)).translate(capAt.x, capAt.y, capAt.z);
     add(cap, '#16171a', SATIN);
-    for (const sx of [-1, 1]) add(roundTube([a.clone().addScaledVector(axis, 0.01).add(V(0.026 * sx, -0.012, 0)), a.clone().addScaledVector(axis, 0.07).add(V(0.036 * sx, 0.0, 0)), a.clone().addScaledVector(axis, 0.15).add(V(0.034 * sx, 0.004, 0))], 0.0028, { rings: 6, radial: 4 }), carbon, CARBON);
+    if (near) for (const sx of [-1, 1]) add(roundTube([a.clone().addScaledVector(axis, 0.01).add(V(0.026 * sx, -0.012, 0)), a.clone().addScaledVector(axis, 0.07).add(V(0.036 * sx, 0.0, 0)), a.clone().addScaledVector(axis, 0.15).add(V(0.034 * sx, 0.004, 0))], 0.0028, { rings: 6, radial: 4 }), carbon, CARBON);
   }
   // Rear light under the saddle.
   add(boxAt(0.028, 0.04, 0.02, onSeat(SADDLE.y - 0.07).add(V(0, 0, 0.024)), 0.3), '#c81c16', [0.3, 0]);

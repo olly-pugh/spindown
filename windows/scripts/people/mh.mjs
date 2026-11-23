@@ -62,6 +62,12 @@ export function readFitting(file) {
     if (!line || line[0] === '#') continue;
     const p = line.split(/\s+/);
     if (inVerts) {
+      // Keywords may sit between "verts 0" and the data (material, weights file): skip them until data starts.
+      if (!/^[0-9-]/.test(p[0]) && !refs.length) {
+        if (p[0] === 'obj_file') objFile = p[1];
+        else if (p[0] === 'name') name = p.slice(1).join(' ');
+        continue;
+      }
       if (/^[0-9]/.test(p[0]) && (p.length === 9 || p.length === 1)) {
         if (p.length === 9) {
           refs.push(+p[0], +p[1], +p[2]);
@@ -78,8 +84,14 @@ export function readFitting(file) {
     }
     if (inDelete) {
       if (/^[0-9]/.test(p[0])) {
-        for (const q of p) {
-          if (q.includes('-')) {
+        // Numbers and ranges, written "a - b" (separate tokens) or "a-b".
+        for (let k = 0; k < p.length; k++) {
+          const q = p[k];
+          if (q === '-') continue;
+          if (p[k + 1] === '-' && p[k + 2] !== undefined) {
+            for (let i = +q; i <= +p[k + 2]; i++) deleteVerts.push(i);
+            k += 2;
+          } else if (/^\d+-\d+$/.test(q)) {
             const [a, b] = q.split('-').map(Number);
             for (let i = a; i <= b; i++) deleteVerts.push(i);
           } else deleteVerts.push(+q);
