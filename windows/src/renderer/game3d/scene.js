@@ -6,6 +6,7 @@ import { RiderModel } from './rider.js';
 import { buildDales } from './dales.js';
 import { buildYork } from './york.js';
 import * as C from './common.js';
+import { CROWD_TIME } from './crowd.js';
 import * as T from './textures.js';
 import { POWERUPS } from '../../core/world/content.js';
 
@@ -184,7 +185,7 @@ export class WorldScene {
           this.scene.remove(model.root);
           model.dispose();
         }
-        model = new RiderModel(r.kit, { ghost: r.isGhost, shadows: this.q.shadows, skin: skinFor(r.id) });
+        model = new RiderModel(r.kit, { ghost: r.isGhost, shadows: this.q.shadows, skin: skinFor(r.id), hair: hairFor(r.id) });
         model.kitKey = kitKey(r.kit);
         this.riders.set(r.id, model);
         this.scene.add(model.root);
@@ -197,6 +198,13 @@ export class WorldScene {
       model.root.rotation.set(Math.atan(g), -p.heading, 0, 'YXZ');
       model.setPose(r.crank, r.wheel, r.lean);
     }
+    // Full detail for the riders nearest the camera; the rest use the lighter body.
+    const cam = this.camera.position;
+    const near = [...this.riders.values()].filter((m) => m.root.visible)
+      .map((m) => [m, m.root.position.distanceToSquared(cam)])
+      .sort((a, b) => a[1] - b[1]);
+    const limit = this.qualityName === 'low' ? 0 : this.qualityName === 'high' ? 10 : 6;
+    near.forEach(([m, d2], i) => m.setDetail(i < limit && d2 < 28 * 28));
     for (const [id, model] of this.riders) {
       if (!seen.has(id)) {
         this.scene.remove(model.root);
@@ -293,6 +301,7 @@ export class WorldScene {
   /** Spins power-up tokens; hides the one the player just took until they come round again. */
   updateTokens(sim, dt) {
     this.time += dt;
+    CROWD_TIME.value = this.time;
     this.world?.update?.(this.time, this.camera);
     const skyU = this.sky.material.uniforms;
     if (skyU.time) skyU.time.value = this.time;
@@ -372,6 +381,10 @@ function kitKey(kit) {
 const SKINS = ['#f1c7a5', '#e0ac8a', '#c68863', '#8d5a3b', '#f5d2b8', '#a86f4c'];
 function skinFor(id) {
   return SKINS[id % SKINS.length];
+}
+const HAIR = ['#3a2718', '#7a5632', '#c9a066', '#1d1a18', '#9a9a9a', '#5a3a22', '#a65e2e'];
+function hairFor(id) {
+  return HAIR[(id * 3 + 1) % HAIR.length];
 }
 
 function disposeTree(root) {

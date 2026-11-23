@@ -1,14 +1,17 @@
-// An articulated cyclist on a road bike, in a clean stylised look: smooth swept limbs and torso with a curved
-// back, a vented helmet and wrap sunglasses, kit patterns painted in vertex colours, and a bike with a proper
-// drop bar, paired stays and fork blades, spoked wheels, bottle, computer and rear light.
+// An articulated cyclist on a road bike. The body is one smooth skinned mesh (humans.js: muscles, joints and a
+// face blended together), with a separate glossy mesh for the vented helmet and wrap sunglasses; kit patterns
+// are painted per vertex. The bike has a proper drop bar, paired stays and fork blades, spoked wheels, bottle,
+// computer and rear light.
 //
-// The whole rider is two skinned meshes (bike and body) on one small skeleton, so a rider costs two draw calls
-// (plus a soft contact shadow) instead of nine. Every vertex follows exactly one bone: the wheels and cranks
-// spin, each leg is a thigh/shin/foot chain solved by two-bone IK so the foot stays on its pedal, and the
-// upper body rocks a little with each stroke. Units are metres; the rider faces −z.
+// Everything is skinned to one small skeleton: the wheels and cranks spin, each leg is a thigh/shin/foot chain
+// solved by two-bone IK so the foot stays on its pedal, and the upper body rocks a little with each stroke.
+// Body vertices near a joint follow both bones, so knees and hips bend smoothly. A lighter version of the body
+// is drawn for riders further from the camera. Units are metres; the rider faces −z.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { blobTexture } from './textures.js';
+import { painted as paintTemplate } from './sdf.js';
+import { riderTemplates, RIDER, R as Rg, spineU, HEM, ROW, BANDS, UMAX, COLLAR } from './humans.js';
 
 const WHEEL_R = 0.335;
 const CRANK = 0.172;
@@ -150,7 +153,6 @@ function jerseyPaint(jersey) {
   const body = colour(jersey.body), accent = colour(jersey.accent);
   const pocket = body.clone().multiplyScalar(0.84);
   return (u, x, back) => {
-    if (u > 0.955) return accent; // collar
     if (u < 0.045) return pocket; // hem gripper
     let c = body;
     switch (jersey.pattern) {
@@ -179,7 +181,9 @@ function material(kind) {
     let m;
     if (kind === 'ghost') m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0, transparent: true, opacity: 0.38, depthWrite: false, emissive: new THREE.Color('#5ad1ff'), emissiveIntensity: 0.35 });
     else if (kind === 'shadow') m = new THREE.MeshBasicMaterial({ map: blobTexture(), transparent: true, depthWrite: false, opacity: 0.6, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6, toneMapped: false, color: '#000000' });
-    else m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: kind === 'bike' ? 0.3 : 0.66, metalness: kind === 'bike' ? 0.35 : 0.0 });
+    else if (kind === 'gloss') m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.24, metalness: 0.05 });
+    else if (kind === 'body') m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0 });
+    else m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.28, metalness: 0.35 });
     sharedMaterials.set(kind, m);
   }
   return sharedMaterials.get(kind);
@@ -190,7 +194,7 @@ let shadowGeo = null;
  * Builds a rider. kit: {jersey, helmet, bike, wheels} from content.js. options: {ghost, skin, shadows}.
  */
 export class RiderModel {
-  constructor(kit, { ghost = false, skin = '#e0ac8a', shadows = true } = {}) {
+  constructor(kit, { ghost = false, skin = '#e0ac8a', hair = '#3a2718', shadows = true } = {}) {
     this.root = new THREE.Group();
     this.lean = new THREE.Group(); // rolls about the tyre contact line
     this.root.add(this.lean);
@@ -300,104 +304,51 @@ export class RiderModel {
       const a = (k / 5) * Math.PI * 2;
       cranks.push(part(tube(V(0.052, BB.y, BB.z), V(0.052, BB.y + Math.cos(a) * 0.095, BB.z + Math.sin(a) * 0.095), 0.006, 4), black, B_CRANK));
     }
-    const bikeGeo = merge([frame, ...wheel(REAR, B_REAR), ...wheel(FRONT, B_FRONT), ...cranks]);
 
-    // ---- Rider: a curved back from the saddle to the shoulders ----
-    const body = [];
-    const put = (geo, c, b = B_TORSO) => body.push(part(geo, c, b));
-    const jersey = jerseyPaint(kit.jersey);
-    const spine = [V(0, 1.0, 0.215), V(0, 1.105, 0.15), V(0, 1.215, 0.055), V(0, 1.31, -0.07), V(0, 1.372, -0.19), V(0, 1.4, -0.268)];
-    const halfW = [0.148, 0.143, 0.155, 0.178, 0.186, 0.085];
-    const halfD = [0.108, 0.103, 0.112, 0.118, 0.1, 0.062];
-    const tmpC = new THREE.Color();
-    body.push(painted(sweep(spine, halfW, halfD, { rings: 26, radial: 22, colourAt: (u, cs, sn) => tmpC.copy(jersey(u, cs * 0.17, sn)) }), B_TORSO));
-    // Hips and seat in bib shorts.
-    put(ball(HIP.clone().add(V(0, -0.02, 0.012)), 0.16, 1.1, 0.74, 1.05, 16), shorts, B_ROOT);
-    // Arms: sleeves to mid upper arm, bare forearms, gloved hands on the hoods.
-    const glove = colour('#1d1d20');
-    for (const s of [-1, 1]) {
-      const sh = V(0.178 * s, 1.36, -0.222), elbow = V(0.226 * s, 1.156, -0.405), wrist = V(0.204 * s, 1.012, -0.556);
-      const cuff = sh.clone().lerp(elbow, 0.58);
-      put(ball(sh, 0.071, 1, 1, 1, 12), sleeve);
-      put(limb(sh, cuff, [0.066, 0.056, 0.052]), sleeve);
-      put(limb(cuff.clone().lerp(sh, 0.05), cuff.clone().lerp(elbow, 0.1), [0.054, 0.054]), accent); // cuff band
-      put(limb(cuff, elbow, [0.047, 0.043]), skinCol);
-      put(ball(elbow, 0.043, 1, 1, 1, 10), skinCol);
-      put(limb(elbow, wrist, [0.043, 0.041, 0.031]), skinCol);
-      // Hand wrapped over the hood, thumb inside.
-      put(ball(V(0.204 * s, 0.984, -0.598), 0.04, 0.95, 0.78, 1.35, 10), glove);
-      put(ball(V(0.174 * s, 0.972, -0.6), 0.017, 1, 1, 1.7, 6), glove);
-    }
-    // Neck and head, looking up the road.
-    const head = V(0, 1.548, -0.372);
-    put(limb(V(0, 1.4, -0.268), head.clone().add(V(0, -0.055, 0.028)), [0.054, 0.047, 0.047]), skinCol);
-    put(ball(head, 0.1, 0.9, 1.06, 1.02, 18), skinCol);
-    put(ball(head.clone().add(V(0, -0.058, -0.042)), 0.071, 0.82, 0.72, 0.98, 12), skinCol); // jaw and chin
-    put(ball(head.clone().add(V(0, -0.012, -0.102)), 0.018, 0.95, 1.1, 1.3, 8), skinShade); // nose
-    for (const s of [-1, 1]) put(ball(head.clone().add(V(0.09 * s, -0.008, 0.004)), 0.022, 0.5, 1.2, 0.9, 8), skinShade); // ears
-    put(ball(head.clone().add(V(0, -0.068, -0.098)), 0.017, 1.5, 0.35, 0.6, 8), skinCol.clone().multiplyScalar(0.72)); // mouth
-    // Wrap-round sunglasses: a tinted shield across the eyes and arms back to the ears.
-    const shield = new THREE.CylinderGeometry(0.094, 0.094, 0.044, 16, 1, true, Math.PI * 0.66, Math.PI * 0.68).scale(1, 1, 1.02).translate(head.x, head.y + 0.014, head.z + 0.004);
-    put(shield, (x, y) => (y > head.y + 0.03 ? black : colour('#20303c')));
-    // Helmet.
-    const helmetCol = colour(kit.helmet.color);
-    const trim = helmetCol.clone().multiplyScalar(0.55);
-    const vent = colour('#111113');
-    const aero = kit.helmet.aero < 1;
-    const shell = new THREE.SphereGeometry(0.13, 28, 14, 0, Math.PI * 2, 0, Math.PI * 0.57);
-    shell.scale(0.9, 0.84, aero ? 1.46 : 1.24);
-    shell.rotateX(-0.2);
-    shell.translate(head.x, head.y + 0.034, head.z + (aero ? 0.046 : 0.014));
-    put(shell, (x, y, z) => {
-      const lx = x - head.x, lz = z - head.z, ly = y - head.y;
-      if (ly < 0.012 + lz * 0.2) return trim; // rim band
-      // Vents: long dark slots running front to back, and a pair of brow vents.
-      if (!aero && ly > 0.075 && Math.abs(Math.sin(lx * 58)) > 0.8 && lz > -0.115 && lz < 0.125 && Math.abs(lx) < 0.085) return vent;
-      if (aero && ly > 0.05 && lz < -0.1 && Math.abs(Math.abs(lx) - 0.035) < 0.014) return vent;
-      return helmetCol;
-    });
-    // Helmet straps.
-    for (const s of [-1, 1]) put(tube(head.clone().add(V(0.085 * s, 0.03, 0.005)), head.clone().add(V(0.05 * s, -0.1, -0.03)), 0.004, 4), black);
-
-    // ---- Legs ----
-    const sock = colour('#f4f4f2'), shoe = colour(kit.helmet.color === '#1c1c1e' ? '#f2f2f2' : '#202024'), sole = colour('#0e0e0f');
+    // ---- Pedals and helmet straps ride on the bike mesh's material but follow the feet and head ----
+    const extras = [];
     for (const [k, s] of [[0, 1], [1, -1]]) {
-      const hip = V(LEG_X * s, HIP.y, HIP.z), knee = hip.clone().add(V(0, -THIGH, 0)), ankle = knee.clone().add(V(0, -SHIN, 0));
-      const o = k * 3;
-      const thighGeo = sweep([hip.clone().add(V(-0.012 * s, 0.03, 0)), hip.clone().lerp(knee, 0.3), hip.clone().lerp(knee, 0.7), knee], [0.086, 0.087, 0.07, 0.055], [0.092, 0.09, 0.073, 0.056], {
-        rings: 10, radial: 12, colourAt: (u) => (u < 0.6 ? shorts : u < 0.66 ? accent : skinCol),
-      });
-      body.push(painted(thighGeo, B_THIGH + o));
-      put(ball(knee, 0.055, 1, 1, 1.05, 10), skinCol, B_THIGH + o);
-      // Calf: fuller at the back, tapering to the ankle; sock below.
-      const shinGeo = sweep([knee, knee.clone().lerp(ankle, 0.28).add(V(0, 0, 0.012)), knee.clone().lerp(ankle, 0.62).add(V(0, 0, 0.006)), ankle.clone().add(V(0, 0.02, 0))], [0.05, 0.058, 0.046, 0.035], [0.052, 0.064, 0.047, 0.036], {
-        rings: 10, radial: 12, colourAt: (u) => (u < 0.74 ? skinCol : sock),
-      });
-      body.push(painted(shinGeo, B_SHIN + o));
-      // Shoe: toe forward, sole plate and a pedal under the ball of the foot.
-      const shoeGeo = sweep([ankle.clone().add(V(0, -0.04, 0.06)), ankle.clone().add(V(0, -0.035, 0.0)), ankle.clone().add(V(0, -0.055, -0.09)), ankle.clone().add(V(0, -0.068, -0.175))], [0.036, 0.043, 0.047, 0.036], [0.034, 0.05, 0.036, 0.024], {
-        rings: 10, radial: 12, colourAt: (u, cs, sn) => (sn < -0.55 ? sole : u > 0.36 && u < 0.46 ? accent : shoe),
-      });
-      body.push(painted(shoeGeo, B_FOOT + o));
-      put(new THREE.BoxGeometry(0.085, 0.018, 0.075).translate(ankle.x + 0.012 * s, ankle.y + PEDAL.y - 0.002, ankle.z + PEDAL.z), black, B_FOOT + o);
+      const hip = V(LEG_X * s, HIP.y, HIP.z), ankle = hip.clone().add(V(0, -THIGH - SHIN, 0));
+      extras.push(part(new THREE.BoxGeometry(0.085, 0.016, 0.08).translate(ankle.x + 0.012 * s, ankle.y + PEDAL.y - 0.004, ankle.z + PEDAL.z), black, B_FOOT + k * 3));
     }
-    const bodyGeo = merge(body);
+    const head = RIDER.HEAD;
+    for (const s of [-1, 1]) extras.push(part(tube(head.clone().add(V(0.083 * s, 0.03, 0.004)), head.clone().add(V(0.052 * s, -0.098, -0.03)), 0.0045, 6), black, B_TORSO));
+    // Legs are bound hanging straight (the extras above); the body meshes are bound in the pedalling pose.
+    const bikeGeo = merge([frame, ...wheel(REAR, B_REAR), ...wheel(FRONT, B_FRONT), ...cranks, ...extras]);
 
-    // ---- Meshes ----
+    // ---- The rider's body: smooth meshes bound in a mid-stroke pose so knees and hips bend cleanly ----
     this.root.updateMatrixWorld(true);
+    const straight = bones.map((b) => b.matrixWorld.clone());
+    this.applyLegs(BIND_CRANK);
+    this.root.updateMatrixWorld(true);
+    const legMatrices = this.legs.map((l) => [l.thigh.matrixWorld.clone(), l.shin.matrixWorld.clone(), l.foot.matrixWorld.clone()]);
+    const paint = { kit, skin, hair, ghost };
     this.skeleton = new THREE.Skeleton(bones);
+    // The bike and extras were modelled with straight legs: give them inverse matrices from that pose.
+    this.straightSkeleton = new THREE.Skeleton(bones, straight.map((m) => m.clone().invert()));
     const sphere = new THREE.Sphere(V(0, 0.85, -0.1), 1.35);
-    const make = (geo, mat) => {
+    const make = (geo, mat, skeleton = this.skeleton) => {
       const m = new THREE.SkinnedMesh(geo, mat);
-      m.bind(this.skeleton, new THREE.Matrix4());
+      m.bind(skeleton, new THREE.Matrix4());
       m.boundingSphere = sphere;
+      m.frustumCulled = true;
       m.castShadow = shadows && !ghost;
       m.receiveShadow = false;
       this.lean.add(m);
       return m;
     };
-    this.frame = make(bikeGeo, matBike);
-    this.body = make(bodyGeo, matBody);
+    this.frame = make(bikeGeo, matBike, this.straightSkeleton);
+    const mats = ghost ? null : kitMaterials(kit, skin);
+    const matSkin = ghost ? material('ghost') : mats.body, matGloss = ghost ? material('ghost') : mats.gloss;
+    const lod = (name) => {
+      const t = riderTemplates(name, legMatrices);
+      const g = paintedRider(t, paint, name);
+      return [make(g.body, matSkin), ...(g.head ? [make(g.head, matSkin)] : []), make(g.gear, matGloss)];
+    };
+    this.near = lod('near');
+    this.far = lod('far');
+    this.detail = null;
+    this.setDetail(true);
     if (!ghost) {
       // A soft contact shadow, so the bike sits on the road even where there is no sun.
       if (!shadowGeo) shadowGeo = new THREE.PlaneGeometry(1.15, 2.7).rotateX(-Math.PI / 2).translate(0, 0.012, -0.09);
@@ -408,16 +359,16 @@ export class RiderModel {
     this.setPose(0, 0, 0);
   }
 
-  /** crank: crank angle (rad), wheel: wheel angle (rad), lean: roll (rad, positive leaning right). */
-  setPose(crank, wheel, lean) {
-    const b = this.bones;
-    b.crank.rotation.x = -crank;
-    b.rear.rotation.x = -wheel;
-    b.front.rotation.x = -wheel;
-    this.lean.rotation.z = -lean;
-    // A little upper-body rock with each pedal stroke.
-    b.torso.rotation.z = Math.sin(crank) * 0.022;
-    b.torso.rotation.y = Math.sin(crank) * 0.012;
+  /** Full detail close to the camera, a light version further away. */
+  setDetail(near) {
+    if (this.detail === near) return;
+    this.detail = near;
+    for (const m of this.near) m.visible = near;
+    for (const m of this.far) m.visible = !near;
+  }
+
+  /** Leg bones for a crank angle: two-bone IK so each foot stays on its pedal, with a little ankling. */
+  applyLegs(crank) {
     for (const leg of this.legs) {
       // Pedal position in the side plane (z forward is negative).
       const a = crank + (leg.side > 0 ? 0 : Math.PI);
@@ -444,11 +395,142 @@ export class RiderModel {
     }
   }
 
+  /** crank: crank angle (rad), wheel: wheel angle (rad), lean: roll (rad, positive leaning right). */
+  setPose(crank, wheel, lean) {
+    const b = this.bones;
+    b.crank.rotation.x = -crank;
+    b.rear.rotation.x = -wheel;
+    b.front.rotation.x = -wheel;
+    this.lean.rotation.z = -lean;
+    // A little upper-body rock with each pedal stroke.
+    b.torso.rotation.z = Math.sin(crank) * 0.022;
+    b.torso.rotation.y = Math.sin(crank) * 0.012;
+    this.applyLegs(crank);
+  }
+
   dispose() {
     this.frame.geometry.dispose();
-    this.body.geometry.dispose();
     this.skeleton.dispose();
+    this.straightSkeleton.dispose();
   }
+}
+
+/** The crank angle the body meshes are modelled at: both cranks level, so each knee is mid-range. */
+const BIND_CRANK = Math.PI / 2;
+
+/**
+ * Materials for a kit: the body (matt) and helmet/glasses (gloss). Kit edges along limbs, the jersey pattern,
+ * the helmet trim and the glasses frame are coloured per pixel from small lookup textures (see the colour
+ * ladders in sdf.js), so they are crisp lines; everything else uses the vertex colours.
+ */
+const materialCache = new Map();
+function kitMaterials(kit, skin) {
+  const key = `${JSON.stringify(kit)}|${skin}`;
+  if (materialCache.has(key)) return materialCache.get(key);
+  const c = (x) => new THREE.Color(x);
+  const skinC = c(skin), accent = c(kit.jersey.accent), sleeve = c(kit.jersey.sleeve), shorts = c('#16171a');
+  const helmet = c(kit.helmet.color);
+  const W = 256, ROWS = 7;
+  const lad = new Float32Array(W * ROWS * 4);
+  const band = (row, f) => {
+    for (let i = 0; i < W; i++) {
+      const col = f((i + 0.5) / W);
+      const o = ((row - 2) * W + i) * 4;
+      lad[o] = col.r; lad[o + 1] = col.g; lad[o + 2] = col.b; lad[o + 3] = 1;
+    }
+  };
+  band(ROW.UPPER_ARM, (t) => (t < BANDS.UPPER_ARM[0] ? sleeve : t < BANDS.UPPER_ARM[1] ? accent : skinC));
+  band(ROW.FOREARM, (t) => (t > BANDS.FOREARM ? c('#1d1d20') : skinC));
+  band(ROW.THIGH, (t) => (t < BANDS.THIGH[0] ? shorts : t < BANDS.THIGH[1] ? accent : skinC));
+  band(ROW.SHIN, (t) => (t < BANDS.SHIN ? skinC : c('#f2f2ef')));
+  band(ROW.NECK, (t) => (t < BANDS.NECK ? accent : skinC));
+  band(ROW.HELMET, (t) => (t < BANDS.HELMET ? helmet.clone().multiplyScalar(0.5) : helmet));
+  band(ROW.GLASSES, (t) => (t > BANDS.GLASSES ? c('#0c0c0d') : c('#16222c')));
+  const ladders = new THREE.DataTexture(lad, W, ROWS, THREE.RGBAFormat, THREE.FloatType);
+  // Jersey: across = height up the back (waist to collar), down = across the chest.
+  const JW = 512, JH = 128, jer = new Float32Array(JW * JH * 4), paint = jerseyPaint(kit.jersey);
+  for (let j = 0; j < JH; j++) {
+    const x = ((j + 0.5) / JH) * 0.44 - 0.22;
+    for (let i = 0; i < JW; i++) {
+      const u = ((i + 0.5) / JW) * UMAX;
+      const col = u < HEM ? shorts : u < COLLAR[0] ? paint((u - HEM) / (COLLAR[0] - HEM), x, 0) : u < COLLAR[1] ? accent : skinC;
+      const o = (j * JW + i) * 4;
+      jer[o] = col.r; jer[o + 1] = col.g; jer[o + 2] = col.b; jer[o + 3] = 1;
+    }
+  }
+  const jersey = new THREE.DataTexture(jer, JW, JH, THREE.RGBAFormat, THREE.FloatType);
+  for (const t of [ladders, jersey]) {
+    t.magFilter = t.minFilter = THREE.NearestFilter;
+    t.needsUpdate = true;
+  }
+  const make = (roughness, metalness) => {
+    const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness, metalness });
+    m.onBeforeCompile = (sh) => {
+      sh.uniforms.uLadders = { value: ladders };
+      sh.uniforms.uJersey = { value: jersey };
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float ladderRow;\nattribute vec2 ladder;\nvarying float vRow;\nvarying vec2 vLad;')
+        .replace('#include <color_vertex>', '#include <color_vertex>\nvRow = ladderRow;\nvLad = ladder;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform sampler2D uLadders;\nuniform sampler2D uJersey;\nvarying float vRow;\nvarying vec2 vLad;')
+        .replace('#include <color_fragment>', `#include <color_fragment>
+          if (vRow > 0.5) {
+            if (vRow < 1.5) diffuseColor.rgb = texture2D(uJersey, clamp(vLad, 0.002, 0.998)).rgb;
+            else diffuseColor.rgb = texture2D(uLadders, vec2(clamp(vLad.x, 0.002, 0.998), (floor(vRow + 0.5) - 1.5) / ${ROWS}.0)).rgb;
+          }`);
+    };
+    m.customProgramCacheKey = () => 'spindown-rider-ladders';
+    return m;
+  };
+  const out = { body: make(0.6, 0), gloss: make(0.24, 0.05) };
+  materialCache.set(key, out);
+  return out;
+}
+
+/** Kit colours on the shared rider meshes; cached per kit so a rider re-created with the same kit is free. */
+const paintCache = new Map();
+function paintedRider(t, { kit, skin, hair, ghost }, lod) {
+  const key = `${lod}|${JSON.stringify(kit)}|${skin}|${hair}|${ghost}`;
+  if (paintCache.has(key)) return paintCache.get(key);
+  const c = (x) => new THREE.Color(x);
+  const skinC = c(skin);
+  const P = {
+    [Rg.SKIN]: skinC,
+    [Rg.LIPS]: skinC.clone().lerp(c('#a3544c'), 0.45),
+    [Rg.BROW]: skinC.clone().multiplyScalar(0.92),
+    [Rg.HAIR]: c(hair),
+    [Rg.SLEEVE]: c(kit.jersey.sleeve),
+    [Rg.ACCENT]: c(kit.jersey.accent),
+    [Rg.SHORTS]: c('#16171a'),
+    [Rg.SOCK]: c('#f2f2ef'),
+    [Rg.SHOE]: c(kit.helmet.color === '#1c1c1e' ? '#f0f0f0' : '#202024'),
+    [Rg.SOLE]: c('#0e0e0f'),
+    [Rg.SHOE_ACCENT]: c(kit.jersey.accent),
+    [Rg.GLOVE]: c('#1d1d20'),
+    [Rg.HELMET]: c(kit.helmet.color),
+    [Rg.HELMET_TRIM]: c(kit.helmet.color).multiplyScalar(0.5),
+    [Rg.VENT]: c('#0f0f11'),
+    [Rg.LENS]: c('#16222c'),
+    [Rg.FRAME]: c('#0c0c0d'),
+  };
+  const jersey = jerseyPaint(kit.jersey);
+  const paintOf = (tpl) => {
+    const pos = tpl.geometry.attributes.position.array, nrm = tpl.geometry.attributes.normal.array;
+    return (region, i, out) => {
+      if (region === Rg.JERSEY) {
+        const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
+        const u = Math.max(0, Math.min(1, (spineU(x, y, z) - HEM) / (1 - HEM)));
+        const back = nrm[i * 3 + 1] * 0.84 + nrm[i * 3 + 2] * 0.54; // facing up the rider's back
+        return out.copy(jersey(u, x, back));
+      }
+      return out.copy(P[region] ?? skinC);
+    };
+  };
+  const helmet = kit.helmet.aero < 1 ? t.aeroHelmet : t.helmet;
+  const gear = mergeGeometries([paintTemplate(helmet, paintOf(helmet)), paintTemplate(t.glasses, paintOf(t.glasses))]);
+  const out = { body: paintTemplate(t.body, paintOf(t.body)), head: t.head ? paintTemplate(t.head, paintOf(t.head)) : null, gear };
+  paintCache.set(key, out);
+  return out;
 }
 
 export const RIDER_DIMENSIONS = { WHEEL_R, length: 1.75 };
