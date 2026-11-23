@@ -16,7 +16,7 @@ export function newProfile() {
     medals: {}, // routeId -> zoneId -> 'bronze'|'silver'|'gold' (best)
     ghosts: {}, // routeId -> {time, samples: [distance at each second]}
     courses: {}, // routeId -> course version the PRs, medals and ghost above were set on
-    settings: { quality: 'auto', camera: 'chase', timeOfDay: 'morning', weather: 'fair', sound: true, riderMass: 75, units: null },
+    settings: { quality: 'auto', camera: 'chase', timeOfDay: 'morning', weather: 'fair', sound: true, riderMass: 75, units: null, startPacer: null },
     lastRoute: 'york',
     ftpEstimate: null, // watts, from your best efforts in the game
   };

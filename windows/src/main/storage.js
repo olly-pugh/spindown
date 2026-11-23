@@ -9,6 +9,7 @@
 //   Logs/events.log            event log (rotated at 2 MB)
 import fs from 'node:fs';
 import path from 'node:path';
+import { DEFAULT_MAX_HR, DEFAULT_ZONE_PERCENTS, validMaxHR, validPercents } from '../core/hrzones.js';
 
 function writeAtomic(file, data) {
   const tmp = `${file}.tmp-${process.pid}`;
@@ -49,9 +50,9 @@ export const SETTINGS_DEFAULTS = {
   hrmID: null,
   hrmName: null,
   ftp: 170,
-  /** Heart-rate zones as % of max HR, as on a Garmin. No zones are shown until a max HR is entered. */
-  maxHeartRate: null,
-  hrZonePercents: [50, 60, 70, 80, 90],
+  /** Heart-rate zones as % of max HR, as on a Garmin: 196 bpm and 50/60/70/80/90 % until changed. */
+  maxHeartRate: DEFAULT_MAX_HR,
+  hrZonePercents: [...DEFAULT_ZONE_PERCENTS],
   onboarded: false,
 };
 
@@ -71,10 +72,36 @@ export class GameStore {
   }
 }
 
+/**
+ * Brings saved settings up to date. Settings saved before there was a default max heart rate have it as null
+ * (zones hidden); they get the default, as do unusable zone percentages. Returns the keys it changed.
+ */
+export function migrateSettings(values) {
+  const changed = [];
+  if (!validMaxHR(values.maxHeartRate)) {
+    values.maxHeartRate = DEFAULT_MAX_HR;
+    changed.push('maxHeartRate');
+  }
+  if (!validPercents(values.hrZonePercents)) {
+    values.hrZonePercents = [...DEFAULT_ZONE_PERCENTS];
+    changed.push('hrZonePercents');
+  }
+  return changed;
+}
+
 export class Settings {
   constructor(dir, { imperial = false } = {}) {
     this.file = path.join(dir, 'settings.json');
-    this.values = { ...SETTINGS_DEFAULTS, units: imperial ? 'imperial' : 'metric', ...readJSON(this.file, {}) };
+    const saved = readJSON(this.file, null);
+    this.values = { ...SETTINGS_DEFAULTS, units: imperial ? 'imperial' : 'metric', ...saved };
+    // Write a migrated file back, so it reads the same anywhere; a fresh install just uses the defaults.
+    if (migrateSettings(this.values).length && saved) {
+      try {
+        writeAtomic(this.file, JSON.stringify(this.values, null, 2));
+      } catch {
+        // read-only or full disk: the values are still right in memory
+      }
+    }
   }
   get(key) {
     return this.values[key];

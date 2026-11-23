@@ -183,6 +183,45 @@ export const REGULARS = [
   { name: 'Bobby Davro', tier: 'club', mass: 80 },
   { name: 'Taggart', tier: 'racer', mass: 79 },
   { name: 'Magnum PI', tier: 'sportive', mass: 85 },
+  { name: 'Barrel Rider', tier: 'club', mass: 116, build: 'broad',
+    kit: regularKit('barrel', '#7b4a22', '#4e2d12', '#2a2522', 'hoops', '#3b2a1a', 'tourer', '#6b4423') },
+  { name: 'Deev', tier: 'racer', mass: 71, kit: regularKit('deev', '#0f6e74', '#0a1f26', '#6ff2e8', 'stripes', '#0a1f26', 'aero', '#0f6e74') },
+  { name: 'Roggus McPoggus', tier: 'elite', mass: 67, kit: regularKit('roggus', '#5b2a86', '#2d1446', '#9be34a', 'sash', '#9be34a', 'climber', '#5b2a86') },
+  { name: 'Bobby', tier: 'rookie', mass: 79, kit: regularKit('bobby', '#7cc4f2', '#2c6aa0', '#ffffff', 'band', '#2c6aa0', 'sportive', '#2c6aa0') },
+  { name: 'Big Bird', tier: 'sportive', mass: 99, build: 'tall',
+    kit: regularKit('big-bird', '#ffd60a', '#f2b705', '#ff7a00', 'plain', '#ffd60a', 'gravel', '#ff8c00') },
+  { name: 'Mimi', tier: 'sportive', mass: 56, body: 'f', kit: regularKit('mimi', '#f7a1c4', '#ffffff', '#c2185b', 'dots', '#ffffff', 'climber', '#f7a1c4') },
+  { name: 'The Wheezhog', tier: 'rookie', mass: 94, kit: regularKit('wheezhog', '#c98b6b', '#6d4a3a', '#f3c6b0', 'halves', '#6d4a3a', 'tourer', '#5b3b2a') },
+  // Mark Potts rides at exactly 350 W everywhere, uphill and down, races and free rides, leaving a trail of fire.
+  { name: 'Mark Potts', tier: 'racer', mass: 82, power: 350, flames: true,
+    kit: regularKit('potts', '#121212', '#c81d0e', '#ff8a00', 'halves', '#d0021b', 'sprinter', '#ff4500') },
+];
+
+/** A regular's own kit (not in the Garage): jersey colours and pattern, helmet colour, a bike model in their colour. */
+function regularKit(id, body, sleeve, accent, pattern, helmet, bike, bikeColour) {
+  return {
+    jersey: { id: `reg-${id}`, name: id, body, sleeve, accent, pattern },
+    helmet: { id: `reg-${id}`, name: id, color: helmet, aero: 1 },
+    bike: { ...BIKES.find((b) => b.id === bike), color: bikeColour },
+  };
+}
+
+/**
+ * Pacers: riders who hold exactly these watts all the way round, drawn as glowing ghosts in their own colour and
+ * labelled with their power, for you to sit with. Cool colours for the easy ones, hot for the hard ones.
+ */
+export const PACERS = [
+  { watts: 150, color: '#3ddc84' },
+  { watts: 160, color: '#1fc8b4' },
+  { watts: 170, color: '#3fd0ff' },
+  { watts: 180, color: '#4a86ff' },
+  { watts: 190, color: '#7d6bff' },
+  { watts: 200, color: '#b45cff' },
+  { watts: 210, color: '#ff5ce1' },
+  { watts: 220, color: '#ff4d7d' },
+  { watts: 230, color: '#ff5a2e' },
+  { watts: 240, color: '#ff9f1c' },
+  { watts: 250, color: '#ffe03a' },
 ];
 
 export const BOT_FIRST = ['Alf', 'Bea', 'Cyril', 'Dot', 'Ernie', 'Flo', 'Gerald', 'Hattie', 'Ivor', 'Joan', 'Ken', 'Lil', 'Mavis', 'Norm',
