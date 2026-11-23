@@ -8,7 +8,7 @@
 //    Road and the Rakes): a line along each face and the 1 m ground around it, from which the renderer builds
 //    real vertical rock faces (game3d/cliffs.js).
 //
-//   node scripts/build-dales-detail.mjs        (build-dales.mjs runs it at the end too)
+//   node scripts/build-dales-detail.mjs        (run it after build-dales.mjs, which rewrites dales.json without these)
 //   node scripts/build-dales-detail.mjs --debug   (also writes debug images to scripts/dales-cache/debug/)
 import fs from 'node:fs';
 import path from 'node:path';

@@ -3,7 +3,8 @@
 // src/renderer/game3d/data/york.json as `outskirts` (drawn by game3d/outskirts.js as low-cost housing blocks,
 // painted streets and fields over the real relief).
 //
-//   node scripts/build-york-outskirts.mjs            (cached in scripts/dales-cache/, git-ignored)
+//   node scripts/build-york-outskirts.mjs            (after build-york.mjs and build-york-terrain.mjs; cached in
+//                                                     scripts/dales-cache/, git-ignored)
 //   node scripts/build-york-outskirts.mjs --refresh  (refetch from Overpass)
 import fs from 'node:fs';
 import path from 'node:path';
