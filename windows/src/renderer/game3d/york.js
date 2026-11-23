@@ -536,9 +536,9 @@ export function buildYork(route, data, q) {
     if (onBridge(d) || nearGate(d)) continue;
     const p = route.position(d + 9, s * (ROAD_HALF + 1.7));
     if (blocked(p.x, p.z, 3) || nearWall(p.x, p.z) || inWater(p.x, p.z)) continue;
-    streetTrees.push({ x: p.x, z: p.z, y: Y0 + 0.4, kind: 'broad', s: 0.55 + r() * 0.2, rot: r() * 6.3, hue: r() * 0.6 - 0.1, sx: 0.85, sy: 1.25 });
+    streetTrees.push({ x: p.x, z: p.z, y: Y0 + 0.4, kind: 'broad', s: 0.55 + r() * 0.2, rot: r() * 6.3, hue: r() * 0.6 - 0.1, sx: 0.85, sy: 1.25, pit: true });
   }
-  flat.add(C.trees([...streetTrees, ...treeSpots.slice(0, q.maxTrees)], { shadows: q.shadows, maxDistance: 1200, lod: 200 }));
+  flat.add(C.trees([...streetTrees, ...treeSpots.slice(0, q.maxTrees)], { shadows: q.shadows, maxDistance: 1200, lod: 200, q }));
 
   const lamps = [], people = [];
   for (let d = 0; d < route.length; d += 30) {
@@ -565,6 +565,8 @@ export function buildYork(route, data, q) {
   }
   group.add(C.lampPosts(lamps, { shadows: q.shadows }));
   group.add(C.spectators(people));
+  // Street furniture (bins, benches, bollards, railings, signs), clear of bridges, the bars and the finish.
+  group.add(C.roadside(route, { world: 'york', roadHalf: ROAD_HALF, ground: (x, z, d) => route.elevation(d) + 0.19, avoid: (d) => onBridge(d) || nearGate(d) || route.wrap(d) < 75 || route.wrap(d) > route.length - 75, q }));
   // Crowd barriers with sponsor boards along the finish straight.
   const barrierMat = std({ map: T.textTexture('SPINDOWN  ·  YORK  ·  SPINDOWN', { width: 1024, height: 64, bg: '#1d7f46', font: '700 40px Arial' }), color: '#b4b4b4', roughness: 0.9, envMapIntensity: 0.3, side: THREE.DoubleSide });
   const barriers = [];

@@ -630,13 +630,25 @@ export function buildDales(route, data, q) {
     };
     add(data.walls ?? [], true, segs, wallR);
     add(data.hedges ?? [], true, hedgeSegs, wallR);
-    group.add(C.linear(segs, 'wall', { shadows: q.shadows, maxDistance: Math.max(600, wallR * 0.75) }));
-    if (hedgeSegs.length) group.add(C.linear(hedgeSegs, 'hedge', { shadows: q.shadows }));
+    group.add(C.linear(segs, 'wall', { shadows: q.shadows, maxDistance: Math.max(600, wallR * 0.75), q, gates: false }));
+    if (hedgeSegs.length) group.add(C.linear(hedgeSegs, 'hedge', { shadows: q.shadows, q }));
     group.userData.wallSegments = segs.length;
     // The gates themselves, where a wall passed through them and the road is near enough to see them.
     const hung = gateList.filter((g) => g.dir !== null && roadDistance(g.x, g.z) < wallR);
     if (hung.length) group.add(fieldGates(hung, groundAt, q));
     group.userData.gates = hung.length;
+  }
+
+  // Lane furniture (furniture.js): bend and steep-hill warnings, passing places and verge plants. The mapped
+  // power lines are already drawn above, so no invented telegraph line; nothing in the village street.
+  {
+    const rp = {};
+    const inVillage = (d) => {
+      route.position(d, 0, rp);
+      const c = cls.get(rp.x, rp.z);
+      return c === CLS.village || c === CLS.yard;
+    };
+    group.add(C.roadside(route, { world: 'dales', roadHalf: ROAD_HALF, ground: (x, z) => groundAt(x, z), avoid: inVillage, q, telegraph: false }));
   }
 
   mark("walls");
@@ -685,7 +697,7 @@ export function buildDales(route, data, q) {
     spots.sort((a, b) => a.pri - b.pri);
     const cap = q.maxTrees;
     const placements = spots.slice(0, cap).map((s) => ({ x: s.x, z: s.z, y: groundAt(s.x, s.z), kind: s.kind, s: s.s, rot: r() * 6.28, hue: r() - 0.5, sx: 0.85 + r() * 0.3, sy: 0.85 + r() * 0.35 }));
-    group.add(C.trees(placements, { shadows: q.shadows, maxDistance: 2600 }));
+    group.add(C.trees(placements, { shadows: q.shadows, maxDistance: 2600, q }));
     group.userData.trees = placements.length;
   }
 
