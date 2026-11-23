@@ -15,14 +15,16 @@ import * as T from './textures.js';
 import { hash2 } from '../../core/world/noise.js';
 
 const lin = (hex) => new THREE.Color(hex);
-const STONE = lin('#f6ead2'); // weathered magnesian limestone
+const STONE = lin('#fbe8c4'); // weathered magnesian limestone, warm in the sun
 const STONE2 = lin('#e4dbc4');
 const LEADC = lin('#c9cfcf');
 const DEG = Math.PI / 180;
 // The walling layer: coursed limestone for the walls, bars and castle; minster() switches to fine ashlar.
 let stoneL = L.LIMESTONE;
+// Fine detail (crockets, finials) only at medium quality and above.
+let fine = true;
 
-function mesh(W, q, { shadows = true } = {}) {
+export function mesh(W, q, { shadows = true } = {}) {
   const m = new THREE.Mesh(W.geometry(), materials(q.texDetail ?? T.getDetail()).surface);
   m.castShadow = shadows && !!q.shadows;
   m.receiveShadow = true;
@@ -32,7 +34,7 @@ function mesh(W, q, { shadows = true } = {}) {
 // ---- Shared Gothic pieces -------------------------------------------------------------------------------
 
 /** Outline of an arched opening, (s, h) points counter-clockwise from the bottom left: round or pointed. */
-function archOutline(s0, s1, h0, spring, kind = 'pointed', seg = 6) {
+export function archOutline(s0, s1, h0, spring, kind = 'pointed', seg = 6) {
   const w = s1 - s0, out = [[s0, h0], [s1, h0], [s1, spring]];
   if (kind === 'round') {
     const r = w / 2, c = (s0 + s1) / 2;
@@ -69,7 +71,7 @@ function faceWithHoles(W, s0, s1, h0, h1, holes, opts = {}) {
 }
 
 /** A wall face of any outline (counter-clockwise (s, h) points) with shaped openings. */
-function shapedFace(W, outline, holes, { layer = stoneL, tint = STONE, frame = STONE } = {}) {
+export function shapedFace(W, outline, holes, { layer = stoneL, tint = STONE, frame = STONE } = {}) {
   const contour = outline.map(([x, y]) => new THREE.Vector2(x, y));
   const hv = holes.map((o) => o.pts.map(([x, y]) => new THREE.Vector2(x, y)));
   const tris = THREE.ShapeUtils.triangulateShape(contour, hv);
@@ -107,7 +109,7 @@ function opening(W, o, { layer = stoneL, tint = STONE, frame = STONE } = {}) {
   }
   const spring = o.spring ?? hMax;
   let u0 = 0, du = 1;
-  if (o.glaze === L.LANCET) {
+  if (o.glaze === L.LANCET || o.glaze === L.DOOR) {
     u0 = ((o.variant ?? 0) % 4) * 0.25;
     du = 0.25;
   } else if (o.glaze === L.SASH6 || o.glaze === L.SASH2 || o.glaze === L.CASEMENT || o.glaze === L.LEADED) {
@@ -144,7 +146,7 @@ function circleOutline(cs, ch, r, seg = 20) {
 }
 
 /** A pinnacle: square shaft with a little gabled cap and a spirelet, at local (s, d). */
-function pinnacle(W, s, d, h0, shaftH, w, { tint = STONE, spire = 2.6 } = {}) {
+export function pinnacle(W, s, d, h0, shaftH, w, { tint = STONE, spire = 2.6 } = {}) {
   W.setLayer(stoneL).colour(tint);
   W.box(s - w / 2, s + w / 2, h0, h0 + shaftH, d - w / 2, d + w / 2, 1 | 2 | 4 | 8);
   // Gablets on each face round the foot of the spirelet.
@@ -155,7 +157,7 @@ function pinnacle(W, s, d, h0, shaftH, w, { tint = STONE, spire = 2.6 } = {}) {
   // Crockets: small knobs up the spirelet's edges, read as a feathered outline.
   const top = h0 + shaftH + 0.18 + w * spire;
   W.setLayer(L.ASHLAR).colour(tint, 0.9);
-  for (let k = 1; k <= 3; k++) {
+  for (let k = 1; k <= (fine ? 3 : 0); k++) {
     const t = k / 4, hh = h0 + shaftH + 0.18 + (top - h0 - shaftH - 0.18) * t, rr = w * 0.62 * (1 - t) + 0.06;
     for (const [a, c] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
       const x = s + a * rr * 0.7, z = d + c * rr * 0.7;
@@ -166,7 +168,7 @@ function pinnacle(W, s, d, h0, shaftH, w, { tint = STONE, spire = 2.6 } = {}) {
 }
 
 /** Battlements along the top of a wall in the current frame: merlons on a parapet from s0 to s1 at height h. */
-function battlements(W, s0, s1, h, { thick = 0.5, merlonH = 0.75, merlonW = 1.0, gap = 0.6, d0 = -0.5, tint = STONE, coping = true } = {}) {
+export function battlements(W, s0, s1, h, { thick = 0.5, merlonH = 0.75, merlonW = 1.0, gap = 0.6, d0 = -0.5, tint = STONE, coping = true } = {}) {
   W.setLayer(stoneL).colour(tint);
   const len = s1 - s0;
   const n = Math.max(1, Math.floor((len + gap) / (merlonW + gap)));
@@ -278,6 +280,7 @@ function faceFrame(W, ax, az, bx, bz, y, ox, oz) {
  */
 export function minster(q, { y0 = 12 } = {}) {
   stoneL = L.ASHLARWALL;
+  fine = !!q.shadows;
   try {
     return minsterBody(q, y0);
   } finally {
@@ -449,8 +452,8 @@ function minsterBody(q, y0) {
           holes.push({ pts: archOutline(len / 2 - 2.2, len / 2 + 2.2, 13, 24.3, 'pointed', 6), depth: 0.8, glaze: L.LANCET, variant: 2, spring: 24.3 });
           holes.push({ pts: archOutline(len / 2 - 1.3, len / 2 + 1.3, -0.3, 4.8, 'pointed', 5), depth: 1.2, glaze: L.DARK, spring: 4.8 });
         }
-        faceWithHoles(Wr, 0, len, -0.5, 52, holes, { tint });
-        for (const s of [0.8, len - 0.8]) buttress(Wr, s, -0.5, 50.5, { w: 1.6, proj: 2.0, stages: 5, tint });
+        faceWithHoles(Wr, 0, len, -0.5, 52, holes, { tint, layer: L.PANELS });
+        for (const s of [1.1, len - 1.1]) buttress(Wr, s, -0.5, 50.5, { w: 2.2, proj: 3.2, stages: 5, tint });
         Wr.setLayer(L.ASHLAR).colour(tint, 0.92);
         for (const h of [HA + 0.5, HC + 1, 35.2]) Wr.box(0, len, h, h + 0.35, 0, 0.2, 1 | 16 | 32);
         battlements(Wr, 0, len, 52, { thick: 0.5, merlonH: 1.2, merlonW: 0.6, gap: 0.45, d0: -0.5, tint, coping: false });
@@ -569,7 +572,7 @@ export function cliffordsTower(lm, q, { y0 = 12 } = {}) {
   // The motte: steep grass, a little irregular, flattened round the keep.
   const grass = C.groundMaterial({ map: T.grassTexture(), color: '#dcecc0', roughness: 1 });
   {
-    const seg = 56, rings = [[0, top + 0.05], [15.5, top], [17.5, top - 0.6], [22, top - 4.2], [28, top - 9.6], [33.5, top - 13.6], [37, top - 14.85], [40, top - 15.15]];
+    const seg = 56, rings = [[0, top + 0.05], [13.6, top], [15.2, top - 0.7], [19.5, top - 4.8], [25.5, top - 10.2], [31.5, top - 13.9], [35, top - 14.9], [38, top - 15.15]];
     const pos = [], uv = [], idx = [];
     for (let j = 0; j < rings.length; j++) {
       for (let k = 0; k <= seg; k++) {
@@ -631,9 +634,9 @@ export function cliffordsTower(lm, q, { y0 = 12 } = {}) {
       // String course and a parapet that is broken down in places.
       W.setLayer(L.ASHLAR).colour(tint, 0.9);
       W.box(0, len, wallH - 1.45, wallH - 1.25, 0, 0.12, 1 | 16 | 32);
+      // A plain parapet, broken down in places, with only a few merlons left standing.
       const ruin = hash2(li * 31 + k, 7, 3);
-      const merlon = k % 2 === 0;
-      const ph = merlon ? (ruin < 0.25 ? 0.4 : 1.15 + ruin * 0.25) : 0.15;
+      const ph = ruin < 0.12 ? 1.6 : ruin < 0.3 ? 0.55 : 1.05;
       W.setLayer(stoneL).colour(tint);
       W.box(0, len, wallH, wallH + ph, -0.6, 0, 1 | 16 | 4 | 8);
       void mid;
@@ -695,17 +698,24 @@ export function cliffordsTower(lm, q, { y0 = 12 } = {}) {
     });
     // Steps: a long straight flight down the motte with low side walls.
     const sx = cx + Math.cos(fore) * (10.6 + d / 2), sz = cz + Math.sin(fore) * (10.6 + d / 2);
-    const run = 28, steps = 52;
+    const run = 24.5, steps = 52;
     W.frame(sx, base, sz, Math.cos(fore), Math.sin(fore));
     for (let k = 0; k < steps; k++) {
       const s0 = (k / steps) * run, s1 = ((k + 1) / steps) * run;
       const h = -(k / steps) * top - 0.1;
       W.setLayer(L.ASHLAR).colour(lin('#d2c9b4'));
-      W.box(s0, s1 + 0.02, h - top / steps, h, -1.35, 1.35, 16 | 4 | 1 | 2);
+      W.box(s0, s1 + 0.02, h - top / steps, h, -1.75, 1.75, 16 | 4 | 1 | 2);
     }
+    // Central iron handrail on posts, following the slope.
+    extrude(W, [[0, 0.95], [0, 0.88], [run, -top + 0.88], [run, -top + 0.95]], -0.03, 0.03, L.PAINT, lin('#2a2c2e'));
+    for (let k = 0; k <= 8; k++) {
+      const x = (k / 8) * run, y = -(k / 8) * top;
+      W.box(x - 0.025, x + 0.025, y - 0.1, y + 0.9, -0.025, 0.025, 1 | 2 | 4 | 8);
+    }
+    W.frame(sx, base, sz, Math.cos(fore), Math.sin(fore));
     W.setLayer(stoneL).colour(tint, 0.9);
     for (const side of [-1, 1]) {
-      const d0 = side * 1.35, d1 = side * 1.75;
+      const d0 = side * 1.75, d1 = side * 2.15;
       extrude(W, [[0, 0.7], [0, -0.4], [run, -top - 0.4], [run, -top + 0.5]].map(([x, y]) => [x, y]), Math.min(d0, d1), Math.max(d0, d1), stoneL, tint);
     }
   }
@@ -754,7 +764,7 @@ function wallDirection(walls, x, z) {
  * the outer face, battlements and figures; Walmgate with its barbican and Elizabethan timber house.
  * centre: [x, z] of the city (to know which face is outer). walls: world polylines of the city walls.
  */
-export function bar(ring, name, { y0 = 12, q, walls = [], centre = [0, 0] } = {}) {
+export function bar(ring, name, { y0 = 12, q, walls = [], centre = [0, 0], writer = null } = {}) {
   const spec = BARS[name] ?? BARS['Bootham Bar'];
   let cx = 0, cz = 0;
   for (let i = 0; i < ring.length; i += 2) {
@@ -791,7 +801,7 @@ export function bar(ring, name, { y0 = 12, q, walls = [], centre = [0, 0] } = {}
     halfU = Math.max(3.2, (u1 - u0) / 2);
     halfV = 2.2;
   }
-  const W = new Writer(TILES);
+  const W = writer ?? new Writer(TILES);
   const tint = lin('#efe6d0');
   const H = spec.h;
   const ox = cx + vx * vMid, oz = cz + vz * vMid;
@@ -876,26 +886,38 @@ export function bar(ring, name, { y0 = 12, q, walls = [], centre = [0, 0] } = {}
   const at = (sv, dv) => [ox + fux * sv + vx * dv, oz + fuz * sv + vz * dv];
   // Bartizans: round turrets corbelled out from the two outer corners, rising above the parapet.
   if (!spec.small) {
-    for (const s of [-halfU, halfU]) {
-      const d = halfV;
-      const r = 1.25;
-      const h0 = H - 4.5;
+    for (const corner of [-halfU, halfU]) {
+      // The drum stands clear of both faces, corbelled out from the corner.
+      const s = corner + Math.sign(corner) * 0.55, d = halfV + 0.55;
+      const r = 1.5;
+      const h0 = archH + 3.4;
       W.frame(ox, y0, oz, fux, fuz);
       W.setLayer(stoneL).colour(tint);
       // Corbelling (inverted cone), the turret drum and its own crenellations.
-      W.cylinder(s, d, 0.3, r, h0 - 1.8, h0, 10, { top: false });
-      W.cylinder(s, d, r, r, h0, H + 1.4, 12, { top: false });
+      W.cylinder(s, d, 0.35, r, h0 - 2.2, h0, 10, { top: false });
+      W.cylinder(s, d, r, r, h0, H + 2.4, 14, { top: false });
+      // Cross slits on the drum, facing out and to the side.
+      W.setLayer(L.DARK).setColour(1, 1, 1);
+      for (const hh of [h0 + 1.0, h0 + 3.6]) {
+        if (hh + 1.2 > H) continue;
+        W.quad([s - 0.06, hh, d + r + 0.01], [s + 0.06, hh, d + r + 0.01], [s + 0.06, hh + 1.2, d + r + 0.01], [s - 0.06, hh + 1.2, d + r + 0.01], [0, 0, 1, 0, 1, 1, 0, 1]);
+        W.quad([s - 0.25, hh + 0.75, d + r + 0.012], [s + 0.25, hh + 0.75, d + r + 0.012], [s + 0.25, hh + 0.84, d + r + 0.012], [s - 0.25, hh + 0.84, d + r + 0.012], [0, 0, 1, 0, 1, 1, 0, 1]);
+      }
+      W.setLayer(stoneL).colour(tint);
       W.setLayer(L.ASHLAR).colour(tint, 0.9);
-      W.cylinder(s, d, r + 0.12, r + 0.12, H + 1.4, H + 1.65, 12, { top: true });
+      W.cylinder(s, d, r + 0.12, r + 0.12, H + 2.4, H + 2.65, 12, { top: true });
       W.setLayer(stoneL).colour(tint);
       for (let k = 0; k < 6; k++) {
         const a = (k / 6) * Math.PI * 2;
         const x = s + Math.cos(a) * (r - 0.15), z = d - Math.sin(a) * (r - 0.15);
-        W.box(x - 0.28, x + 0.28, H + 1.65, H + 2.45, z - 0.28, z + 0.28, 1 | 2 | 4 | 8 | 16);
+        W.box(x - 0.28, x + 0.28, H + 2.65, H + 3.45, z - 0.28, z + 0.28, 1 | 2 | 4 | 8 | 16);
       }
-      // Arrow slit.
-      W.setLayer(L.DARK).colour(lin('#ffffff'));
-      W.quad([s - 0.08, h0 + 1.2, d + r + 0.01], [s + 0.08, h0 + 1.2, d + r + 0.01], [s + 0.08, h0 + 2.6, d + r + 0.01], [s - 0.08, h0 + 2.6, d + r + 0.01], [0, 0, 1, 0, 1, 1, 0, 1]);
+      // A stone figure on each turret.
+      if (spec.figures) {
+        W.setLayer(L.ASHLAR).colour(lin('#cfc5ae'));
+        W.cylinder(s, d, 0.26, 0.2, H + 3.45, H + 4.6, 6);
+        W.cylinder(s, d, 0.15, 0.12, H + 4.6, H + 4.88, 6);
+      }
     }
   }
   // Walmgate: the barbican in front, a walled forecourt with its own battlemented arch.
@@ -938,6 +960,7 @@ export function bar(ring, name, { y0 = 12, q, walls = [], centre = [0, 0] } = {}
     W.setLayer(L.PLAINTILE).setColour(1, 1, 1);
     W.prism(-halfU + 0.1, halfU - 0.1, -1.9, 1.9, 0, 2.2, { ends: true });
   }
+  if (writer) return null;
   const g = new THREE.Group();
   g.add(mesh(W, q));
   g.userData.landmark = name;
@@ -945,8 +968,8 @@ export function bar(ring, name, { y0 = 12, q, walls = [], centre = [0, 0] } = {}
 }
 
 /** A tower on the walls from its footprint: stone, battlemented; Red Tower in brick under a tiled roof. */
-export function wallTower(ring, name, { y0 = 12, q } = {}) {
-  const W = new Writer(TILES);
+export function wallTower(ring, name, { y0 = 12, q, writer = null } = {}) {
+  const W = writer ?? new Writer(TILES);
   const brick = /Red Tower|Davy Tower/.test(name);
   const roofed = /Red Tower|Fishergate Postern/.test(name);
   const tint = brick ? lin('#f4e2d6') : lin('#efe6d0');
@@ -997,6 +1020,7 @@ export function wallTower(ring, name, { y0 = 12, q } = {}) {
     for (let i = 0; i < n; i++) f.push(pr[i * 2] - cx / n, pr[i * 2 + 1] - cz / n);
     W.flat(f, 0, true);
   }
+  if (writer) return null;
   const g = new THREE.Group();
   g.add(mesh(W, q));
   g.userData.landmark = name;
@@ -1012,7 +1036,6 @@ export function wallTower(ring, name, { y0 = 12, q } = {}) {
 export function cityWalls(runs, { y0 = 12, q } = {}) {
   const group = new THREE.Group();
   const cells = new Map();
-  const merlons = [[], []];
   const tint = lin('#efe6d0');
   for (const { run, out } of runs) {
     // A squared pier where the run ends (a road cut through the walls), rising a little above the parapet.
@@ -1026,7 +1049,7 @@ export function cityWalls(runs, { y0 = 12, q } = {}) {
         const tl = Math.hypot(tx, tz) || 1;
         tx /= tl;
         tz /= tl;
-        const key = `${Math.floor(px / 160)},${Math.floor(pz / 160)}`;
+        const key = `${Math.floor(px / 320)},${Math.floor(pz / 320)}`;
         let Wp = cells.get(key);
         if (!Wp) cells.set(key, (Wp = new Writer(TILES)));
         Wp.frame(px, y0, pz, tx, tz); // s into the wall, d = (−tz, tx)
@@ -1045,7 +1068,7 @@ export function cityWalls(runs, { y0 = 12, q } = {}) {
       const ax = run[i], az = run[i + 1], bx = run[i + 2], bz = run[i + 3];
       const len = Math.hypot(bx - ax, bz - az);
       if (len < 0.05) continue;
-      const key = `${Math.floor(ax / 160)},${Math.floor(az / 160)}`;
+      const key = `${Math.floor(ax / 320)},${Math.floor(az / 320)}`;
       let W = cells.get(key);
       if (!W) cells.set(key, (W = new Writer(TILES)));
       // Frame so that +d points out of the city: the segment a→b with the outward normal on the right.
@@ -1078,14 +1101,21 @@ export function cityWalls(runs, { y0 = 12, q } = {}) {
       W.setLayer(stoneL).colour(tint, 0.88);
       W.quad([L1, 2.6, -1.15], [L0, 2.6, -1.15], [L0, 5.1, -1.15], [L1, 5.1, -1.15], [L0, 0, L1, 0, L1, 2.5, L0, 2.5]);
       W.uo = 0;
-      // Merlons along the parapet: 1.5 m long, 0.75 m embrasures.
-      const yaw = Math.atan2(-(W.ux), -(W.uz)) + Math.PI / 2;
+      // Merlons along the parapet, 1.5 m long with 0.75 m embrasures; every other one has a cross slit.
       for (let t = 0.55, k = Math.floor((ax + az) * 7) & 1; t + 1.5 < len; t += 2.25, k++) {
-        const s = t + 0.75;
-        const px = W.ox + W.ux * s + W.nx * 0.8, pz = W.oz + W.uz * s + W.nz * 0.8;
-        merlons[k & 1].push({ x: px, z: pz, rot: Math.atan2(W.ux, W.uz) });
+        const s0 = t, s1 = t + 1.5;
+        W.setLayer(stoneL).colour(tint);
+        W.box(s0, s1, 6.05, 7.05, 0.45, 1.15, 1 | 2 | 4 | 8);
+        W.setLayer(L.ASHLAR).colour(tint, 0.9);
+        W.box(s0 - 0.04, s1 + 0.04, 7.05, 7.13, 0.41, 1.19, 1 | 2 | 4 | 8 | 32);
+        W.prism(s0 - 0.04, s1 + 0.04, 0.41, 1.19, 7.13, 7.27, { ends: true });
+        if (k & 1) {
+          const m = (s0 + s1) / 2;
+          W.setLayer(L.DARK).setColour(1, 1, 1);
+          W.quad([m - 0.05, 6.17, 1.16], [m + 0.05, 6.17, 1.16], [m + 0.05, 6.95, 1.16], [m - 0.05, 6.95, 1.16], [0, 0, 1, 0, 1, 1, 0, 1]);
+          W.quad([m - 0.22, 6.65, 1.161], [m + 0.22, 6.65, 1.161], [m + 0.22, 6.73, 1.161], [m - 0.22, 6.73, 1.161], [0, 0, 1, 0, 1, 1, 0, 1]);
+        }
       }
-      void yaw;
     }
   }
   for (const W of cells.values()) {
@@ -1097,31 +1127,5 @@ export function cityWalls(runs, { y0 = 12, q } = {}) {
     m.userData.minDistance = 0;
     group.add(m);
   }
-  // Merlon templates (local x along the wall, z out of the city), two kinds: plain and with a cross slit.
-  const makeMerlon = (slit) => {
-    const W = new Writer(TILES);
-    W.frame(0, 0, 0, 1, 0);
-    W.setLayer(stoneL).colour(tint);
-    W.box(-0.75, 0.75, 0, 1.0, -0.35, 0.35, 1 | 2 | 4 | 8);
-    W.setLayer(L.ASHLAR).colour(tint, 0.9);
-    // Saddleback coping.
-    W.box(-0.79, 0.79, 1.0, 1.08, -0.39, 0.39, 1 | 2 | 4 | 8 | 32);
-    W.prism(-0.79, 0.79, -0.39, 0.39, 1.08, 1.22, { ends: true });
-    if (slit) {
-      W.setLayer(L.DARK).colour(lin('#ffffff'));
-      W.quad([-0.05, 0.12, 0.36], [0.05, 0.12, 0.36], [0.05, 0.9, 0.36], [-0.05, 0.9, 0.36], [0, 0, 1, 0, 1, 1, 0, 1]);
-      W.quad([-0.22, 0.6, 0.361], [0.22, 0.6, 0.361], [0.22, 0.68, 0.361], [-0.22, 0.68, 0.361], [0, 0, 1, 0, 1, 1, 0, 1]);
-    }
-    return W.geometry();
-  };
-  const mat = materials(q.texDetail ?? T.getDetail()).surface;
-  const m4 = new THREE.Matrix4(), qq = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), one = new THREE.Vector3(1, 1, 1);
-  [false, true].forEach((slit, k) => {
-    const items = merlons[k].map((p) => {
-      qq.setFromAxisAngle(up, p.rot - Math.PI / 2);
-      return { matrix: m4.clone().compose(new THREE.Vector3(p.x, y0 + 6.05, p.z), qq, one) };
-    });
-    if (items.length) group.add(C.chunked(makeMerlon(slit), mat, items, { chunk: 250, shadows: q.shadows, maxDistance: 700 }));
-  });
   return group;
 }

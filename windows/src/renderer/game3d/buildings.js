@@ -17,7 +17,7 @@ import * as THREE from 'three';
 import * as C from './common.js';
 import { Cells, Writer } from './archgeo.js';
 import { L, TILES, FACADE_LAYER, SIGN_PAINTS, materials } from './archtex.js';
-import { isYorkLandmark, bar, wallTower } from './landmarks.js';
+import { isYorkLandmark, bar, wallTower, mesh as landmarkMesh, pinnacle, battlements, archOutline, shapedFace } from './landmarks.js';
 import * as T from './textures.js';
 import { hash2 } from '../../core/world/noise.js';
 
@@ -27,7 +27,7 @@ const DEG = Math.PI / 180;
 
 /** Near-detail distance by quality (metres from the camera to a chunk). */
 export function nearDistance(q) {
-  return q.shadows ? (q.shadowSize >= 4096 ? 260 : 165) : 105;
+  return q.shadows ? (q.shadowSize >= 4096 ? 230 : 165) : 85;
 }
 
 const lin = (hex) => new THREE.Color(hex);
@@ -86,6 +86,13 @@ const STYLE = {
     win: () => ({ w: 1.75, h: 1.55, sill: 0.9 }),
     glaze: () => L.MODERN, head: 'none', sill: true, doorcase: 'modern', door: 3, string: false, plinth: false,
     eaves: 'parapet', parapet: 1, roofs: [[L.SLATE, 1]], pitch: 25, hip: 0, overhang: 0.25, dormer: 0, quoins: 0,
+  },
+  // Late 20th-century blocks with pitched concrete-tile roofs: brick, big plain windows.
+  modernPitched: {
+    far: 'brick2', wall: L.BRICK2, tints: P.brick2Tints, storeyH: [3.2, 3.0, 3.0, 3.0, 3.0], bay: 2.6, reveal: 0.12,
+    win: () => ({ w: 1.6, h: 1.4, sill: 0.95 }),
+    glaze: () => L.MODERN, head: 'none', sill: true, doorcase: 'modern', door: 3, string: false, plinth: false,
+    eaves: 'plain', parapet: 0, roofs: [[L.SLATE, 1]], pitch: 30, hip: 0.5, overhang: 0.35, dormer: 0, quoins: 0,
   },
   timber: {
     far: 'timber', wall: L.RENDER, tints: P.renderTints, storeyH: [2.75, 2.55, 2.45], bay: 2.1, reveal: 0.05,
@@ -347,9 +354,13 @@ function chooseStyle(b, ctx) {
   const big = b.area > 650 || b.h >= 16 || (b.k === 'commercial' && b.area > 350);
   if (b.k === 'church') return 'church';
   if (b.area < 26 || b.h < 4) return 'outbuilding';
-  if (big) return b.inside ? (t < 0.4 ? 'civic' : t < 0.72 ? 'georgian' : 'modern') : t < 0.55 ? 'modern' : t < 0.8 ? 'victorian' : 'civic';
+  // Big footprints: mostly Georgian and Victorian institutions, warehouses and civic buildings; some modern.
+  if (big) {
+    if (b.inside) return t < 0.38 ? 'civic' : t < 0.72 ? 'georgian' : t < 0.86 ? 'victorian' : t < 0.93 ? 'modern' : 'modernPitched';
+    return t < 0.38 ? 'victorian' : t < 0.56 ? 'georgian' : t < 0.7 ? 'civic' : t < 0.84 ? 'modernPitched' : 'modern';
+  }
   if (b.inside) {
-    if (b.area < 170 && hash2(b.i, 3, 5) < 0.17) return 'timber';
+    if (b.area < 150 && b.obb.la * 2 < 9.5 && hash2(b.i, 3, 5) < 0.2) return 'timber';
     if (t < 0.48) return 'georgian';
     if (t < 0.66) return 'render';
     if (t < 0.9) return 'victorian';
@@ -375,6 +386,7 @@ function storeyCount(b, st, t) {
   if (st === STYLE.render) return t < 0.3 ? 2 : t < 0.9 ? 3 : 4;
   if (st === STYLE.civic) return t < 0.5 ? 3 : 4;
   if (st === STYLE.modern) return 3 + Math.floor(t * 3);
+  if (st === STYLE.modernPitched) return 2 + Math.floor(t * 2);
   if (st === STYLE.timber) return t < 0.25 ? 2 : 3;
   return 2;
 }
@@ -816,12 +828,38 @@ function nearWall(W, b, e, ctx) {
   }
   const shopHere = b.shop && front && len > 3.2;
   const bayWindows = st.bayWindow && hash2(b.group, 51, 3) < st.bayWindow;
+  if (st === STYLE.church) {
+    // Pointed lancets between buttresses, and a pointed doorway on the main front.
+    const xs = bays.map((x) => x.s);
+    const holes = [];
+    const pitch = xs.length > 1 ? xs[1] - xs[0] : len;
+    const w = Math.min(1.5, pitch * 0.42);
+    const sill = 2.0, spring = Math.min(H - 1.2 - 0.87 * w, 5.8);
+    xs.forEach((sx, i) => {
+      if (main && i === Math.floor(xs.length / 2) && xs.length > 1) {
+        holes.push({ pts: archOutline(sx - 0.8, sx + 0.8, 0.02, 2.4, 'pointed', 5), depth: 0.45, glaze: L.DOOR, variant: 2, spring: 2.4 });
+      } else if (spring > sill + 0.8) {
+        holes.push({ pts: archOutline(sx - w / 2, sx + w / 2, sill, spring, 'pointed', 5), depth: st.reveal, glaze: L.LANCET, variant: 1 + (i % 2), spring });
+      }
+    });
+    shapedFace(W, [[0, -b.foot], [len, -b.foot], [len, H], [0, H]], holes, { layer: st.wall, tint: b.tint, frame: b.trim });
+    // Hood moulds over the windows.
+    W.setLayer(L.ASHLAR).colour(b.trim, 0.92);
+    for (const o of holes) {
+      let top = 0, mid = 0;
+      for (const [x, y] of o.pts) if (y > top) [top, mid] = [y, x];
+      W.box(mid - 0.14, mid + 0.14, top, top + 0.22, 0, 0.1, 1 | 4 | 8 | 16 | 32);
+    }
+    bays.length = 0;
+    for (const x of xs) bays.push({ s: x, plot: plots[0], door: false });
+  }
   const jet = (k) => (jetty ? jetty * k : 0);
   const storeyFrame = (k) => {
     // Jettied upper storeys of timber-framed houses step out over the street.
     W.wallFrame(e.ax + e.nx * jet(k), e.az + e.nz * jet(k), e.bx + e.nx * jet(k), e.bz + e.nz * jet(k), b.y);
   };
   for (const s of b.storeys) {
+    if (st === STYLE.church) break;
     const k = s.k;
     storeyFrame(k);
     const sh = [];
@@ -1253,7 +1291,7 @@ function roofInset(A, b, N = null) {
     const a = outer[i], c = outer[j], ia = inner[i], ic = inner[j];
     const len = Math.hypot(c[0] - a[0], c[1] - a[1]);
     const sl = Math.hypot(d + oe, rise - he);
-    A.quad([a[0], he, a[1]], [c[0], he, c[1]], [ic[0], rise, ic[1]], [ia[0], rise, ia[1]], [0, 0, len, 0, len - d, sl, d, sl]);
+    A.quad([ia[0], rise, ia[1]], [ic[0], rise, ic[1]], [c[0], he, c[1]], [a[0], he, a[1]], [d, sl, len - d, sl, len, 0, 0, 0]);
   }
   // Fascia and soffit (near only).
   if (N) {
@@ -1263,10 +1301,10 @@ function roofInset(A, b, N = null) {
       const j = (i + 1) % n;
       const a = outer[i], c = outer[j];
       const len = Math.hypot(c[0] - a[0], c[1] - a[1]);
-      N.quad([a[0], he - 0.16, a[1]], [c[0], he - 0.16, c[1]], [c[0], he, c[1]], [a[0], he, a[1]], [0, 0, len, 0, len, 0.16, 0, 0.16]);
+      N.quad([c[0], he - 0.16, c[1]], [a[0], he - 0.16, a[1]], [a[0], he, a[1]], [c[0], he, c[1]], [0, 0, len, 0, len, 0.16, 0, 0.16]);
       const w = b.pts[i], x = b.pts[j];
       N.colour(P.white, 0.55);
-      N.quad([c[0], he - 0.16, c[1]], [a[0], he - 0.16, a[1]], [w[0], he - 0.16, w[1]], [x[0], he - 0.16, x[1]], [0, 0, len, 0, len, 0.3, 0, 0.3]);
+      N.quad([x[0], he - 0.16, x[1]], [w[0], he - 0.16, w[1]], [a[0], he - 0.16, a[1]], [c[0], he - 0.16, c[1]], [0, 0, len, 0, len, 0.3, 0, 0.3]);
       N.colour(P.white, 0.9);
     }
   }
@@ -1444,6 +1482,68 @@ function chimneys(A, b, pots, bs) {
   }
 }
 
+/**
+ * A parish church's west tower: limestone, belfry lights, corner buttresses, battlements with pinnacles, or a
+ * broach spire on some. Placed at the west end of the church's long axis, rising well above the nave roof.
+ */
+function churchTower(A, b) {
+  if (b.area < 110) return;
+  const o = b.obb;
+  // The west end: whichever end of the long axis has the smaller x.
+  const sg = o.ux > 0 ? -1 : 1;
+  const tw = Math.max(4.2, Math.min(7, o.lb * 2 * 0.62, o.la * 2 * 0.36));
+  const cx = o.cx + o.ux * sg * (o.la - tw / 2), cz = o.cz + o.uz * sg * (o.la - tw / 2);
+  const H = b.eaves + 8 + hash2(b.i, 61, 3) * 7;
+  const spire = hash2(b.i, 62, 4) < 0.3;
+  const tint = b.tint;
+  A.frame(cx, b.y, cz, o.ux, o.uz);
+  A.setLayer(b.st.wall).colour(tint);
+  A.uo = b.hash * 7;
+  A.box(-tw / 2, tw / 2, -0.4, H, -tw / 2, tw / 2, 1 | 2 | 4 | 8);
+  // Angle buttresses at the corners, in two stages.
+  for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    const bx = x * tw / 2, bz = z * tw / 2;
+    A.box(bx - 0.35, bx + 0.35, -0.4, H * 0.55, bz - 0.35 + z * 0.3, bz + 0.35 + z * 0.3, 1 | 2 | 4 | 8 | 16);
+    A.box(bx - 0.28, bx + 0.28, H * 0.55, H - 1.6, bz - 0.28 + z * 0.15, bz + 0.28 + z * 0.15, 1 | 2 | 4 | 8 | 16);
+  }
+  // Belfry lights (louvred) on each face, with a string course below and a door on the west face.
+  const lh = Math.min(3.2, H * 0.16), ly = H - 1.9 - lh;
+  for (let f = 0; f < 4; f++) {
+    const a = (f * Math.PI) / 2;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    A.frame(cx, b.y, cz, o.ux * ca - o.uz * sa, o.uz * ca + o.ux * sa);
+    for (const x of tw > 5.2 ? [-tw * 0.2, tw * 0.2] : [0]) {
+      A.setLayer(L.LOUVRE).setColour(1, 1, 1);
+      A.quad([x - 0.45, ly, tw / 2 + 0.02], [x + 0.45, ly, tw / 2 + 0.02], [x + 0.45, ly + lh, tw / 2 + 0.02], [x - 0.45, ly + lh, tw / 2 + 0.02], [0, 0, 1, 0, 1, 1, 0, 1]);
+      A.setLayer(L.ASHLAR).colour(tint, 0.92);
+      A.box(x - 0.6, x + 0.6, ly - 0.15, ly, tw / 2, tw / 2 + 0.12, 1 | 4 | 8 | 16 | 32);
+      A.box(x - 0.6, x - 0.45, ly, ly + lh, tw / 2, tw / 2 + 0.08, 1 | 4 | 8);
+      A.box(x + 0.45, x + 0.6, ly, ly + lh, tw / 2, tw / 2 + 0.08, 1 | 4 | 8);
+      A.pyramid(x, tw / 2 + 0.04, 0.62, ly + lh, ly + lh + 0.55, 4, Math.PI / 4);
+    }
+    A.setLayer(L.ASHLAR).colour(tint, 0.9);
+    A.box(-tw / 2 - 0.05, tw / 2 + 0.05, ly - 1.1, ly - 0.88, tw / 2, tw / 2 + 0.12, 1 | 16 | 32);
+  }
+  A.frame(cx, b.y, cz, o.ux, o.uz);
+  if (spire) {
+    // A broach spire of lead-grey stone.
+    A.setLayer(b.st.wall).colour(tint, 0.95);
+    A.pyramid(0, 0, tw * 0.62, H, H + tw * 2.6, 8, Math.PI / 8);
+  } else {
+    // Battlements and corner pinnacles.
+    for (let f = 0; f < 4; f++) {
+      const a = (f * Math.PI) / 2, ca = Math.cos(a), sa = Math.sin(a);
+      const ux = o.ux * ca - o.uz * sa, uz = o.uz * ca + o.ux * sa;
+      const nx = -uz, nz = ux; // this face's outward normal
+      // Frame origin at the face's left end on its outer surface: s along the face, d outward.
+      A.frame(cx - ux * (tw / 2) + nx * (tw / 2), b.y, cz - uz * (tw / 2) + nz * (tw / 2), ux, uz);
+      battlements(A, 0, tw, H, { thick: 0.4, merlonH: 0.75, merlonW: 0.7, gap: 0.5, d0: -0.4, tint });
+      pinnacle(A, 0, -0.2, H, 1.2, 0.55, { tint, spire: 3 });
+    }
+  }
+  A.uo = 0;
+}
+
 /** Gabled dormers on the front slope of some attics. */
 function dormers(Wn, b) {
   const r = b.roof;
@@ -1519,7 +1619,8 @@ function finishStyle(b, ctx) {
   b.frame = st === STYLE.timber ? P.oak : st === STYLE.modern ? P.dark : st === STYLE.cottage && t > 0.8 ? lin('#3c4a3a') : P.white;
   b.archCol = st === STYLE.render ? b.tint.clone().multiplyScalar(1.04) : P.white;
   b.doorPaint = P.doorPaints[Math.floor(t * 997) % P.doorPaints.length];
-  b.timber = t > 0.35 ? P.tar : P.oak;
+  b.timber = t > 0.55 ? P.tar : t > 0.25 ? P.oak : lin('#8a7a66');
+  if (st === STYLE.timber) b.tint = lin(['#f4efe2', '#efe2c4', '#e8d6a8', '#f2e6d8', '#ffffff'][Math.floor(hash2(b.i, 71, 2) * 5)]);
   // Roofs weather differently house to house: a little darker, mossier or redder.
   b.roofTint = lin(pick(['#ffffff', '#eef0f2', '#e2e2de', '#f6f2ea', '#e8e4dc', '#dcdcd4', '#f4ece4'], t2 * 0.5 + t * 0.5));
   b.stackTint = st.wall === L.BRICK || st.wall === L.BRICK2 ? b.tint : P.brickTints[Math.floor(t * 8) % 8];
@@ -1611,6 +1712,7 @@ export function buildingSet(list, ctx) {
     else if (b.roof.type === 'inset') roofInset(A, b, N);
     else roofFlat(A, b);
     chimneys(A, b, pots, bs);
+    if (b.st === STYLE.church) churchTower(A, b);
     b.nearWriter = null;
     if (b.detail) {
       for (const e of b.edges) nearWall(N, b, e, ctx);
@@ -1631,8 +1733,10 @@ export function buildingSet(list, ctx) {
   };
   cells.build(group, sets);
   bgCells.build(group, sets);
-  if (pots.length) group.add(potMesh(pots, q));
+  if (pots.length && q.shadows) group.add(potMesh(pots, q));
   group.userData.buildings = bs.length;
+  // Style and place of each building (for diagnostics and the screenshot tools).
+  group.userData.list = bs.map((b) => [b.styleName, Math.round(b.cx), Math.round(b.cz), b.detail ? 1 : 0, ...(b.main ? [+((b.main.ax + b.main.bx) / 2).toFixed(1), +((b.main.az + b.main.bz) / 2).toFixed(1), +b.main.nx.toFixed(2), +b.main.nz.toFixed(2)] : [])]);
   console.log(`[gp] buildings: ${bs.length}, textures ${Math.round(t1 - t0)} ms, geometry ${Math.round(performance.now() - t1)} ms`);
   return { group, buildings: bs };
 }
@@ -1682,7 +1786,7 @@ export function pushBehind(ring, nearest, minDist, maxPush = 4) {
  */
 export function cityBuildings(list, ctx) {
   const roadHalf = ctx.roadHalf ?? 3.6;
-  const detailR = ctx.detailRadius ?? (ctx.q.shadows ? 80 : 50);
+  const detailR = ctx.detailRadius ?? (ctx.q.shadows ? 80 : 42);
   const y0 = ctx.y ?? 0;
   // The bars and wall towers are landmarks with their own builders.
   let ccx = 0, ccz = 0;
@@ -1696,12 +1800,14 @@ export function cityBuildings(list, ctx) {
     ccz /= rr.length / 2;
   }
   const special = new THREE.Group();
+  const specialW = new Writer(TILES); // all the bars and wall towers in one mesh
   const bars = [];
   const rest = [];
   for (const b of list) {
     if (b.n && isYorkLandmark(b.n)) {
       const isBar = / Bar$/.test(b.n);
-      special.add(isBar ? bar(b.ring, b.n, { y0, q: ctx.q, walls: ctx.walls, centre: [ccx, ccz] }) : wallTower(b.ring, b.n, { y0, q: ctx.q }));
+      if (isBar) bar(b.ring, b.n, { y0, q: ctx.q, walls: ctx.walls, centre: [ccx, ccz], writer: specialW });
+      else wallTower(b.ring, b.n, { y0, q: ctx.q, writer: specialW });
       if (isBar) {
         let x = 0, z = 0;
         for (let i = 0; i < b.ring.length; i += 2) {
@@ -1725,6 +1831,7 @@ export function cityBuildings(list, ctx) {
       return d < detailR;
     },
   });
+  if (!specialW.empty) special.add(landmarkMesh(specialW, ctx.q));
   res.group.add(special);
   /** Is there a mapped bar within r metres of point p ({x, z})? */
   res.nearBar = (p, r) => bars.some(([x, z]) => Math.hypot(x - p.x, z - p.z) < r);

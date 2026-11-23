@@ -84,6 +84,7 @@ def('LIMESTONE', 4, 0.9, 0, false, () => from(T.stoneWallTexture({ tone: 'limest
 def('RUBBLE', 4, 0.95, 0, false, () => from(T.stoneWallTexture({ tone: 'rubble' })));
 def('DALESLIME', 4, 0.95, 0, false, () => dalesLimestone);
 def('ASHLARWALL', 4, 0.85, 0, false, () => ashlarWall);
+def('PANELS', 4, 0.85, 0, false, () => blindTracery);
 // Dressings and joinery (near white: the vertex colour gives the paint or stone colour).
 def('PAINT', 1, 0.55, 0, false, () => paint);
 def('ASHLAR', 2, 0.85, 0, false, () => ashlar);
@@ -112,7 +113,8 @@ export const FACADE_KINDS = ['brick', 'brick2', 'render', 'stone', 'shop', 'timb
 export const FACADE_LAYER = {};
 for (const k of FACADE_KINDS) {
   FACADE_LAYER[k] = DEFS.length;
-  def(`FACADE_${k}`, 0, 0.9, 0, false, () => (g) => g.drawImage(T.facadeTexture(k).image, 0, 0, 512, 512));
+  // Stone fronts are painted to match the near ashlar; the rest reuse textures.facadeTexture.
+  def(`FACADE_${k}`, 0, 0.9, 0, false, () => (k === 'stone' ? farStone : (g) => g.drawImage(T.facadeTexture(k).image, 0, 0, 512, 512)));
 }
 
 export const LAYER_COUNT = DEFS.length;
@@ -189,6 +191,54 @@ function brickwork(g, spec) {
   speckle(g, 7000, ['#2c1a12', '#e8c8ac', '#7a4a34'], 0.8, 1.8, spec.seed + 2, 0.06, 0.22);
 }
 
+/** A distant ashlar front (8 m × 12 m squeezed into the layer): two bays of tall sashes with architraves, four storeys. */
+function farStone(g) {
+  // 64 px per metre across, 42.7 px per metre up.
+  g.save();
+  g.scale(1, 512 / 768);
+  for (let y = 0; y < 768; y += 256) for (let x = 0; x < 512; x += 256) {
+    g.save();
+    g.translate(x, y);
+    g.scale(0.5, 0.5);
+    ashlarWall(g);
+    g.restore();
+  }
+  g.restore();
+  const my = 512 / 12; // pixels per metre up
+  for (let storey = 0; storey < 4; storey++) {
+    const y0 = 512 - (storey + 1) * 3 * my; // storey bottom (row 0 is the top of the canvas)
+    for (let bay = 0; bay < 2; bay++) {
+      const cx = bay * 256 + 128;
+      if (storey === 0 && bay === 0) {
+        // Door with a pediment.
+        g.fillStyle = '#d9cfb8';
+        g.fillRect(cx - 52, y0 + 3 * my - 2.9 * my, 104, 2.9 * my);
+        g.fillStyle = '#1f2a24';
+        g.fillRect(cx - 36, y0 + 3 * my - 2.6 * my, 72, 2.6 * my);
+        continue;
+      }
+      const w = 1.3 * 64, h = (storey === 3 ? 1.4 : 2.3) * my, top = y0 + 3 * my - (storey === 3 ? 0.65 : 0.85) * my - h;
+      g.fillStyle = '#ddd3bc';
+      g.fillRect(cx - w / 2 - 10, top - 10, w + 20, h + 14);
+      const grd = g.createLinearGradient(0, top, 0, top + h);
+      grd.addColorStop(0, '#5d6f7d');
+      grd.addColorStop(0.5, '#2a3540');
+      grd.addColorStop(1, '#1b2229');
+      g.fillStyle = grd;
+      g.fillRect(cx - w / 2, top, w, h);
+      g.fillStyle = '#ece8de';
+      g.fillRect(cx - w / 2, top + h / 2 - 2, w, 4);
+      for (let k = 1; k < 3; k++) g.fillRect(cx - w / 2 + (w * k) / 3 - 1.5, top, 3, h);
+      g.fillStyle = '#cfc5ad';
+      g.fillRect(cx - w / 2 - 14, top + h, w + 28, 8);
+    }
+    g.fillStyle = 'rgba(214,206,186,0.9)';
+    g.fillRect(0, y0 - 3, 512, 7);
+  }
+  g.fillStyle = 'rgba(40,34,24,0.25)';
+  g.fillRect(0, 498, 512, 14);
+}
+
 function plainTiles(g) {
   // Handmade clay plain tiles, 265 × 165 mm laid at a 100 mm gauge: rows of small overlapping tiles.
   const cols = ['#9a4a32', '#a8573a', '#8a4030', '#b4623f', '#94472f', '#a2513a', '#7e3a2a'];
@@ -248,14 +298,14 @@ function stoneSlates(g) {
 function render(g) {
   g.fillStyle = '#f2eee4';
   g.fillRect(0, 0, 512, 512);
-  mottle(g, 40, ['#e2dccd', '#fbf9f2', '#d8d0bd', '#efe8d6'], 40, 180, 0.3, 61);
+  mottle(g, 40, ['#e6e0d2', '#fbf9f2', '#ded7c6', '#efe8d6'], 40, 180, 0.14, 61);
   speckle(g, 9000, ['#e0d9c9', '#fffef8', '#cbc3b0'], 1, 2.5, 62, 0.08, 0.25);
   // Faint streaks of weathering down from sills and copings.
   const r = rng(63);
   for (let i = 0; i < 26; i++) {
     const x = r() * 512, w = 4 + r() * 18, y = r() * 512, h = 60 + r() * 200;
     const grd = g.createLinearGradient(0, y, 0, y + h);
-    grd.addColorStop(0, 'rgba(90,82,66,0.1)');
+    grd.addColorStop(0, 'rgba(90,82,66,0.05)');
     grd.addColorStop(1, 'rgba(90,82,66,0)');
     g.fillStyle = grd;
     g.fillRect(x, y, w, h);
@@ -285,15 +335,59 @@ function ashlarWall(g) {
       x += w;
     }
   }
-  mottle(g, 40, ['#8c8270', '#f4efe2', '#a29a86', '#6e6658'], 30, 140, 0.12, 202);
+  mottle(g, 40, ['#a69c84', '#f6f2e6', '#b8ae96', '#8a8270'], 30, 140, 0.08, 202);
   speckle(g, 9000, ['#b0a890', '#faf6ec', '#8a8270'], 0.8, 1.8, 203, 0.08, 0.25);
   for (let i = 0; i < 30; i++) {
     const x = r() * 512, w = 3 + r() * 14, y = r() * 512, h = 80 + r() * 240;
     const grd = g.createLinearGradient(0, y, 0, y + h);
-    grd.addColorStop(0, 'rgba(70,64,52,0.12)');
+    grd.addColorStop(0, 'rgba(70,64,52,0.07)');
     grd.addColorStop(1, 'rgba(70,64,52,0)');
     g.fillStyle = grd;
     g.fillRect(x, y, w, h);
+  }
+}
+
+function blindTracery(g) {
+  // Ashlar covered in blind tracery, as on the Minster's west front and towers: tall shallow panels with
+  // cusped pointed heads, in two tiers per 4 m, cut a few centimetres into the face (shadow above and left).
+  ashlarWall(g);
+  const pw = 64, ph = 256; // 0.5 m × 2 m at 128 px per metre
+  for (let row = 0; row < 2; row++) {
+    for (let k = 0; k < 8; k++) {
+      const x = k * pw + 7, y = row * ph + 10, w = pw - 14, h = ph - 22;
+      const path = () => {
+        g.beginPath();
+        g.moveTo(x, y + h);
+        g.lineTo(x, y + w * 0.9);
+        g.quadraticCurveTo(x + w * 0.05, y + w * 0.25, x + w / 2, y);
+        g.quadraticCurveTo(x + w * 0.95, y + w * 0.25, x + w, y + w * 0.9);
+        g.lineTo(x + w, y + h);
+        g.closePath();
+      };
+      g.fillStyle = 'rgba(70,60,40,0.16)';
+      path();
+      g.fill();
+      g.lineWidth = 3;
+      g.strokeStyle = 'rgba(40,32,20,0.42)';
+      path();
+      g.stroke();
+      g.save();
+      g.translate(2, 2);
+      g.strokeStyle = 'rgba(255,250,236,0.35)';
+      path();
+      g.stroke();
+      g.restore();
+      // Cusped trefoil in the head and a transom.
+      g.strokeStyle = 'rgba(40,32,20,0.3)';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(x + w / 2, y + w * 0.62, w * 0.22, 0, Math.PI * 2);
+      g.stroke();
+      g.beginPath();
+      g.moveTo(x, y + h * 0.55);
+      g.lineTo(x + w, y + h * 0.55);
+      g.stroke();
+    }
   }
 }
 
