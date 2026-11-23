@@ -293,11 +293,21 @@ function ElevationProfile({ sim }) {
   const ghost = sim.ghost && !sim.ghost.hidden ? r.wrap(sim.ghost.d) / r.length : null;
   return html`<svg class="elevation" viewBox="0 0 1000 40" preserveAspectRatio="none">
     ${r.zones.map((z) => html`<rect x=${(z.from / r.length) * 1000} y="0" width=${((z.to - z.from) / r.length) * 1000} height="40" fill=${z.kind === 'kom' ? 'rgba(255,69,58,0.25)' : 'rgba(10,132,255,0.25)'} />`)}
+    ${timedSegmentBands(r).map(([x, w]) => html`<rect x=${x} y="36" width=${w} height="4" fill="rgba(52,199,89,0.95)" />`)}
     <path d=${`${r.profilePath} L1000,40 L0,40 Z`} fill="rgba(255,255,255,0.18)" />
     <path d=${r.profilePath} fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.5" vector-effect="non-scaling-stroke" />
     ${ghost != null ? html`<line x1=${ghost * 1000} x2=${ghost * 1000} y1="0" y2="40" stroke="#5ad1ff" stroke-width="2" vector-effect="non-scaling-stroke" />` : null}
     <line x1=${lap * 1000} x2=${lap * 1000} y1="0" y2="40" stroke="#ffd60a" stroke-width="3" vector-effect="non-scaling-stroke" />
   </svg>`;
+}
+
+/** Timed segments as [x, width] bands on the 0–1000 profile (one that crosses the line is split in two). */
+function timedSegmentBands(r) {
+  r.segmentBands ??= r.segments.filter((s) => s.kind === 'segment').flatMap((s) => {
+    const a = (r.wrap(s.from) / r.length) * 1000, w = ((s.to - s.from) / r.length) * 1000;
+    return a + w <= 1000 ? [[a, w]] : [[a, 1000 - a], [0, a + w - 1000]];
+  });
+  return r.segmentBands;
 }
 
 function RiderList({ sim, units }) {
@@ -451,7 +461,7 @@ function ProgressPanel({ app, onClose }) {
       ${r.segments.map((seg) => {
         const pr = prof.prs[r.id]?.[seg.id];
         const medal = prof.medals[r.id]?.[seg.id];
-        return html`<div class="item"><span style="flex:1">${seg.kind === 'kom' ? '▲' : seg.kind === 'zone' ? '⚡' : '🔁'} ${seg.name}</span>
+        return html`<div class="item"><span style="flex:1">${{ kom: '▲', zone: '⚡', segment: '⏱' }[seg.kind] ?? '🔁'} ${seg.name}</span>
           ${seg.medals ? html`<span class="small muted num">🥇 ${Format.shortDuration(seg.medals.gold)} 🥈 ${Format.shortDuration(seg.medals.silver)} 🥉 ${Format.shortDuration(seg.medals.bronze)}</span>` : null}
           <span class="num" style="min-width:90px;text-align:right">${medal ? { gold: '🥇', silver: '🥈', bronze: '🥉' }[medal] : ''} ${pr ? Format.shortDuration(pr.time) : '—'}</span></div>`;
       })}
