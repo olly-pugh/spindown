@@ -17,7 +17,14 @@ export function unpack(bytes) {
   const geometries = {};
   for (const [name, m] of Object.entries(meta.meshes)) {
     const g = new THREE.BufferGeometry();
-    for (const [k, d] of Object.entries(m.attributes)) g.setAttribute(k, new THREE.BufferAttribute(view(d), d.size, d.normalized));
+    for (const [k, d] of Object.entries(m.attributes)) {
+      if (d.quant) {
+        // 16-bit positions about a centre: back to metres.
+        const q = view(d), out = new Float32Array(q.length), { c, s } = d.quant;
+        for (let i = 0; i < q.length; i++) out[i] = (q[i] / 32767) * s + c[i % 3];
+        g.setAttribute(k, new THREE.BufferAttribute(out, 3));
+      } else g.setAttribute(k, new THREE.BufferAttribute(view(d), d.size, d.normalized));
+    }
     g.setIndex(new THREE.BufferAttribute(view(m.index), 1));
     g.computeBoundingSphere();
     geometries[name] = g;

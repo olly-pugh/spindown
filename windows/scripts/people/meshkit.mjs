@@ -133,7 +133,15 @@ export function pack(meta, meshes) {
       if (k === 'count' || k === 'orig' || !ArrayBuffer.isView(arr)) continue;
       const type = TYPES[arr.constructor.name];
       if (k === 'index') d.index = { type, offset: put(arr), length: arr.length };
-      else {
+      else if ((k === 'position' || k === 'positionB') && arr instanceof Float32Array) {
+        // 16-bit positions about the mesh's centre (people are under 2.5 m across: about 0.04 mm steps).
+        const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+        for (let i = 0; i < arr.length; i++) { lo[i % 3] = Math.min(lo[i % 3], arr[i]); hi[i % 3] = Math.max(hi[i % 3], arr[i]); }
+        const c = [0, 1, 2].map((a) => (lo[a] + hi[a]) / 2), sc = Math.max(1e-6, ...[0, 1, 2].map((a) => (hi[a] - lo[a]) / 2)) * 1.0001;
+        const q = new Int16Array(arr.length);
+        for (let i = 0; i < arr.length; i++) q[i] = Math.round(((arr[i] - c[i % 3]) / sc) * 32767);
+        d.attributes[k] = { type: 'i16', offset: put(q), length: q.length, size: 3, normalized: false, quant: { c, s: sc } };
+      } else {
         const [size, normalized] = LAYOUT[k] ?? [1, false];
         d.attributes[k] = { type, offset: put(arr), length: arr.length, size, normalized };
       }

@@ -51,7 +51,19 @@ function builderMesh(b, skel, carryBone, runtimeBone) {
     const nn = V3.norm(M3.apply(rot, V3.norm(acc.get(key(i)) ?? [0, 1, 0])));
     N[i * 3] = Math.round(nn[0] * 127); N[i * 3 + 1] = Math.round(nn[1] * 127); N[i * 3 + 2] = Math.round(nn[2] * 127);
   }
-  return { count: n, position: P, normal: N, region: Uint8Array.from(b.R), ...skinAll(n, runtimeBone), index: n > 65535 ? Uint32Array.from(b.I) : Uint16Array.from(b.I) };
+  // Weld: the builder makes separate corners per cell; merge those with the same position, normal and region.
+  const remap = new Int32Array(n), keys = new Map(), keep = [];
+  for (let i = 0; i < n; i++) {
+    const k = `${Math.round(P[i * 3] * 1e5)},${Math.round(P[i * 3 + 1] * 1e5)},${Math.round(P[i * 3 + 2] * 1e5)},${N[i * 3]},${N[i * 3 + 1]},${N[i * 3 + 2]},${b.R[i]}`;
+    let j = keys.get(k);
+    if (j === undefined) { j = keep.length; keys.set(k, j); keep.push(i); }
+    remap[i] = j;
+  }
+  const m = keep.length;
+  const P2 = new Float32Array(m * 3), N2 = new Int8Array(m * 3), R2 = new Uint8Array(m);
+  keep.forEach((i, j) => { P2.set(P.subarray(i * 3, i * 3 + 3), j * 3); N2.set(N.subarray(i * 3, i * 3 + 3), j * 3); R2[j] = b.R[i]; });
+  const I2 = b.I.map((i) => remap[i]);
+  return { count: m, position: P2, normal: N2, region: R2, ...skinAll(m, runtimeBone), index: m > 65535 ? Uint32Array.from(I2) : Uint16Array.from(I2) };
 }
 
 /** Meshes SDF shapes (rest coordinates), carries them by a bone into the pose. edge(x, y, z) -> a per-vertex scalar. */
