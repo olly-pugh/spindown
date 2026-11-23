@@ -1013,7 +1013,12 @@ export function buildTrees(placements, opts = {}) {
     WIND.value = performance.now() / 1000;
     update(camera.position);
   };
-  for (const mesh of [barkMesh, leafMesh, impMesh]) {
+  // Only the full-detail trees near the camera cast shadows: the mid-distance trees are left out of the shadow
+  // draw lists (their alpha-tested leaf cards were the costliest thing in the shadow map), as are the impostors.
+  const castOnly = (mesh, slot, on) => {
+    for (let i = 0; i < n; i++) if (lvl[i] === 1) mesh.setVisibleAt(inst[i * 3 + slot], on);
+  };
+  for (const [mesh, slot] of [[barkMesh, 0], [leafMesh, 1], [impMesh, 2]]) {
     const before = mesh.onBeforeRender, shadow = mesh.onBeforeShadow;
     mesh.onBeforeRender = function (renderer, scene, camera, geometry, material, grp) {
       if (scene) tick(renderer, camera); // (scene is null when BatchedMesh draws its shadow pass)
@@ -1021,7 +1026,9 @@ export function buildTrees(placements, opts = {}) {
     };
     mesh.onBeforeShadow = function (renderer, object, camera, shadowCamera, geometry, depthMaterial, grp) {
       tick(renderer, camera);
+      if (slot < 2) castOnly(mesh, slot, false);
       shadow.call(this, renderer, object, camera, shadowCamera, geometry, depthMaterial, grp);
+      if (slot < 2) castOnly(mesh, slot, true);
     };
   }
   // Street trees (placements with `pit`) stand in square cast-iron grates set in the pavement.
