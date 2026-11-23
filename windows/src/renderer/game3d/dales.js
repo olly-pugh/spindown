@@ -136,7 +136,8 @@ export function buildDales(route, data, q) {
     classes,
     road: roadDistanceTexture(field),
     layers: groundDetailArrays(),
-    saturation: 0.9, gamma: 0.8, gain: 1.95, tint: [1.05, 1.1, 0.24],
+    saturation: 0.78, gamma: 0.8, gain: 1.95, tint: [1.05, 1.1, 0.32],
+    detail: q.cover ?? 1, // photo detail: 0 low, 1 medium, 2 high (see ground.js LAND_DETAIL)
   };
   const ground = landMaterial(landOpts, { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
   // The road bed's cuttings and embankments are not in the survey: lit by their own shape.
@@ -574,21 +575,53 @@ export function buildDales(route, data, q) {
   // ---- Dry-stone walls: every OSM wall near the loop, following the ground ----
   const sceneryR = q.sceneryRadius;
   const wallR = sceneryR * 1.9;
+  // Gates (OSM barrier=gate and friends): a gateway in the wall, hung with a gate between two stone stoops.
+  const gateList = [];
+  const gateHash = new Map();
+  for (let i = 0; i + 2 < (data.gates ?? []).length; i += 3) {
+    const g = { x: data.gates[i], z: -data.gates[i + 1], kind: data.gates[i + 2], dir: null };
+    if (g.kind > 1) continue; // stiles are part of the wall; cattle grids are on the roads
+    gateList.push(g);
+    const key = Math.floor(g.x / 8) * 100003 + Math.floor(g.z / 8);
+    if (!gateHash.has(key)) gateHash.set(key, []);
+    gateHash.get(key).push(g);
+  }
+  /** The gate whose gateway (1.7 m either side) covers (x, z), if any. */
+  const gateAt = (x, z, r = 1.7) => {
+    const cx = Math.floor(x / 8), cz = Math.floor(z / 8);
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+      const l = gateHash.get((cx + dx) * 100003 + cz + dz);
+      if (l) for (const g of l) if (Math.hypot(g.x - x, g.z - z) < r) return g;
+    }
+    return null;
+  };
   {
     const segs = [];
     const hedgeSegs = [];
     const add = (list, flatPts, out, maxR) => {
       for (const w of list) {
-        const pts = densify(W(w), 4);
+        // Walls through a gateway are followed every 1.5 m (to open the gap in the right place), others every 4 m.
+        const coarse = densify(W(w), 4);
+        let fine = false;
+        if (gateList.length && roadFar(coarse[0], coarse[1]) < maxR + 2000) for (let i = 0; i < coarse.length && !fine; i += 2) fine = !!gateAt(coarse[i], coarse[i + 1], 4.5);
+        const pts = fine ? densify(W(w), 1.5) : coarse;
         let prev = null;
         for (let i = 0; i < pts.length; i += 2) {
           const x = pts[i], z = pts[i + 1];
           const rd = roadFar(x, z) > maxR ? Infinity : roadDistance(x, z);
-          if (rd < ROAD_HALF + 0.5 || rd > maxR) {
+          const gate = gateList.length ? gateAt(x, z) : null;
+          if (gate && !gate.dir) {
+            // The wall's direction here hangs the gate.
+            const j = Math.min(pts.length - 2, i + 2), k = Math.max(0, i - 2);
+            gate.dir = Math.atan2(pts[j] - pts[k], pts[j + 1] - pts[k + 1]);
+          }
+          if (rd < ROAD_HALF + 0.5 || rd > maxR || gate) {
             prev = null;
             continue;
           }
           const cur = { x, z, y: groundAt(x, z) };
+          // Long straight runs need no more than a point every 4 m (the wall builder's segments).
+          if (fine && prev && Math.hypot(cur.x - prev.x, cur.z - prev.z) < 3.9 && i + 2 < pts.length && !gateAt(pts[i + 2], pts[i + 3])) continue;
           if (prev) out.push({ x1: prev.x, z1: prev.z, y1: prev.y, x2: cur.x, z2: cur.z, y2: cur.y });
           prev = cur;
         }
@@ -600,6 +633,10 @@ export function buildDales(route, data, q) {
     group.add(C.linear(segs, 'wall', { shadows: q.shadows, maxDistance: Math.max(600, wallR * 0.75) }));
     if (hedgeSegs.length) group.add(C.linear(hedgeSegs, 'hedge', { shadows: q.shadows }));
     group.userData.wallSegments = segs.length;
+    // The gates themselves, where a wall passed through them and the road is near enough to see them.
+    const hung = gateList.filter((g) => g.dir !== null && roadDistance(g.x, g.z) < wallR);
+    if (hung.length) group.add(fieldGates(hung, groundAt, q));
+    group.userData.gates = hung.length;
   }
 
   mark("walls");
@@ -1009,6 +1046,45 @@ function wallLineTexture(data, rect) {
   t.colorSpace = THREE.NoColorSpace;
   t.anisotropy = 8;
   return t;
+}
+
+/**
+ * Field gates: a galvanised five-bar gate (closed, or swung part open) hung between two limestone gateposts
+ * ("stoops"), instanced in chunks. gates: [{x, z, dir (wall direction, yaw), kind}].
+ */
+function fieldGates(gates, groundAt, q) {
+  const steel = '#8d9396', stone = '#9a968b';
+  const bars = [];
+  // Gate leaf, hinged at x = 0, 3 m long: top rail, four lower bars, end stiles and a diagonal brace.
+  for (const [y, t] of [[1.12, 0.06], [0.86, 0.035], [0.63, 0.035], [0.42, 0.035], [0.22, 0.035]]) bars.push(C.tint(new THREE.BoxGeometry(3.0, t, 0.04).translate(1.5, y, 0), steel));
+  bars.push(C.tint(new THREE.BoxGeometry(0.06, 1.0, 0.05).translate(0.03, 0.66, 0), steel));
+  bars.push(C.tint(new THREE.BoxGeometry(0.05, 1.0, 0.05).translate(2.97, 0.66, 0), steel));
+  bars.push(C.tint(new THREE.BoxGeometry(3.05, 0.035, 0.035).rotateZ(Math.atan2(0.9, 2.9)).translate(1.5, 0.67, 0), steel));
+  const leaf = C.mergeAll(bars, { colour: true, uv: false });
+  const post = C.mergeAll([C.tint(new THREE.BoxGeometry(0.34, 1.55, 0.3).translate(0, 0.72, 0), stone), C.tint(new THREE.BoxGeometry(0.38, 0.08, 0.34).translate(0, 1.52, 0), '#8c887e')], { colour: true, uv: false });
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.3 });
+  const postMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 });
+  const leaves = [], posts = [];
+  const up = new THREE.Vector3(0, 1, 0), qq = new THREE.Quaternion();
+  for (const g of gates) {
+    // dir is the wall's heading as atan2(dx, dz); the gateway runs along it.
+    const ax = Math.sin(g.dir), az = Math.cos(g.dir);
+    const yaw = Math.atan2(-az, ax); // local +x along the wall
+    const hx = g.x - ax * 1.55, hz = g.z - az * 1.55; // hinge post
+    const y = groundAt(g.x, g.z);
+    const open = hash2(Math.round(g.x), Math.round(g.z), 5) < 0.2 ? 0.9 + hash2(Math.round(g.x), Math.round(g.z), 6) : 0;
+    qq.setFromAxisAngle(up, yaw + open);
+    leaves.push({ matrix: new THREE.Matrix4().compose(new THREE.Vector3(hx, y, hz), qq.clone(), new THREE.Vector3(1, 1, 1)) });
+    for (const s2 of [-1.62, 1.62]) {
+      const px = g.x + ax * s2, pz = g.z + az * s2;
+      qq.setFromAxisAngle(up, yaw);
+      posts.push({ matrix: new THREE.Matrix4().compose(new THREE.Vector3(px, groundAt(px, pz) - 0.05, pz), qq.clone(), new THREE.Vector3(1, 1, 1)) });
+    }
+  }
+  const group = new THREE.Group();
+  group.add(C.chunked(leaf, mat, leaves, { shadows: q.shadows, maxDistance: 350, chunk: 300 }));
+  group.add(C.chunked(post, postMat, posts, { shadows: q.shadows, maxDistance: 450, chunk: 300 }));
+  return group;
 }
 
 /** Pale grey limestone blocks, flattened and sunk into the turf, instanced in chunks. */

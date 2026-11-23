@@ -469,9 +469,10 @@ export function landMaterial(opts, extra = {}) {
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         precision highp sampler2DArray;
+        #define LAND_DETAIL ${Math.max(0, Math.min(2, opts.detail ?? 2))}
         uniform sampler2D nearMap, farMap, wallMap, reliefMap, farNMap, classMap, roadMap;
         uniform sampler2DArray detailArr, normalArr;
-        uniform vec3 layerMean[6];
+        uniform vec3 layerMean[5];
         uniform vec4 nearRect, farRect, wallRect, reliefRect, farNRect, classRect, roadRect, grade;
         uniform vec3 tint;
         uniform float reliefStrength;
@@ -485,9 +486,14 @@ export function landMaterial(opts, extra = {}) {
         // Photo layer k at two scales (the second rotated) so it never visibly repeats.
         vec3 layerTex(vec2 p, float k, float scale) {
           vec3 a = texture(detailArr, vec3(p / scale, k)).rgb;
+          #if LAND_DETAIL >= 2
+          // A second, rotated scale hides the repeat (high quality only: it doubles the samples).
           vec2 q = mat2(0.8, -0.6, 0.6, 0.8) * p / (scale * 3.3) + vec2(0.31, 0.17);
           vec3 b = texture(detailArr, vec3(q, k)).rgb;
           return mix(a, b, 0.42);
+          #else
+          return a;
+          #endif
         }
         vec2 layerNrm(vec2 p, float k, float scale) {
           return texture(normalArr, vec3(p / scale, k)).xy * 2.0 - 1.0;
@@ -600,7 +606,7 @@ export function landMaterial(opts, extra = {}) {
         vec3 patchTint = mix(vec3(0.88, 0.95, 0.80), vec3(1.10, 1.05, 0.92), smoothstep(0.35, 0.75, pn));
         vec3 veg = sat * mix(vec3(1.0), vegDet * mix(vec3(1.0), patchTint, 0.6), 0.12 + 0.88 * nearK);
         // Rock and scree keep their own colour (the imagery cannot see a face or the grey of a scree).
-        vec3 rockC = vec3(0.40, 0.40, 0.38);
+        vec3 rockC = vec3(0.42, 0.40, 0.36);
         vec3 screeC = vec3(0.34, 0.34, 0.33);
         vec3 mineral = vec3(0.0);
         float wMin = wRock + wScree;
@@ -624,6 +630,8 @@ export function landMaterial(opts, extra = {}) {
           }
           vec3 scree = screeC * mix(vec3(1.0), sT, 0.25 + 0.75 * nearK);
           mineral = (rock * wRock + scree * wScree) / wMin;
+          // From afar a scar or pavement is the pale, patchy grey-green the imagery shows, not solid stone.
+          mineral = mix(mineral, sat * 1.3 + vec3(0.03, 0.03, 0.02), smoothstep(350.0, 1800.0, dist) * 0.75);
           if (nearK > 0.0) dn += layerNrm(pd, wScree > wRock ? 4.0 : 3.0, 1.9) * wMin;
         }
         // Tufts of grass between the rocks at the edges of outcrops and scree.
@@ -637,12 +645,14 @@ export function landMaterial(opts, extra = {}) {
         col = mix(col, col * 0.62 + vec3(0.02), wl * smoothstep(150.0, 600.0, dist));
         diffuseColor.rgb *= col;
         // Detail bumps from the photos, fading with distance.
+        #if LAND_DETAIL >= 1
         tN = normalize(tN + vec3(dn.x, 0.0, -dn.y) * 0.55 * nearK * reliefStrength);
+        #endif
       `)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
         normal = normalize((viewMatrix * vec4(tN, 0.0)).xyz);`);
   };
-  m.customProgramCacheKey = () => 'land-v1';
+  m.customProgramCacheKey = () => `land-v1-${opts.detail ?? 2}`;
   return m;
 }
 

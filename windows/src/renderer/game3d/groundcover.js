@@ -191,6 +191,16 @@ function clintGeometry() {
   return g;
 }
 
+/** Keeps plant colours within what real grass does: not too bright, not too saturated (lime). */
+function tame(c) {
+  const l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+  const k = l > 0.2 ? 0.2 / l : 1;
+  c.r = (l + (c.r - l) * 0.8) * k;
+  c.g = (l + (c.g - l) * 0.8) * k;
+  c.b = (l + (c.b - l) * 0.8) * k;
+  return c;
+}
+
 /** A plant material that shrinks instances away between `fade0` and `fade1` metres from the camera. */
 function plantMaterial(atlas, time, fade0, fade1, aa, sway) {
   const m = new THREE.MeshStandardMaterial({ map: atlas, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.95, metalness: 0, alphaToCoverage: aa });
@@ -445,7 +455,7 @@ export class GroundCover {
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), v = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), c = new THREE.Color();
     // Nearest chunks first, so the caps cut the far ones.
     const list = [...this.chunks.values()].map((ch) => ({ ch, d: Math.hypot((ch.i + 0.5) * CHUNK - cx, (ch.j + 0.5) * CHUNK - cz) })).sort((a, b) => a.d - b.d);
-    const fill = (target, cap, getArr, range) => {
+    const fill = (target, cap, getArr, range, plant = false) => {
       let n = 0;
       for (const { ch, d } of list) {
         if (d > range + CHUNK) break;
@@ -458,6 +468,7 @@ export class GroundCover {
           m.compose(v, q, s);
           target.setMatrixAt(n, m);
           c.setRGB(a[k + 6], a[k + 7], a[k + 8]);
+          if (plant) tame(c);
           target.setColorAt(n, c);
           n++;
         }
@@ -466,7 +477,7 @@ export class GroundCover {
       target.instanceMatrix.needsUpdate = true;
       if (target.instanceColor) target.instanceColor.needsUpdate = true;
     };
-    this.kinds.forEach((k, idx) => fill(k.mesh, k.cap, (ch) => ch.plants?.[idx], k.range));
+    this.kinds.forEach((k, idx) => fill(k.mesh, k.cap, (ch) => ch.plants?.[idx], k.range, true));
     this.rockKinds.forEach((k, idx) => fill(k.mesh, k.cap, (ch) => ch.rocks?.[idx], k.range));
     {
       const t = this.clints;

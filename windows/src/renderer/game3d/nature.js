@@ -24,12 +24,12 @@ import gravelNUrl from './data/tex/gravel-n.jpg';
  * `means` holds each layer's average colour (linear) once loaded, so the shader can use the photos for texture and
  * the aerial imagery for colour.
  */
-export const GROUND_LAYERS = ['pasture', 'limegrass', 'rough', 'limestone', 'scree', 'gravel'];
+export const GROUND_LAYERS = ['pasture', 'limegrass', 'rough', 'limestone', 'scree'];
 let groundArrays = null;
 export function groundDetailArrays() {
   if (groundArrays) return groundArrays;
-  const colourUrls = [pastureUrl, limegrassUrl, roughUrl, limestoneUrl, screeUrl, gravelUrl];
-  const normalUrls = [pastureNUrl, limegrassNUrl, roughNUrl, limestoneNormalUrl, screeNUrl, gravelNUrl];
+  const colourUrls = [pastureUrl, limegrassUrl, roughUrl, limestoneUrl, screeUrl];
+  const normalUrls = [pastureNUrl, limegrassNUrl, roughNUrl, limestoneNormalUrl, screeNUrl];
   const make = (size, fill, srgb) => {
     const n = colourUrls.length;
     const data = new Uint8Array(size * size * 4 * n);
@@ -231,13 +231,16 @@ export function boulderMaterial() {
         vec3 bw = abs(normalize(vBNormal));
         bw = pow(bw, vec3(4.0));
         bw /= (bw.x + bw.y + bw.z);
-        vec3 tx = texture2D(rockMap, vBWorld.zy / 1.6).rgb, ty = texture2D(rockMap, vBWorld.xz / 1.6).rgb, tz = texture2D(rockMap, vBWorld.xy / 1.6).rgb;
+        vec3 tx = texture2D(rockMap, vBWorld.zy / 1.6).rgb, ty = texture2D(rockMap, vBWorld.xz / 4.5).rgb, tz = texture2D(rockMap, vBWorld.xy / 1.6).rgb;
         vec3 rt = tx * bw.x + ty * bw.y + tz * bw.z;
         float rl = dot(rt, vec3(0.299, 0.587, 0.114));
         vec3 stone = mix(vec3(rl), rt, 0.3) * 1.25;
         // Tops weather smooth (the photo's fine cracks streak at grazing angles): less texture, lichen patches.
         float top = smoothstep(0.5, 0.95, vBNormal.y);
-        stone = mix(stone, vec3(dot(stone, vec3(0.333)) * 0.95 + 0.03), top * 0.55);
+        stone = mix(stone, vec3(dot(stone, vec3(0.333)) * 0.95 + 0.03), top * 0.75);
+        // Lichen spots, dark and pale, on the weathered tops.
+        float spots = texture2D(lichenMap, vBWorld.xz / 0.7).r;
+        stone *= 1.0 - top * (smoothstep(0.55, 0.7, spots) * 0.25 - smoothstep(0.3, 0.15, spots) * 0.12);
         vec3 li = texture2D(lichenMap, vBWorld.xz / 2.3).rgb;
         float patchL = smoothstep(0.45, 0.75, texture2D(lichenMap, vBWorld.xz / 9.0 + 0.3).g * 1.6);
         stone = mix(stone, li * 0.9, top * (0.2 + 0.35 * patchL));

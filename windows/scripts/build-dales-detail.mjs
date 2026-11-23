@@ -575,5 +575,22 @@ if (DEBUG) {
   dbg('coveroad', -1500, -800, 600, 1500, 0.45);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Gates and stiles in the walls (OpenStreetMap, ODbL): the renderer opens a gateway in the wall at each.
+{
+  const { overpass } = await import('./dales-fetch.mjs');
+  const D = { s: 54.049, w: -2.205, n: 54.106, e: -2.122 };
+  const osm = await overpass(`[out:json][timeout:120];node["barrier"~"^(gate|stile|kissing_gate|cattle_grid|lift_gate|swing_gate)$"](${D.s},${D.w},${D.n},${D.e});out;`, path.join(CACHE_DIR, 'overpass-gates.json'));
+  const KX = Math.cos((54.075 * Math.PI) / 180) * 111320, KY = 110540;
+  const KIND = { gate: 0, swing_gate: 0, lift_gate: 0, kissing_gate: 1, stile: 2, cattle_grid: 3 };
+  const gates = [];
+  for (const e of osm.elements) {
+    if (e.type !== 'node') continue;
+    gates.push(Math.round((e.lon + 2.16) * KX * 10) / 10, Math.round((e.lat - 54.075) * KY * 10) / 10, KIND[e.tags?.barrier] ?? 0);
+  }
+  data.gates = gates;
+  console.log(`gates: ${gates.length / 3}`);
+}
+
 fs.writeFileSync(FILE, JSON.stringify(data));
 console.log(`Wrote ${path.relative(root, FILE)} in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
