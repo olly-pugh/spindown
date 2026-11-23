@@ -48,15 +48,16 @@ function shadowMaterial() {
   return sharedMaterial('shadow', () => new THREE.MeshBasicMaterial({ map: blobTexture(), transparent: true, depthWrite: false, opacity: 0.6, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6, toneMapped: false, color: '#000000' }));
 }
 const hairMaterials = new Map();
-function hairMaterial(hex) {
-  if (!hairMaterials.has(hex)) {
-    hairMaterials.set(hex, new THREE.MeshStandardMaterial({ color: new THREE.Color(hex).multiplyScalar(1.6), map: hairTexture(), alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.65, metalness: 0 }));
+function hairMaterial(hex, kind) {
+  const key = `${hex}|${kind}`;
+  if (!hairMaterials.has(key)) {
+    hairMaterials.set(key, new THREE.MeshStandardMaterial({ color: new THREE.Color(hex).multiplyScalar(1.6), map: hairTexture(kind), alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.65, metalness: 0 }));
   }
-  return hairMaterials.get(hex);
+  return hairMaterials.get(key);
 }
 const kitMaterials = new Map();
-function kitMat(kit, skin, landmarks) {
-  const key = `${kit.jersey.id}|${skin}`;
+function kitMat(kit, skin, landmarks, body) {
+  const key = `${kit.jersey.id}|${skin}|${body}`;
   if (!kitMaterials.has(key)) kitMaterials.set(key, kitMaterial(kit, skin, landmarks));
   return kitMaterials.get(key);
 }
@@ -151,25 +152,27 @@ function pedals(bones) {
 
 /** Bike + gear + pedals for a kit and level of detail, cached (kits repeat across riders). */
 const bikeCache = new Map();
-function bikeAndGear(kit, lod, boneIdx, assets) {
-  const key = `${lod}|${kit.bike.id}|${kit.bike.color}|${kit.wheels.id}|${kit.helmet.id}|${kit.jersey.accent}`;
+function bikeAndGear(kit, lod, boneIdx, assets, body) {
+  const key = `${body}|${lod}|${kit.bike.id}|${kit.bike.color}|${kit.wheels.id}|${kit.helmet.id}|${kit.jersey.accent}`;
   if (bikeCache.has(key)) return bikeCache.get(key);
   const geos = assets.geometries, regions = assets.meta.gear.regions;
+  const B = assets.meta.bodies[body], b = B.suffix;
   const paint = gearPaint(kit, regions);
   const aero = (kit.helmet.aero ?? 1) < 1;
-  const sfx = lod === 'far' && geos.helmetFar ? 'Far' : '';
+  const lodS = lod === 'far' ? 'Far' : '';
+  const g = (name) => geos[name + lodS + b] ?? geos[name + b];
   const parts = [
-    buildBike(kit, { frame: boneIdx.root, rear: boneIdx.rear, front: boneIdx.front, crank: boneIdx.crank }, lod),
-    paintGear(geos[(aero ? 'helmetAero' : 'helmet') + sfx] ?? geos[aero ? 'helmetAero' : 'helmet'], paint),
-    paintGear(geos['glasses' + sfx] ?? geos.glasses, paint),
-    paintGear(geos['shoes' + sfx] ?? geos.shoes, paint, { soleEdge: true }),
+    buildBike(kit, { frame: boneIdx.root, rear: boneIdx.rear, front: boneIdx.front, crank: boneIdx.crank }, lod, B.fit),
+    paintGear(g(aero ? 'helmetAero' : 'helmet'), paint),
+    paintGear(g('glasses'), paint),
+    paintGear(g('shoes'), paint, { soleEdge: true }),
     ...pedals({ footR: boneIdx['foot.R'], footL: boneIdx['foot.L'] }),
   ];
   for (const p of parts) for (const k of Object.keys(p.attributes)) if (!['position', 'normal', 'uv', 'color', 'surf', 'skinIndex', 'skinWeight'].includes(k)) p.deleteAttribute(k);
-  const g = mergeGeometries(parts.map((p) => (p.index ? p.toNonIndexed() : p)), false);
-  g.computeBoundingSphere();
-  bikeCache.set(key, g);
-  return g;
+  const merged = mergeGeometries(parts.map((p) => (p.index ? p.toNonIndexed() : p)), false);
+  merged.computeBoundingSphere();
+  bikeCache.set(key, merged);
+  return merged;
 }
 
 // ---- IK helpers ------------------------------------------------------------------------------------------------
@@ -191,9 +194,12 @@ const between = (from, to, out) => out.setFromUnitVectors(_c.copy(from).normaliz
  * Builds a rider. kit: {jersey, helmet, bike, wheels} from content.js. options: {ghost, skin, hair, shadows}.
  */
 export class RiderModel {
-  constructor(kit, { ghost = false, skin = '#e0ac8a', hair = '#3a2718', shadows = true } = {}) {
+  constructor(kit, { ghost = false, skin = '#e0ac8a', hair = '#3a2718', shadows = true, body = 'm' } = {}) {
     const assets = riderAssets();
-    const meta = assets.meta;
+    const meta = { ...assets.meta, ...(assets.meta.bodies[body] ?? assets.meta.bodies.m) };
+    if (!assets.meta.bodies[body]) body = 'm';
+    this.body = body;
+    const sfx = meta.suffix;
     this.root = new THREE.Group();
     this.lean = new THREE.Group(); // rolls about the tyre contact line
     this.root.add(this.lean);
@@ -258,11 +264,11 @@ export class RiderModel {
       return m;
     };
     const G = assets.geometries;
-    const bodyMat = ghost ? ghostMaterial() : kitMat(kit, skin, meta.landmarks);
+    const bodyMat = ghost ? ghostMaterial() : kitMat(kit, skin, meta.landmarks, body);
     const gearMat = ghost ? ghostMaterial() : bikeMaterial();
-    this.near = [make(G.body, bodyMat), make(bikeAndGear(kit, 'near', byName, assets), gearMat)];
-    if (!ghost) this.near.push(make(G.hair, hairMaterial(hair), false));
-    this.far = [make(G.bodyFar, bodyMat), make(bikeAndGear(kit, 'far', byName, assets), gearMat)];
+    this.near = [make(G['body' + sfx], bodyMat), make(bikeAndGear(kit, 'near', byName, assets, body), gearMat)];
+    if (!ghost) this.near.push(make(G['hair' + sfx], hairMaterial(hair, body === 'f' ? 'ponytail' : 'short'), false));
+    this.far = [make(G['bodyFar' + sfx], bodyMat), make(bikeAndGear(kit, 'far', byName, assets, body), gearMat)];
     this.detail = null;
     this.setDetail(true);
     if (!ghost) {

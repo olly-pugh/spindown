@@ -22,6 +22,12 @@ export const HOOD = [0.205, 0.955, -0.625];
 /** Saddle: top surface centre under the sit bones, nose and tail. */
 export const SADDLE = [0, 0.965, 0.215];
 
+/** Per body: where the hips, saddle top and hoods are (the seat post and stem adapt; the frame is shared). */
+export const BODY = {
+  m: { HIP, SADDLE, HOOD },
+  f: { HIP: [0, 1.0, 0.196], SADDLE: [0, 0.922, 0.21], HOOD: [0.19, 0.93, -0.592] },
+};
+
 /** Ankle position for a crank angle (a: pedal angle for that leg) and side (1 right, -1 left). */
 export function anklePosition(a, side, out = [0, 0, 0]) {
   const pz = BB[2] + Math.sin(a) * CRANK, py = BB[1] - Math.cos(a) * CRANK;

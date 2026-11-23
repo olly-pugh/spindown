@@ -66,21 +66,21 @@ const smooth = (a, b, x) => {
  */
 export function helmet(C, R, { aero = false, far = false } = {}) {
   const NT = far ? 36 : 72, NS = far ? 8 : 18;
-  const rx = aero ? 0.101 : 0.104;
-  const rzF = aero ? 0.138 : 0.14, rzB = aero ? 0.19 : 0.152;
-  const ry = aero ? 0.097 : 0.1;
+  const rx = aero ? 0.097 : 0.104;
+  const rzF = aero ? 0.136 : 0.14, rzB = aero ? 0.205 : 0.152;
+  const ry = aero ? 0.088 : 0.1;
   const y0 = C[1] + 0.004, z0 = C[2] + (aero ? 0.012 : 0.006);
   // Rim height (relative to C) round the head: just above the brow at the front, over the ears, low at the back.
   const rimY = (th) => {
     const back = (1 - Math.cos(th)) / 2; // 0 front, 1 back
-    return C[1] + 0.006 - 0.012 * Math.sin(th) ** 2 - 0.036 * back ** 1.6 - (aero ? 0.012 * back ** 3 : 0);
+    return C[1] + 0.006 - (aero ? 0.022 : 0.012) * Math.sin(th) ** 2 - 0.036 * back ** 1.6 - (aero ? 0.018 * back ** 2 : 0);
   };
   const shape = (th) => {
     // Teardrop from above: longer at the back; a flatter rear quarter for the tail.
     const c = Math.cos(th), s = Math.sin(th);
     const rz = c > 0 ? rzF : rzB;
     // Narrow towards the back.
-    const w = rx * (1 - (aero ? 0.2 : 0.12) * smooth(0.0, 1.0, -c));
+    const w = rx * (1 - (aero ? 0.34 : 0.12) * smooth(0.0, 1.0, -c) ** (aero ? 1.4 : 1));
     return [w * s, rz * -c];
   };
   const outer = (th, s, inset = 0) => {

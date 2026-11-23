@@ -239,7 +239,7 @@ const boxAt = (w, h, d, at, rx = 0, ry = 0, rz = 0) => {
  * Builds the bike. kit: {bike: {color}, wheels: {id, depth}}. bones: {frame, rear, front, crank}. detail: 'near'|'far'.
  * Returns a BufferGeometry with position, normal, uv, color, surf, skinIndex, skinWeight.
  */
-export function buildBike(kit, bones, detail = 'near') {
+export function buildBike(kit, bones, detail = 'near', fit = null) {
   const near = detail === 'near';
   const R = near ? 1 : 0.5; // radial/ring density
   const parts = [];
@@ -248,7 +248,7 @@ export function buildBike(kit, bones, detail = 'near') {
   const lum = frameCol.r * 0.3 + frameCol.g * 0.59 + frameCol.b * 0.11;
   const paint = kit.bike.color;
   const dark = '#141518', carbon = '#1b1c1f', rubber = '#141414', alloy = '#b9bcc0', black = '#0d0d0e';
-  const BB = A(FIT.BB), REAR = A(FIT.REAR), FRONT = A(FIT.FRONT), SADDLE = A(FIT.SADDLE), HOOD = A(FIT.HOOD);
+  const BB = A(FIT.BB), REAR = A(FIT.REAR), FRONT = A(FIT.FRONT), SADDLE = A((fit ?? FIT).SADDLE), HOOD = A((fit ?? FIT).HOOD);
   const RAD = Math.round(14 * R), RINGS = Math.round(16 * R);
 
   // ---- Key frame points ----

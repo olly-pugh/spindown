@@ -113,6 +113,27 @@ const RIDER_SHAPE = {
   'armslegs/l-upperleg-muscle-incr': 0.4,
 };
 
+const RIDER_SHAPE_F = {
+  'macrodetails/caucasian-female-young': 0.6,
+  'macrodetails/african-female-young': 0.2,
+  'macrodetails/asian-female-young': 0.2,
+  'macrodetails/universal-female-young-maxmuscle-averageweight': 0.6 * 0.7,
+  'macrodetails/universal-female-young-maxmuscle-minweight': 0.6 * 0.3,
+  'macrodetails/universal-female-young-averagemuscle-averageweight': 0.4 * 0.7,
+  'macrodetails/universal-female-young-averagemuscle-minweight': 0.4 * 0.3,
+  'macrodetails/proportions/female-young-maxmuscle-averageweight-idealproportions': 0.5,
+  'macrodetails/height/female-young-maxmuscle-averageweight-maxheight': 0.17 * 0.6 * 0.7,
+  'macrodetails/height/female-young-maxmuscle-minweight-maxheight': 0.17 * 0.6 * 0.3,
+  'macrodetails/height/female-young-averagemuscle-averageweight-maxheight': 0.17 * 0.4 * 0.7,
+  'macrodetails/height/female-young-averagemuscle-minweight-maxheight': 0.17 * 0.4 * 0.3,
+  'stomach/stomach-pregnant-decr': 0.4,
+  'buttocks/buttocks-volume-decr': 0.2,
+  'armslegs/r-lowerleg-muscle-incr': 0.35,
+  'armslegs/l-lowerleg-muscle-incr': 0.35,
+  'armslegs/r-upperleg-muscle-incr': 0.3,
+  'armslegs/l-upperleg-muscle-incr': 0.3,
+};
+
 export const RIDER_FIT = {
   hip: FIT.HIP,
   pelvisTilt: 0.56,
@@ -147,12 +168,40 @@ function fitted(file, restMH, skel) {
   return { fit, obj, rest, posed, w };
 }
 
-function buildRider() {
-  const restMH = shaped(RIDER_SHAPE);
+const REF = {};
+function buildRider({ shape = RIDER_SHAPE, body = 'm', proxyFile = 'proxymeshes/male1591/male1591.proxy', hairFile = 'hair/short02/short02.mhclo' } = {}) {
+  const restMH = shaped(shape);
   const rest = toGame(restMH);
   const skel = new Skeleton(skelDef, rest);
   const restBones = Object.fromEntries(Object.entries(skel.bones).map(([n, b]) => [n, { head: b.head, tail: b.tail }]));
-  const pts = cyclingPose(skel, RIDER_FIT);
+  const thigh = V3.len(V3.sub(skel.bones['lowerleg01.R'].head, skel.bones['upperleg01.R'].head));
+  const shin = V3.len(V3.sub(skel.bones['foot.R'].head, skel.bones['lowerleg01.R'].head));
+  const arm = V3.len(V3.sub(skel.bones['lowerarm01.R'].head, skel.bones['upperarm01.R'].head)) + V3.len(V3.sub(skel.bones['wrist.R'].head, skel.bones['lowerarm01.R'].head));
+  const torso = V3.len(V3.sub(skel.bones['upperarm01.R'].head, skel.bones['upperleg01.R'].head));
+  // Bike fit for this body: hips high enough for a 32 degree knee bend at the bottom of the stroke; saddle and
+  // hoods move with them (the male figure is the reference the frame was drawn for).
+  let bf = FIT.BODY.m;
+  if (body !== 'm') {
+    const ank = FIT.anklePosition(0, 1), hz = 0.19;
+    const d = Math.sqrt(thigh ** 2 + shin ** 2 - 2 * thigh * shin * Math.cos(Math.PI - (32 * Math.PI) / 180));
+    const hy = ank[1] + Math.sqrt(d * d - (hz - ank[2]) ** 2);
+    const ref = REF.m;
+    const drop = FIT.HIP[1] - hy;
+    bf = {
+      HIP: [0, hy, hz],
+      SADDLE: [0, FIT.SADDLE[1] - drop, FIT.SADDLE[2] - (FIT.HIP[2] - hz)],
+      HOOD: [0.19, FIT.HOOD[1] - drop * 0.9, FIT.HOOD[2] + (ref.arm - arm) * 0.95 + (ref.torso - torso) * 0.6],
+    };
+  }
+  REF[body] = { arm, torso };
+  const fit = { ...RIDER_FIT, hip: bf.HIP, hood: bf.HOOD, shoulderY: bf.HIP[1] + (RIDER_FIT.shoulderY - FIT.HIP[1]) * (torso / (REF.m?.torso ?? torso)) };
+  {
+    const ank = FIT.anklePosition(0, 1), hip = [FIT.LEG_X, bf.HIP[1], bf.HIP[2]];
+    const d = V3.len(V3.sub(ank, hip));
+    const inner = Math.acos(Math.max(-1, Math.min(1, (thigh ** 2 + shin ** 2 - d * d) / (2 * thigh * shin))));
+    console.log(`rider ${body}: thigh ${thigh.toFixed(3)} shin ${shin.toFixed(3)} arm ${arm.toFixed(3)} torso ${torso.toFixed(3)}; knee flexion at the bottom ${(180 - inner * 180 / Math.PI).toFixed(1)} deg; fit ${JSON.stringify(bf)}`);
+  }
+  const pts = cyclingPose(skel, fit);
   const posed = skel.skin(rest, mhWeights);
   const B = skel.bones;
 
@@ -174,7 +223,7 @@ function buildRider() {
   const near = assemble({ faces: bodyFaces, vt: base.vt, posed, rest, weights: W, kit: K, keep });
 
   // Far: the 1591-vertex male proxy, fitted to the same shaped body and pose.
-  const proxy = fitted(path.join(SYS, 'proxymeshes/male1591/male1591.proxy'), restMH, skel);
+  const proxy = fitted(path.join(SYS, proxyFile), restMH, skel);
   const farW = mapWeights(proxy.w);
   const farK = kitFields(proxy.w);
   const far = assemble({ faces: proxy.obj.faces, vt: proxy.obj.vt, posed: proxy.posed, rest: proxy.rest, weights: farW, kit: farK, keep: (f) => !f.v.every((v) => hidden(proxy.rest[v * 3], proxy.rest[v * 3 + 1], proxy.rest[v * 3 + 2])) });
@@ -182,7 +231,7 @@ function buildRider() {
   // Eyebrows and short hair (trimmed to what shows below a helmet), all on the head bone.
   const brows = fitted(path.join(SYS, 'eyebrows/eyebrow001/eyebrow001.mhclo'), restMH, skel);
   const browMesh = assemble({ faces: brows.obj.faces, vt: brows.obj.vt, posed: brows.posed, weights: mapWeights(brows.w) });
-  const hair = fitted(path.join(SYS, 'hair/short02/short02.mhclo'), restMH, skel);
+  const hair = fitted(path.join(SYS, hairFile), restMH, skel);
   const underHelmet = gear.underHelmet; // (x, y, z) => true if hidden by the helmet
   const hairMesh = assemble({ faces: hair.obj.faces, vt: hair.obj.vt, posed: hair.posed, weights: mapWeights(hair.w), keep: (f) => !f.v.every((v) => underHelmet(hair.rest[v * 3], hair.rest[v * 3 + 1], hair.rest[v * 3 + 2])) });
 
@@ -193,18 +242,25 @@ function buildRider() {
     hipR: R('upperleg01.R'), kneeR: R('lowerleg01.R'), ankleR: R('foot.R'),
     neck: R('neck01'), chest: R('spine02'), waist: R('spine04'), pelvis: R('spine05'), headTop: R('head', 'tail'),
   };
-  return { skel, pts, bones, near, far, browMesh, hairMesh, gear, landmarks, posed, rest, proxy };
+  return { skel, pts, bones, near, far, browMesh, hairMesh, gear, landmarks, posed, rest, proxy, fit: bf };
 }
 
 const rider = buildRider();
+const riderF = buildRider({ shape: RIDER_SHAPE_F, body: 'f', proxyFile: 'proxymeshes/female1605/female1605.proxy', hairFile: 'hair/ponytail01/ponytail01.mhclo' });
 const r6 = (v) => (typeof v === 'number' ? +v.toFixed(4) : v);
 const meta = {
-  source: 'MakeHuman 1.1 base mesh hm08, default skeleton and weights, male1591 proxy, eyebrow001, short02 hair (CC0)',
-  bones: rider.bones,
-  landmarks: rider.landmarks,
+  source: 'MakeHuman 1.1 base mesh hm08, default skeleton and weights, male1591 and female1605 proxies, short02 and ponytail01 hair (CC0)',
+  bodies: {
+    m: { bones: rider.bones, landmarks: rider.landmarks, suffix: '', fit: rider.fit },
+    f: { bones: riderF.bones, landmarks: riderF.landmarks, suffix: 'F', fit: riderF.fit },
+  },
   gear: rider.gear.meta,
 };
-const meshes = { body: rider.near, bodyFar: rider.far, brows: rider.browMesh, hair: rider.hairMesh, ...rider.gear.meshes };
+const sfx = (o, x) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k + x, v]));
+const meshes = {
+  body: rider.near, bodyFar: rider.far, hair: rider.hairMesh, ...rider.gear.meshes,
+  ...sfx({ body: riderF.near, bodyFar: riderF.far, hair: riderF.hairMesh, ...riderF.gear.meshes }, 'F'),
+};
 const bin = pack(JSON.parse(JSON.stringify(meta, (k, v) => r6(v))), meshes);
 fs.mkdirSync(OUT, { recursive: true });
 fs.writeFileSync(path.join(OUT, 'rider.bin'), bin);
@@ -236,8 +292,10 @@ if (DEBUG) {
     fs.writeFileSync(path.join(DEBUG, name + '.json'), JSON.stringify({ position, index, uv, normal, color }));
   };
   dump('rider-near', rider.near);
+  dump('riderF-near', riderF.near);
+  dump('riderF-hair', riderF.hairMesh);
+  for (const [k, m] of Object.entries(riderF.gear.meshes)) dump('gearF-' + k, m);
   dump('rider-far', rider.far);
-  dump('rider-brows', rider.browMesh);
   dump('rider-hair', rider.hairMesh);
   for (const [k, m] of Object.entries(rider.gear.meshes)) dump('gear-' + k, m);
   console.log('debug meshes written');

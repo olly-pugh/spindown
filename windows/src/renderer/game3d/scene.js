@@ -179,7 +179,7 @@ export class WorldScene {
           this.scene.remove(model.root);
           model.dispose();
         }
-        model = new RiderModel(r.kit, { ghost: r.isGhost, shadows: this.q.shadows, skin: skinFor(r.id), hair: hairFor(r.id) });
+        model = new RiderModel(r.kit, { ghost: r.isGhost, shadows: this.q.shadows, skin: skinFor(r.id), hair: hairFor(r.id), body: bodyFor(r) });
         model.kitKey = kitKey(r.kit);
         this.riders.set(r.id, model);
         this.scene.add(model.root);
@@ -378,6 +378,11 @@ function skinFor(id) {
   return SKINS[id % SKINS.length];
 }
 const HAIR = ['#3a2718', '#7a5632', '#c9a066', '#1d1a18', '#9a9a9a', '#5a3a22', '#a65e2e'];
+/** About a third of the other riders are women; your own rider (and your ghost) stays as it is. */
+function bodyFor(r) {
+  if (r.isPlayer || r.isGhost) return 'm';
+  return (r.id * 7 + 3) % 10 < 3 ? 'f' : 'm';
+}
 function hairFor(id) {
   return HAIR[(id * 3 + 1) % HAIR.length];
 }
