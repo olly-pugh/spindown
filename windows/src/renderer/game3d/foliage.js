@@ -916,7 +916,7 @@ export function barkAtlas() {
       const [sc, sg] = canvas2d(W, H);
       barkStrip(sg, W, H, kind, rng(300 + i * 13));
       // Bark is dark: under the game's bright sky light it must be drawn darker than it looks on paper.
-      const dark = kind === 'birch' ? 0.9 : kind === 'pine' ? 0.72 : 0.5;
+      const dark = kind === 'birch' ? 0.8 : kind === 'pine' ? 0.6 : 0.42;
       sg.fillStyle = `rgba(0,0,0,${1 - dark})`;
       sg.fillRect(0, 0, W, H);
       g.drawImage(sc, i * W, 0);

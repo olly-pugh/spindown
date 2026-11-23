@@ -7,6 +7,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as T from './textures.js';
 import { walls, hedges } from './boundaries.js';
 import { buildTrees } from './vegetation.js';
+import * as F from './furniture.js';
 
 /** A colour from a CSS string, in the renderer's linear working space (for vertex and instance colours). */
 export const colour = (c) => new THREE.Color(c);
@@ -492,26 +493,21 @@ export function buildings(items, { shadows = true, gableTexture = null } = {}) {
   return group;
 }
 
-/** Lamp posts: Victorian cast-iron columns with a glazed lantern, instanced in chunks. */
-export function lampPosts(points, { shadows = false } = {}) {
-  const iron = '#1f2426';
-  const geo = mergeAll([
-    tint(new THREE.CylinderGeometry(0.11, 0.15, 0.9, 8).translate(0, 0.45, 0), iron), // fluted base
-    tint(new THREE.CylinderGeometry(0.15, 0.15, 0.08, 8).translate(0, 0.94, 0), iron),
-    tint(new THREE.CylinderGeometry(0.045, 0.07, 3.0, 8).translate(0, 2.4, 0), iron),
-    tint(new THREE.CylinderGeometry(0.02, 0.02, 0.6, 5).rotateZ(Math.PI / 2).translate(0, 3.55, 0), iron), // ladder bar
-    tint(new THREE.CylinderGeometry(0.09, 0.05, 0.14, 8).translate(0, 3.95, 0), iron),
-    tint(new THREE.CylinderGeometry(0.2, 0.13, 0.42, 6).translate(0, 4.23, 0), '#f3e6b8'), // lantern glass
-    tint(new THREE.ConeGeometry(0.27, 0.24, 6).translate(0, 4.56, 0), iron),
-    tint(new THREE.SphereGeometry(0.045, 6, 5).translate(0, 4.71, 0), iron),
-  ], { colour: true, uv: false });
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.3 });
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-  const items = points.map((p) => {
-    q.setFromAxisAngle(up, p.rot);
-    return { matrix: m.clone().compose(new THREE.Vector3(p.x, p.y, p.z), q, new THREE.Vector3(1, 1, 1)) };
-  });
-  return chunked(geo, mat, items, { chunk: 300, shadows, maxDistance: 420 });
+/**
+ * Lamp posts: York's black heritage columns (fluted base, collars, ladder bar, glazed lantern with a finial),
+ * instanced in chunks (see furniture.js). points: [{x, y, z, rot}].
+ */
+export function lampPosts(points, opts = {}) {
+  return F.lampPosts(points, opts);
+}
+
+/**
+ * Street and lane furniture along the route (furniture.js): bins, benches, bollards, railings and 30 mph signs
+ * in York; bend and steep-hill warnings, the national speed limit, passing places and a telegraph line in the
+ * Dales. opts: {world, roadHalf, ground(x, z, d) → y, avoid(d) → bool, q}.
+ */
+export function roadside(route, opts) {
+  return F.roadside(route, opts);
 }
 
 /** Standing spectators along the road: smooth, individually coloured people who cheer and wave (crowd.js). */

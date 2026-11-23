@@ -309,6 +309,8 @@ export function buildDales(route, q) {
   group.add(C.linear([...roadWalls, ...fieldWalls], 'wall', { shadows: q.shadows, q }));
   group.add(C.linear(hedges, 'hedge', { shadows: q.shadows, q }));
   group.add(gateMesh(gates, q));
+  // Lane furniture: warning signs, passing places, a telegraph line (clear of the village and the bridge).
+  group.add(C.roadside(route, { world: 'dales', roadHalf: ROAD_HALF, ground: (x, z) => heightAt(x, z), avoid: (d) => village(route.wrap(d)) || Math.abs(route.wrap(d) - bridgeAt) < 30, q }));
 
   // ---- Trees: boundary trees, woods, riverside ----
   const placements = [];

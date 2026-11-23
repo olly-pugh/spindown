@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import { hash2 } from '../../core/world/noise.js';
 import * as F from './foliage.js';
 import { gateGeometry, gatePost } from './furniture.js';
+import { crispCoverage } from './vegetation.js';
 
 const V3 = THREE.Vector3;
 const TAU = Math.PI * 2;
@@ -571,6 +572,7 @@ function plantMaterial(map, level) {
   const m = new THREE.MeshStandardMaterial({ map, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.9, metalness: 0, alphaToCoverage: level !== 'low' });
   m.onBeforeCompile = (sh) => {
     sh.fragmentShader = sh.fragmentShader
+      .replace('#include <alphatest_fragment>', crispCoverage)
       .replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''))
       .replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\nmaterial.specularColorBlended *= 0.3; material.specularF90 = 0.3;');
   };
@@ -1031,7 +1033,7 @@ function makeHedgeCell(items, lines, frs) {
 /** Softer, translucent-looking light on a foliage material (and no back-face normal flip on cards). */
 function softFoliage(m, cards = false) {
   m.onBeforeCompile = (sh) => {
-    let f = sh.fragmentShader;
+    let f = sh.fragmentShader.replace('#include <alphatest_fragment>', crispCoverage);
     if (cards) f = f.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''));
     f = f.replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\nmaterial.specularColorBlended *= 0.3; material.specularF90 = 0.3;');
     sh.fragmentShader = f;

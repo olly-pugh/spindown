@@ -507,8 +507,11 @@ function barkGeometry(tree, column, { maxDepth, sides, stride = 1 }) {
       const y = pts[i].y;
       // Root flare and buttresses where the trunk meets the ground.
       const flare = b.depth === 0 ? 1 + 0.7 * (1 - smooth(-0.5, 1.2, y)) : 1;
-      // Bark darkens towards the ground (damp, moss) and inside the crown.
-      let ao = (0.72 + 0.28 * smooth(-0.3, 2.0, y)) * (b.depth >= 2 ? 0.85 : 1);
+      // Bark darkens towards the ground (damp, moss), and the canopy hides most of the sky from the limbs
+      // inside it and from the trunk beneath it.
+      const crown = tree.crown;
+      const canopy = y < crown.bottom ? 0.6 : 0.4 + 0.55 * Math.pow(Math.min(1, crown.f(pts[i])), 1.5);
+      let ao = (0.72 + 0.28 * smooth(-0.3, 2.0, y)) * canopy;
       let cr = ao, cg = ao, cb = ao;
       if (tree.pineBark !== undefined) {
         // Scots pine: grey-brown plates low down turning to orange-red higher up the trunk.
@@ -713,6 +716,21 @@ const dullSheen = /* glsl */ `
   material.specularColorBlended *= 0.3;
   material.specularF90 = 0.3;
 `;
+// Alpha to coverage, but with the coverage ramp centred on the cut-off and never wider than a fraction of
+// the alpha range: three's own ramp widens with fwidth(alpha), which on distant leaves (many leaves to a
+// pixel) turns whole cards half see-through and lets the sky show through the crown.
+export const crispCoverage = /* glsl */ `
+#ifdef USE_ALPHATEST
+  #ifdef ALPHA_TO_COVERAGE
+    float coverageWidth = clamp( fwidth( diffuseColor.a ), 0.0001, 0.1 );
+    diffuseColor.a = clamp( ( diffuseColor.a - alphaTest ) / coverageWidth + 0.5, 0.0, 1.0 );
+    if ( diffuseColor.a == 0.0 ) discard;
+  #else
+    if ( diffuseColor.a < alphaTest ) discard;
+  #endif
+#endif
+`;
+
 // Leaves are thin and translucent: sunlight wraps a little round each clump (a softer edge between the
 // sunny and shaded halves of a crown) and glows through the leaves when the sun is behind them.
 // (Only the diffuse term changes: the specular keeps the true N·L, or it blows up at grazing light.)
@@ -733,6 +751,7 @@ function leafMaterials(lib, level) {
     // Keep each card's crown-shaped normal on both its faces (the default flips it for the back face, which
     // would light half the cards as if they faced into the tree).
     sh.fragmentShader = sh.fragmentShader
+      .replace('#include <alphatest_fragment>', crispCoverage)
       .replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''))
       .replace('#include <lights_physical_pars_fragment>', foliageLight)
       .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>\n${dullSheen}`);
@@ -775,6 +794,7 @@ function impostorMaterial(lib, level) {
       `)
       .replace('#include <begin_vertex>', 'vec3 transformed = bbPos;');
     sh.fragmentShader = sh.fragmentShader
+      .replace('#include <alphatest_fragment>', crispCoverage)
       .replace('#include <lights_physical_pars_fragment>', foliageLight)
       .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>\n${dullSheen}`);
   };

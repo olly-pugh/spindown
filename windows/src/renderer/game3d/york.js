@@ -611,6 +611,8 @@ export function buildYork(route, data, q) {
   }
   group.add(C.lampPosts(lamps, { shadows: q.shadows }));
   group.add(C.spectators(people));
+  // Street furniture (bins, benches, bollards, railings, signs), clear of bridges, the bars and the finish.
+  group.add(C.roadside(route, { world: 'york', roadHalf: ROAD_HALF, ground: (x, z, d) => route.elevation(d) + 0.19, avoid: (d) => onBridge(d) || nearGate(d) || route.wrap(d) < 75 || route.wrap(d) > route.length - 75, q }));
   // Crowd barriers with sponsor boards along the finish straight.
   const barrierMat = std({ map: T.textTexture('SPINDOWN  ·  YORK  ·  SPINDOWN', { width: 1024, height: 64, bg: '#1d7f46', font: '700 40px Arial' }), color: '#b4b4b4', roughness: 0.9, envMapIntensity: 0.3, side: THREE.DoubleSide });
   const barriers = [];
