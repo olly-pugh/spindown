@@ -194,6 +194,7 @@ export function riderGear(skel, { bones }) {
     return f;
   };
   const hides = (x, y, z) => y < A[1] + 0.004 && shoeField(Math.abs(x), y, z) < -0.0025;
+  const hidesDeep = (x, y) => y < A[1] - 0.03; // the whole foot below here is inside the shoe (toes would poke through its sides)
   const underHelmet = (x, y, z) => {
     // Inside the shell's outer ellipsoid and above its rim (with a margin).
     const dx = x / 0.104, dy = (y - C[1] - 0.004) / 0.1, dz = (z - C[2] - 0.006) / (z < C[2] ? 0.14 : 0.152);
@@ -204,6 +205,7 @@ export function riderGear(skel, { bones }) {
   return {
     meshes: { helmet, helmetAero, glasses: glassesMesh, shoes, helmetFar, helmetAeroFar, glassesFar, shoesFar },
     hides,
+    hidesDeep,
     underHelmet,
     meta: { regions: GEAR },
   };

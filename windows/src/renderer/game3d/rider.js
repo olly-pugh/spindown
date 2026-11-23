@@ -104,7 +104,7 @@ function paintGear(geo, paint, { soleEdge = false } = {}) {
     if (edge) {
       // Height above the bottom of the sole (metres): sole, then a coloured welt line, then the upper.
       const h = edge.getX(i) / 10;
-      if (r === 1 || r === 6) r = h < 0.0062 ? 2 : h < 0.0088 ? 3 : r;
+      if (r === 1 || r === 6) r = h < 0.0062 ? 2 : r;
     }
     const [c, s] = paint[r] ?? paint[1];
     col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;

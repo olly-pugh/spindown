@@ -233,7 +233,8 @@ function buildRider({ shape = RIDER_SHAPE, body = 'm', proxyFile = 'proxymeshes/
 
   const W = mapWeights(mhWeights);
   const K = kitFields(mhWeights);
-  const keep = (f) => !f.v.every((v) => hidden(rest[v * 3], rest[v * 3 + 1], rest[v * 3 + 2]));
+  // Below the shoe collar a face goes if any corner is inside the shoe (so the sock never pokes through).
+  const keep = (f) => !(f.v.every((v) => hidden(rest[v * 3], rest[v * 3 + 1], rest[v * 3 + 2])) || f.v.some((v) => gear.hidesDeep(rest[v * 3], rest[v * 3 + 1], rest[v * 3 + 2])));
   // Face morphs: the same pose applied to the body shaped with extra face targets; only the head moves.
   const morphs = FACE_MORPHS.map((extra) => {
     const restM = toGame(shaped({ ...shape, ...Object.fromEntries(Object.entries(extra).map(([k, w]) => [k, (shape[k] ?? 0) + w])) }));

@@ -393,7 +393,7 @@ export function buildBike(kit, bones, detail = 'near', fit = null) {
     const half = deep ? 0.0135 : 0.0105;
     const rimProf = [[rOut, -half * 0.86], [rOut - depth * 0.15, -half], [rOut - depth * 0.6, -half * 0.96], [rIn + depth * 0.12, -half * 0.72], [rIn, -half * 0.3], [rIn - 0.002, 0], [rIn, half * 0.3], [rIn + depth * 0.12, half * 0.72], [rOut - depth * 0.6, half * 0.96], [rOut - depth * 0.15, half], [rOut, half * 0.86]];
     if (deep) put(rimUV(lathe(rimProf, seg), rOut, rIn, [0.5, 0.75]), gold ? '#e5c76b' : '#ffffff', gold ? ALLOY : CARBON, true);
-    else put(lathe(rimProf, seg), rimCol, ALLOY);
+    else put(rimUV(lathe(rimProf, seg), rOut, rIn, [0.5, 0.75]), '#ffffff', [0.42, 0.35], true); // anodised alloy with decals
     // Hub and flanges.
     put(lathe([[0.012, -0.05], [0.014, -0.04], [0.026, -0.036], [0.026, -0.03], [0.016, -0.026], [0.016, 0.026], [0.024, 0.03], [0.024, 0.036], [0.014, 0.04], [0.012, 0.05]], Math.round(16 * R)), '#1c1d20', SATIN);
     // Bladed spokes.
@@ -411,11 +411,16 @@ export function buildBike(kit, bones, detail = 'near', fit = null) {
       put(g, '#16171a', SATIN);
     }
     // Disc rotor (left side) and its carrier.
-    if (near) put(lathe([[0.079, -0.0442], [0.08, -0.0436], [0.08, -0.0424], [0.079, -0.0418], [0.062, -0.0418], [0.061, -0.0424], [0.061, -0.0436], [0.062, -0.0442], [0.079, -0.0442]], Math.round(36 * R)), '#7e8287', [0.42, 0.6]);
+    if (near) put(lathe([[0.079, -0.0442], [0.08, -0.0436], [0.08, -0.0424], [0.079, -0.0418], [0.062, -0.0418], [0.061, -0.0424], [0.061, -0.0436], [0.062, -0.0442], [0.079, -0.0442]], Math.round(36 * R)), '#5c6064', [0.5, 0.55]);
     if (near) put(lathe([[0.061, -0.0432], [0.022, -0.042], [0.022, -0.04], [0.061, -0.041]], Math.round(16 * R)), '#1a1b1d', SATIN);
     if (rear && near) {
       // Cassette: a stack of sprockets on the right.
-      for (let k = 0; k < 7; k++) put(lathe([[0.024 + k * 0.0045, 0.018 + k * 0.0042], [0.024 + k * 0.0045, 0.0205 + k * 0.0042]], Math.round(28 * R)), '#9a9da2', METAL);
+      // Cassette: sprockets largest inboard, each a thin toothed ring (dark steel) with gaps between.
+      for (let k = 0; k < 8; k++) {
+        const r = 0.056 - k * 0.0042, x = 0.016 + k * 0.0037;
+        put(lathe([[r - 0.01, x], [r, x], [r + 0.0015, x + 0.0009], [r, x + 0.0018], [r - 0.01, x + 0.0018]], Math.round(32 * R)), '#5d6065', [0.42, 0.75]);
+      }
+      put(lathe([[0.018, 0.014], [0.03, 0.014], [0.03, 0.046], [0.018, 0.046]], Math.round(16 * R)), '#26282b', SATIN);
     }
     return W;
   };
