@@ -3,6 +3,8 @@
 // Garmin's defaults are 50/60/70/80/90 %.
 
 export const DEFAULT_ZONE_PERCENTS = [50, 60, 70, 80, 90];
+/** Max heart rate used until one is entered (the rider this app is for: 196 bpm on his Garmin). */
+export const DEFAULT_MAX_HR = 196;
 
 export const ZONE_COLORS = ['#8e8e93', '#0a84ff', '#34c759', '#ff9f0a', '#ff453a'];
 export const ZONE_NAMES = ['Warm Up', 'Easy', 'Aerobic', 'Threshold', 'Maximum'];

@@ -2,10 +2,11 @@
 // segments and PRs, the PR ghost, and races. Deterministic and independent of rendering, so it is unit tested
 // and the 3D view simply draws `sim.riders`.
 import { riderParams, stepSpeed, steadySpeed, draftFraction, cadenceFor } from './physics.js';
-import { TIERS, tierFor, POWERUPS, BOT_FIRST, BOT_LAST, JERSEYS, HELMETS, BIKES, WHEELS, REGULARS } from './content.js';
+import { TIERS, tierFor, POWERUPS, BOT_FIRST, BOT_LAST, JERSEYS, HELMETS, BIKES, WHEELS, REGULARS, PACERS } from './content.js';
 import { rng, valueNoise } from './noise.js';
 import { medalFor } from './worlds.js';
 import * as P from './progression.js';
+import * as E from './efforts.js';
 
 export const BIKE_LENGTH = 1.75;
 /** Free-ride bot strength relative to the player's W/kg, by the bot's tier (rookie … pro). */
@@ -17,6 +18,14 @@ export const RACE_PRESETS = [
   { id: 'dales30', name: 'Dales Classic', minutes: 30, field: 18, world: 'dales', blurb: '30 minutes over the fell. Climbers welcome.' },
   { id: 'quick10', name: 'Quick Crit', minutes: 10, field: 14, world: 'york', blurb: 'A short, fast 10-minute race.' },
 ];
+
+/**
+ * Bots in a race: the preset's field, or more so that every regular in the roster is on the grid (Og Pog
+ * included; Mark Potts rides as well, as a guest).
+ */
+export function raceFieldSize(preset) {
+  return Math.max(preset.field, REGULARS.filter((x) => !x.power).length);
+}
 
 let nextID = 1;
 
@@ -46,6 +55,12 @@ function makeRider(fields) {
     finishTime: null,
     lastSpot: -1,
     kit: null,
+    /** Watts held exactly, whatever the road and the field (Mark Potts, pacers); null for everyone else. */
+    fixedPower: null,
+    /** A PACERS entry for a pacer ghost. */
+    pacer: null,
+    /** Rides in a race but takes no place in it (a guest). */
+    unplaced: false,
     ...fields,
   };
 }
@@ -54,8 +69,9 @@ export class WorldSim {
   /**
    * route: a course from worlds.js. profile: game profile (mutated with XP etc.). mode: 'free' | 'race'.
    * race: a RACE_PRESETS entry (mode 'race'). player: {ftp}. seed: randomness for bots.
+   * pacers: whether the pacer ghosts ride (free ride only); startPacer: watts of the one to start beside, or null.
    */
-  constructor({ route, profile, mode = 'free', race = null, ftp = 200, seed = 7, botCount = 16 }) {
+  constructor({ route, profile, mode = 'free', race = null, ftp = 200, seed = 7, botCount = 16, pacers = true, startPacer = null }) {
     this.route = route;
     this.L = route.length;
     this.profile = profile;
@@ -66,8 +82,10 @@ export class WorldSim {
     this.ftp = ftp;
     this.events = [];
     P.syncCourse(profile, route.id, route.version);
+    E.syncSegments(profile, route);
     this.spots = route.powerupSpots.map((at, i) => ({ at, lateral: [-1.2, 0, 1.2][i % 3] }));
-    this.segmentState = new Map(); // segment id -> entry time
+    this.segmentState = new Map(); // segment id -> the attempt in progress (see startAttempt)
+    this.lastPlayerD = null;
     this.lapStart = null; // sim time when the player last crossed the line
     this.lapSamples = [];
     this.sampleClock = 0;
@@ -93,6 +111,7 @@ export class WorldSim {
 
     if (mode === 'race') this.setupRace(race, seed);
     else this.setupFreeRide(botCount);
+    if (pacers) this.setupPacers(startPacer);
 
     // The PR ghost: your best lap of this course, in free ride.
     const ghost = profile.ghosts?.[route.id];
@@ -105,6 +124,7 @@ export class WorldSim {
       this.lapStart = 0;
       this.lapStartDistance = this.L;
       this.lapSamples = [0];
+      this.startAttempt(route.segments[0], 0, this.player.d);
     }
   }
 
@@ -113,6 +133,8 @@ export class WorldSim {
   makeBot(wkg, intensity, regular = null) {
     const r = this.random;
     const mass = regular?.mass ?? 58 + r() * 30;
+    // A fixed-power rider's W/kg is what they actually ride (for their tier badge).
+    if (regular?.power) wkg = regular.power / mass;
     const tier = tierFor(wkg);
     const pick = (list) => list[Math.floor(r() * list.length)];
     const tierIndex = TIERS.indexOf(tier);
@@ -130,7 +152,12 @@ export class WorldSim {
         helmet: pick(HELMETS),
         bike: BIKES[Math.min(BIKES.length - 1, Math.floor(r() * (2 + tierIndex * 1.2)))],
         wheels: WHEELS[Math.min(WHEELS.length - 1, Math.floor(r() * (1.5 + tierIndex)))],
+        ...regular?.kit,
       },
+      fixedPower: regular?.power ?? null,
+      flames: !!regular?.flames,
+      build: regular?.build ?? null,
+      body: regular?.body ?? null,
       preferredLateral: (r() * 2 - 1) * this.roadHalf * 0.7,
       wPrime: 18000, // anaerobic reserve (J)
       surge: 0,
@@ -142,8 +169,9 @@ export class WorldSim {
     this.player.d = 0;
     this.player.lateral = 0.6;
     // The regulars ride every day (Og Pog always), topped up with occasional visitors; small groups ride
-    // together and everyone is spread round the loop.
-    const regulars = [REGULARS[0], ...REGULARS.slice(1).sort(() => r() - 0.5)].slice(0, Math.max(count, Math.min(REGULARS.length, count + 4)));
+    // together and everyone is spread round the loop. Mark Potts always rides too, on his own.
+    const others = REGULARS.filter((x) => !x.fastest && !x.power).sort(() => r() - 0.5);
+    const regulars = [REGULARS.find((x) => x.fastest), ...others].slice(0, Math.max(count, Math.min(REGULARS.length - 1, count + 4)));
     const riders = regulars.map((reg) => ({ reg, tier: TIERS.find((t) => t.id === reg.tier) }));
     for (let i = regulars.length; i < count; i++) riders.push({ reg: null, tier: TIERS[Math.floor(r() * TIERS.length)] });
     let i = 0;
@@ -166,6 +194,53 @@ export class WorldSim {
         this.riders.push(bot);
       }
     }
+    // Mark Potts starts a little way back, so he comes past in a blaze of fire early on.
+    for (const reg of REGULARS.filter((x) => x.power)) {
+      const bot = this.makeBot(0, 1, reg);
+      bot.d = -(140 + r() * 80);
+      bot.preferredLateral = bot.lateral = bot.targetLateral = -0.5;
+      bot.v = steadySpeed(bot.fixedPower, this.route.gradient(bot.d), this.params(bot));
+      this.riders.push(bot);
+    }
+  }
+
+  /**
+   * The pacer ghosts, spread evenly round the loop so there is always one to find; `startWatts` puts that one just
+   * ahead of you on the line. They weigh what you do and ride your bike, so at their watts you hold their pace.
+   * In a race they line up behind the grid and set off with everyone, but take no place.
+   */
+  setupPacers(startWatts = null) {
+    const race = this.race;
+    const gridRows = race ? Math.ceil(this.riders.length / 3) : 0;
+    const n = PACERS.length;
+    const first = Math.max(0, PACERS.findIndex((x) => x.watts === startWatts));
+    PACERS.forEach((pacer, i) => {
+      const k = (i - first + n) % n; // the chosen one first, the rest in order of power round the loop
+      const bot = makeRider({
+        name: `${pacer.watts} W pacer`,
+        pacer,
+        fixedPower: pacer.watts,
+        mass: this.player.mass,
+        kit: this.player.kit,
+        level: this.player.level,
+        seed: i,
+        intensity: 1,
+      });
+      bot.wkg = pacer.watts / bot.mass;
+      bot.tier = tierFor(bot.wkg);
+      bot.unplaced = true;
+      if (race) {
+        // Behind the grid in rows of three, the chosen one (if any) at the front of them.
+        bot.d = race.startD - (gridRows + Math.floor(k / 3)) * 2.6;
+        bot.preferredLateral = bot.lateral = bot.targetLateral = ((k % 3) - 1) * 1.15;
+        bot.v = 0;
+      } else {
+        bot.d = startWatts != null && k === 0 ? 7 : this.L * ((k + (startWatts != null ? 0 : 0.5)) / n) + 12;
+        bot.preferredLateral = bot.lateral = bot.targetLateral = 0.45;
+        bot.v = steadySpeed(bot.fixedPower, this.route.gradient(bot.d), this.params(bot));
+      }
+      this.riders.push(bot);
+    });
   }
 
   setupRace(race, seed) {
@@ -177,8 +252,8 @@ export class WorldSim {
     // 30-minute effort (~5% over FTP) is podium contention, and beating Og Pog takes a great day;
     // each rider's weight then decides how they climb. Og Pog is always the strongest rider there.
     const base = this.ftp;
-    const field = preset.field;
-    const regulars = REGULARS.slice(1).sort(() => r() - 0.5);
+    const field = raceFieldSize(preset);
+    const regulars = REGULARS.filter((x) => !x.fastest && !x.power).sort(() => r() - 0.5);
     for (let i = 0; i < field - 1; i++) {
       const spread = -0.32 + (0.33 * i) / Math.max(1, field - 2); // −32% … +1% of your FTP
       const reg = regulars[i] ?? null;
@@ -193,6 +268,8 @@ export class WorldSim {
     const bestWatts = Math.max(...field0.map((b) => b.wkg * b.mass));
     const og = REGULARS[0];
     this.riders.push(this.makeBot(Math.max(bestWkg * 1.06, (Math.max(bestWatts * 1.13, base * 1.12)) / og.mass), 1, og));
+    // Mark Potts rides every race at his 350 W, as a guest: he would win most of them, so he takes no place.
+    const guests = REGULARS.filter((x) => x.power).map((reg) => Object.assign(this.makeBot(0, 1, reg), { unplaced: true }));
     // Race distance: what the player would cover at ~95% FTP with typical drafting in the set time, ending on the line.
     const p = this.params(this.player);
     let v = steadySpeed(this.ftp * 0.95, 0, p, 0.12);
@@ -208,6 +285,8 @@ export class WorldSim {
     // Grid: rows of three, the player in the second row.
     const order = this.riders.slice(1).sort(() => r() - 0.5);
     order.splice(4, 0, this.player);
+    order.push(...guests); // from the back of the grid
+    this.riders.push(...guests);
     order.forEach((rider, i) => {
       const row = Math.floor(i / 3), col = i % 3;
       rider.d = startD - row * 2.6;
@@ -352,6 +431,13 @@ export class WorldSim {
   // ---- Bots ----------------------------------------------------------------------------------------
 
   botPower(bot, dt) {
+    if (bot.fixedPower != null) {
+      // Exactly the same watts on every road, never scaled to the field, no surges or sprints. (Pacers ride
+      // your bike at your weight, so their watts mean the same for you.)
+      if (bot.pacer) bot.mass = this.player.mass;
+      bot.power = this.race && this.race.phase !== 'racing' && this.race.phase !== 'finished' ? 0 : bot.fixedPower;
+      return;
+    }
     const ftp = bot.wkg * bot.mass;
     const g = this.route.gradient(bot.d);
     const n = valueNoise(this.time / 25, bot.seed % 97, bot.seed); // slow variation 0..1
@@ -530,7 +616,7 @@ export class WorldSim {
     }
     // Overtakes: bots we were behind and are now ahead of.
     for (const b of this.riders) {
-      if (b === p || b.isGhost) continue;
+      if (b === p || b.isGhost || b.pacer) continue;
       let rel = b.d - p.d;
       if (this.mode === 'free') {
         rel = ((rel % L) + L) % L;
@@ -540,13 +626,25 @@ export class WorldSim {
       if (b.wasAhead && !ahead && Math.abs(rel) < 20 && riding) this.events.push(...P.recordOvertake(this.profile));
       b.wasAhead = ahead;
     }
+    // Segment attempts in progress: a jump along the road (not ridden) voids them; otherwise add this step.
+    const jumped = this.lastPlayerD != null && Math.abs(prevD - this.lastPlayerD) > 0.5;
+    this.lastPlayerD = p.d;
+    if (jumped) {
+      for (const att of this.segmentState.values()) this.events.push({ type: 'segment-void', segment: att.seg, reason: 'jump' });
+      this.segmentState.clear();
+    }
+    for (const att of this.segmentState.values()) this.trackAttempt(att, dt, hasPower, input);
     if (!(p.moved > 0)) return;
     const a = ((prevD % L) + L) % L, b = ((p.d % L) + L) % L;
     const crossed = (x) => (a <= b ? x > a && x <= b : x > a || x <= b);
+    // How far past x the rider is, and so when x was crossed (linear within the step).
+    const past = (x) => (((b - x) % L) + L) % L;
+    const when = (x) => this.time - dt * Math.min(1, past(x) / p.moved);
 
     // The lap line.
     if (b < a) {
       if (this.lapStart != null && this.mode === 'free') this.finishLap();
+      this.startAttempt(this.route.segments[0], when(0), p.d - past(0));
       this.lapStart = this.time - (b / Math.max(0.1, p.v));
       this.lapStartDistance = p.d - b + L;
       this.lapSamples = [b];
@@ -561,21 +659,28 @@ export class WorldSim {
       }
     }
 
-    // Segments (zones, climbs).
+    // Segments (zones, climbs, timed segments): finish any whose end was crossed, then start any entered.
     for (const seg of this.route.segments) {
       if (seg.kind === 'lap') continue;
       const from = ((seg.from % L) + L) % L, to = ((seg.to % L) + L) % L;
-      if (crossed(from)) {
-        this.segmentState.set(seg.id, this.time);
-        this.events.push({ type: 'segment-start', segment: seg, pr: this.profile.prs[this.route.id]?.[seg.id]?.time ?? null });
-      }
       if (crossed(to) && this.segmentState.has(seg.id)) {
-        const time = this.time - this.segmentState.get(seg.id);
+        const att = this.segmentState.get(seg.id);
         this.segmentState.delete(seg.id);
-        const medal = medalFor(seg, time);
-        const { events, previous, improved } = P.recordSegment(this.profile, this.route.id, seg, time);
-        this.events.push({ type: 'segment-end', segment: seg, time, medal, previous, improved, speed: (seg.to - seg.from) / time }, ...events);
-        this.events.push(...P.recordMedal(this.profile, this.route.id, seg, medal, this.route.zones));
+        const done = this.finishAttempt(att, when(to), p.d - past(to));
+        if (!done) {
+          this.events.push({ type: 'segment-void', segment: seg, reason: 'incomplete' });
+        } else {
+          const { time } = done;
+          const medal = medalFor(seg, time);
+          const { events, previous, improved } = P.recordSegment(this.profile, this.route.id, seg, time);
+          const result = E.recordAttempt(this.profile, this.route.id, seg, { ...done, world: this.route.world });
+          this.events.push({ type: 'segment-end', segment: seg, time, medal, previous, improved, speed: (seg.to - seg.from) / time, result }, ...events);
+          this.events.push(...P.recordMedal(this.profile, this.route.id, seg, medal, this.route.zones));
+        }
+      }
+      if (crossed(from)) {
+        this.startAttempt(seg, when(from), p.d - past(from));
+        this.events.push({ type: 'segment-start', segment: seg, pr: E.prFor(this.profile, this.route.id, seg)?.time ?? null });
       }
     }
 
@@ -601,16 +706,90 @@ export class WorldSim {
   finishLap() {
     const time = this.time - this.lapStart;
     const lap = this.route.segments[0];
+    // The lap counts only when it was ridden all the way round from the line (no jumps).
+    const att = this.segmentState.get(lap.id);
+    this.segmentState.delete(lap.id);
+    const done = att && this.finishAttempt(att, this.time, att.d0 + this.L);
+    if (!done) return;
     const ghost = this.profile.ghosts?.[this.route.id];
     const beatGhost = ghost && time < ghost.time;
     const { events, previous, improved } = P.recordSegment(this.profile, this.route.id, lap, time);
-    this.events.push({ type: 'segment-end', segment: lap, time, previous, improved }, ...events);
+    const result = E.recordAttempt(this.profile, this.route.id, lap, { ...done, time, world: this.route.world });
+    this.events.push({ type: 'segment-end', segment: lap, time, previous, improved, result }, ...events);
     if (beatGhost) this.events.push(...P.grant(this.profile, 'ghost'));
     if (!ghost || time < ghost.time) {
       this.lapSamples.push(this.L);
       (this.profile.ghosts ??= {})[this.route.id] = { time, samples: this.lapSamples.map((x) => Math.round(x * 10) / 10) };
     }
     this.events.push(...P.grant(this.profile, this.route.world === 'york' ? 'york-lap' : 'dales-lap'));
+  }
+
+  // ---- Segment attempts ----------------------------------------------------------------------------
+
+  /** Starts timing a segment entered at sim time t0, at the player's (unwrapped) distance d0. */
+  startAttempt(seg, t0, d0) {
+    this.segmentState.set(seg.id, { seg, t0, d0, elapsed: 0, energy: 0, powerTime: 0, hrSum: 0, hrTime: 0, splits: [] });
+  }
+
+  /** Adds one step to an attempt in progress: power, heart rate, and the time at each 5% of the distance. */
+  trackAttempt(att, dt, hasPower, input) {
+    const p = this.player;
+    att.elapsed += dt;
+    if (hasPower) {
+      att.energy += p.power * dt;
+      att.powerTime += dt;
+    }
+    const hr = input.heartRate;
+    if (Number.isFinite(hr) && hr > 30 && hr < 250) {
+      att.hrSum += hr * dt;
+      att.hrTime += dt;
+    }
+    const len = att.seg.to - att.seg.from;
+    while (att.splits.length < E.SPLITS) {
+      const mark = att.d0 + (len * (att.splits.length + 1)) / E.SPLITS;
+      if (p.d < mark) break;
+      const t = p.moved > 0 ? this.time - dt * Math.min(1, (p.d - mark) / p.moved) : this.time;
+      att.splits.push(Math.max(0, t - att.t0));
+    }
+  }
+
+  /**
+   * Ends an attempt left at sim time t1, at distance d1. Returns {time, power, hr, splits}, or null when it
+   * does not count: not ridden the whole way from the start (a jump or skip), or mostly without power data.
+   */
+  finishAttempt(att, t1, d1) {
+    const len = att.seg.to - att.seg.from;
+    const time = t1 - att.t0;
+    if (!(time > 0) || Math.abs(d1 - att.d0 - len) > Math.max(5, len * 0.02)) return null;
+    if (att.powerTime < 0.8 * att.elapsed) return null;
+    const power = att.powerTime > 0 ? att.energy / att.powerTime : null;
+    const hr = att.hrTime >= 0.5 * att.elapsed && att.hrTime > 0 ? att.hrSum / att.hrTime : null;
+    return { time, power, hr, splits: att.splits.length === E.SPLITS ? att.splits : null };
+  }
+
+  /**
+   * For the HUD: segments in progress (elapsed time, how far through, live delta against your PR) and the
+   * next one to start within `lookahead` metres, of the given kinds (zone, kom, segment; never the lap).
+   */
+  segmentStatus(lookahead = 300, kinds = ['zone', 'kom', 'segment']) {
+    const p = this.player, L = this.L, pos = this.route.wrap(p.d);
+    const active = [];
+    for (const att of this.segmentState.values()) {
+      if (!kinds.includes(att.seg.kind)) continue;
+      const len = att.seg.to - att.seg.from;
+      const fraction = Math.max(0, Math.min(1, (p.d - att.d0) / len));
+      const elapsed = Math.max(0, this.time - att.t0);
+      const pr = E.prFor(this.profile, this.route.id, att.seg);
+      const delta = pr && fraction > 0.02 ? elapsed - E.prTimeAt(pr, fraction) : null;
+      active.push({ segment: att.seg, elapsed, fraction, delta, pr, remaining: Math.max(0, len - (p.d - att.d0)) });
+    }
+    let upcoming = null;
+    for (const seg of this.route.segments) {
+      if (!kinds.includes(seg.kind) || this.segmentState.has(seg.id)) continue;
+      const ahead = (((seg.from - pos) % L) + L) % L;
+      if (ahead <= lookahead && (!upcoming || ahead < upcoming.distance)) upcoming = { segment: seg, distance: ahead, pr: E.prFor(this.profile, this.route.id, seg) };
+    }
+    return { active, upcoming };
   }
 
   // ---- Race ----------------------------------------------------------------------------------------
@@ -643,7 +822,7 @@ export class WorldSim {
     if (race.phase !== 'racing' && race.phase !== 'finished') return;
     const elapsed = this.time - race.start;
     for (const r of this.riders) {
-      if (r.isGhost || r.finished || r.d < race.finishD) continue;
+      if (r.isGhost || r.unplaced || r.finished || r.d < race.finishD) continue;
       // Interpolate the exact moment the line was crossed.
       const over = (r.d - race.finishD) / Math.max(0.1, r.v);
       r.finished = true;
@@ -654,17 +833,18 @@ export class WorldSim {
         race.phase = 'finished';
         const place = race.results.indexOf(r) + 1;
         race.playerPlace = place;
-        this.events.push({ type: 'race-finish', place, time: r.finishTime, field: this.riders.length });
-        this.events.push(...P.recordRace(this.profile, place, this.riders.filter((x) => !x.isGhost).length));
+        const field = this.riders.filter((x) => !x.isGhost && !x.unplaced).length;
+        this.events.push({ type: 'race-finish', place, time: r.finishTime, field });
+        this.events.push(...P.recordRace(this.profile, place, field));
       }
     }
   }
 
-  /** Riders in race order: finishers by time, then by distance covered. */
+  /** Riders in race order: finishers by time, then by distance covered. Guests (Mark Potts) take no place. */
   standings() {
     const list = this.riders.filter((r) => !r.isGhost);
     if (this.mode !== 'race') return list.sort((a, b) => b.d - a.d);
-    return list.sort((a, b) => {
+    return list.filter((r) => !r.unplaced).sort((a, b) => {
       if (a.finished && b.finished) return a.finishTime - b.finishTime;
       if (a.finished) return -1;
       if (b.finished) return 1;

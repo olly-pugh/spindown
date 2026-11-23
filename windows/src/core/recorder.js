@@ -69,10 +69,22 @@ export class RideStats {
   }
 }
 
-/** A sample: {t, dt, power|null, speed (m/s)|null, cadence|null, distance, heartRate|null}. */
-export function makeSample(t, dt, power, speed, cadence, distance, heartRate = null) {
-  return { t, dt, power, speed, cadence, distance, heartRate };
+/**
+ * A sample: {t, dt, power|null, speed (m/s)|null, cadence|null, distance, heartRate|null}, plus {lat, lon, alt}
+ * (degrees, metres) when the ride is in the 3D world. Rides without a world carry no position fields at all.
+ */
+export function makeSample(t, dt, power, speed, cadence, distance, heartRate = null, position = null) {
+  const s = { t, dt, power, speed, cadence, distance, heartRate };
+  if (position && Number.isFinite(position.lat) && Number.isFinite(position.lon)) {
+    s.lat = position.lat;
+    s.lon = position.lon;
+    if (Number.isFinite(position.alt)) s.alt = position.alt;
+  }
+  return s;
 }
+
+/** True if any sample has a position: the ride was ridden in the 3D world and has a GPS track. */
+export const hasPositions = (samples) => samples.some((s) => s.lat != null && s.lon != null);
 
 /** Builds a ride one second at a time. Owns no clock and no I/O. */
 export class RideRecorder {
@@ -86,8 +98,11 @@ export class RideRecorder {
     this.lastT = 0;
   }
 
-  /** Records a sample at `t` seconds after start. Pass null when there is no fresh trainer data. */
-  record(t, reading, heartRate = null) {
+  /**
+   * Records a sample at `t` seconds after start. Pass null when there is no fresh trainer data. `position`
+   * ({lat, lon, alt}) is the rider's place in the 3D world, or null.
+   */
+  record(t, reading, heartRate = null, position = null) {
     if (this.isPaused) return null;
     const dt = this.lastT == null ? 0 : Math.min(Math.max(t - this.lastT, 0), MAX_SAMPLE_GAP);
     this.lastT = t;
@@ -102,16 +117,17 @@ export class RideRecorder {
       reading ? Math.max(0, reading.cadenceRPM) : null,
       distance,
       heartRate != null && heartRate > 0 ? heartRate : null,
+      position,
     );
     this.apply(sample);
     return sample;
   }
 
   /** Pauses the timer, crediting time up to the pause. Returns the closing sample for the journal. */
-  pause(t, reading = null, heartRate = null) {
+  pause(t, reading = null, heartRate = null, position = null) {
     if (this.isPaused) return null;
     let closing = null;
-    if (this.lastT != null && t > this.lastT) closing = this.record(t, reading, heartRate);
+    if (this.lastT != null && t > this.lastT) closing = this.record(t, reading, heartRate, position);
     this.isPaused = true;
     this.timerEvents.push({ t, kind: 'stop' });
     return closing;
@@ -239,12 +255,18 @@ function encodeSample(s) {
   if (s.speed != null) o.v = s.speed;
   if (s.cadence != null) o.c = s.cadence;
   if (s.heartRate != null) o.h = s.heartRate;
+  if (s.lat != null) {
+    o.la = s.lat;
+    o.lo = s.lon;
+    if (s.alt != null) o.al = s.alt;
+  }
   return o;
 }
 
 function decodeSample(o) {
   if (typeof o?.t !== 'number' || typeof o.dt !== 'number' || typeof o.d !== 'number') throw new Error('bad sample');
-  return makeSample(o.t, o.dt, o.p ?? null, o.v ?? null, o.c ?? null, o.d, o.h ?? null);
+  const position = typeof o.la === 'number' && typeof o.lo === 'number' ? { lat: o.la, lon: o.lo, alt: o.al } : null;
+  return makeSample(o.t, o.dt, o.p ?? null, o.v ?? null, o.c ?? null, o.d, o.h ?? null, position);
 }
 
 export const Journal = {
@@ -253,12 +275,15 @@ export const Journal = {
   pause: (t) => JSON.stringify({ k: 'p', t }) + '\n',
   resume: (t) => JSON.stringify({ k: 'r', t }) + '\n',
   trainer: (info) => JSON.stringify({ k: 'i', trainer: info }) + '\n',
+  /** The 3D-world ride (course, mode, race place): see worldRideInfo. Never carries other riders' names. */
+  world: (info) => JSON.stringify({ k: 'w', world: info }) + '\n',
 };
 
 export function replayJournal(text) {
   let header = null;
   let recorder = null;
   let trainer = null;
+  let world = null;
   let lastT = 0;
   let skipped = 0;
   for (const line of String(text).split('\n')) {
@@ -269,7 +294,8 @@ export function replayJournal(text) {
       if (e.k === 's') e.s = decodeSample(e.s);
       else if ((e.k === 'p' || e.k === 'r') && typeof e.t !== 'number') throw new Error('bad');
       else if (e.k === 'h' && (typeof e.id !== 'string' || typeof e.start !== 'number')) throw new Error('bad');
-      else if (!['h', 's', 'p', 'r', 'i'].includes(e.k)) throw new Error('unknown');
+      else if (e.k === 'w' && (!e.world || typeof e.world !== 'object')) throw new Error('bad');
+      else if (!['h', 's', 'p', 'r', 'i', 'w'].includes(e.k)) throw new Error('unknown');
     } catch {
       skipped++;
       continue;
@@ -296,8 +322,11 @@ export function replayJournal(text) {
       case 'i':
         trainer = e.trainer;
         break;
+      case 'w':
+        world = e.world;
+        break;
     }
   }
   if (!header || !recorder) throw new Error('missingHeader');
-  return { id: header.id, trainer, recorder, lastT, skippedLines: skipped };
+  return { id: header.id, trainer, world, recorder, lastT, skippedLines: skipped };
 }

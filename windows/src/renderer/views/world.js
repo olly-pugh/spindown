@@ -4,17 +4,20 @@
 // that goes wrong in the 3D world is caught here and never reaches the ride session.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { html, Modal, Stepper, Progress, Select, Toggle } from '../components.js';
-import { useRideControls, liveZone } from './ride.js';
+import { useRideControls, liveZone, ZoneBadge } from './ride.js';
 import { linkTitle, isStreaming } from '../ble/trainer.js';
 import * as Format from '../../core/format.js';
 import * as Lakes from '../../core/lakes.js';
 import { WorldScene } from '../game3d/scene.js';
 import { GameAudio } from '../game3d/audio.js';
 import { makeDales, makeYork } from '../../core/world/worlds.js';
-import { WorldSim, RACE_PRESETS } from '../../core/world/sim.js';
+import { WorldSim, RACE_PRESETS, raceFieldSize } from '../../core/world/sim.js';
 import * as P from '../../core/world/progression.js';
-import { ITEMS, ACHIEVEMENTS, CHALLENGES, POWERUPS, TIERS, MAX_LEVEL } from '../../core/world/content.js';
+import { ITEMS, ACHIEVEMENTS, CHALLENGES, POWERUPS, TIERS, MAX_LEVEL, PACERS } from '../../core/world/content.js';
 import { riderParams, steadySpeed } from '../../core/world/physics.js';
+import { SegmentHud, SegmentsPanel, noteSegmentEvent, resetSegmentHud } from './segments.js';
+import { routeLatLon } from '../../core/world/geo.js';
+import { worldRideInfo } from '../../core/worldride.js';
 import yorkData from '../game3d/data/york.json';
 import dalesData from '../game3d/data/dales.json';
 
@@ -102,7 +105,7 @@ function effectiveFtp(app) {
   return G.profile?.ftpEstimate ?? app.settings.get('ftp');
 }
 
-function newSim(app, { routeId, mode = 'free', race = null }) {
+function newSim(app, { routeId, mode = 'free', race = null, startPacer = null }) {
   const r = ensureScene(routeId);
   G.sim = new WorldSim({
     route: r,
@@ -111,11 +114,13 @@ function newSim(app, { routeId, mode = 'free', race = null }) {
     race,
     ftp: effectiveFtp(app),
     seed: Math.floor(Math.random() * 1e6),
-    botCount: qualityFor(G.profile) === 'low' ? 10 : 16,
+    botCount: qualityFor(G.profile) === 'low' ? 12 : 22,
+    startPacer,
   });
   G.startD = G.sim.player.d;
   G.rideClock = 0;
   G.raceXP = 0;
+  resetSegmentHud();
   G.profile.lastRoute = routeId;
   for (const e of P.noteRideDay(G.profile)) handleEvent(app, e);
   scheduleSave(app.api);
@@ -129,6 +134,7 @@ function handleEvent(app, e) {
   if (G.eventLog.length > 600) G.eventLog.splice(0, 100);
   const u = app.settings.get('units');
   const a = G.audio;
+  const segmentHud = noteSegmentEvent(app, e); // timed segments and the KOM have their own cards (segments.js)
   switch (e.type) {
     case 'banner': toast('banner', e.text, '', 3.5); break;
     case 'pickup': toast('pickup', `${e.powerup.icon} ${e.powerup.name}`, 'Press Space or click to use', 3); a.chime(); break;
@@ -143,9 +149,13 @@ function handleEvent(app, e) {
     }
     case 'xp': if (G.sim?.mode === 'race') G.raceXP += e.amount; break;
     case 'segment-start':
-      if (e.segment.kind !== 'lap') toast('segment', `${e.segment.kind === 'kom' ? '▲' : '⚡'} ${e.segment.name}`, e.pr ? `PR ${Format.shortDuration(e.pr)} · gold ${Format.shortDuration(e.segment.medals.gold)}` : `Gold under ${Format.shortDuration(e.segment.medals.gold)}`, 3.5);
+      if (e.segment.kind !== 'lap' && !segmentHud) toast('segment', `${e.segment.kind === 'kom' ? '▲' : '⚡'} ${e.segment.name}`, e.pr ? `PR ${Format.shortDuration(e.pr)} · gold ${Format.shortDuration(e.segment.medals.gold)}` : `Gold under ${Format.shortDuration(e.segment.medals.gold)}`, 3.5);
       break;
     case 'segment-end': {
+      if (segmentHud) {
+        if (e.medal || e.result?.isPR) a.chime();
+        break;
+      }
       const medal = e.medal ? { gold: '🥇', silver: '🥈', bronze: '🥉' }[e.medal] : '';
       const pr = e.improved && e.previous != null ? ` · new PR (−${(e.previous - e.time).toFixed(1)} s)` : e.previous != null ? ` · PR ${Format.shortDuration(e.previous)}` : '';
       const speed = e.speed ? ` · ${Format.speedMS(e.speed, u)} ${Format.speedUnit(u)}` : '';
@@ -164,6 +174,12 @@ function handleEvent(app, e) {
 }
 
 // ---- Small components -------------------------------------------------------------------------------------
+
+/** Pacers' badge in the rider list: PACE in the ghost's colour. */
+function RiderBadge({ rider }) {
+  if (rider.pacer) return html`<span class="tier pace" style=${{ background: rider.pacer.color }} title=${`Pacer: holds ${rider.pacer.watts} W`}>PACE</span>`;
+  return html`<${TierBadge} tier=${rider.tier} level=${rider.isPlayer ? P.level(G.profile) : rider.level} />`;
+}
 
 function TierBadge({ tier, level }) {
   return html`<span class="tier" style=${{ background: tier.color }} title=${`${tier.name} (${tier.wkg[0]}–${tier.wkg[1]} W/kg)`}>${tier.short}${level != null ? html`<b>${level}</b>` : null}</span>`;
@@ -243,9 +259,9 @@ function Minimap({ sim }) {
         if (rider.isPlayer || rider.hidden) continue;
         const [x, y] = pt(rider.d);
         g.beginPath();
-        g.arc(x, y, rider.isGhost ? 4 : 3.2, 0, Math.PI * 2);
-        if (rider.isGhost) {
-          g.strokeStyle = '#5ad1ff';
+        g.arc(x, y, rider.isGhost || rider.pacer ? 4 : 3.2, 0, Math.PI * 2);
+        if (rider.isGhost || rider.pacer) {
+          g.strokeStyle = rider.pacer?.color ?? '#5ad1ff';
           g.lineWidth = 2;
           g.stroke();
         } else {
@@ -286,11 +302,21 @@ function ElevationProfile({ sim }) {
   const ghost = sim.ghost && !sim.ghost.hidden ? r.wrap(sim.ghost.d) / r.length : null;
   return html`<svg class="elevation" viewBox="0 0 1000 40" preserveAspectRatio="none">
     ${r.zones.map((z) => html`<rect x=${(z.from / r.length) * 1000} y="0" width=${((z.to - z.from) / r.length) * 1000} height="40" fill=${z.kind === 'kom' ? 'rgba(255,69,58,0.25)' : 'rgba(10,132,255,0.25)'} />`)}
+    ${timedSegmentBands(r).map(([x, w]) => html`<rect x=${x} y="36" width=${w} height="4" fill="rgba(52,199,89,0.95)" />`)}
     <path d=${`${r.profilePath} L1000,40 L0,40 Z`} fill="rgba(255,255,255,0.18)" />
     <path d=${r.profilePath} fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.5" vector-effect="non-scaling-stroke" />
     ${ghost != null ? html`<line x1=${ghost * 1000} x2=${ghost * 1000} y1="0" y2="40" stroke="#5ad1ff" stroke-width="2" vector-effect="non-scaling-stroke" />` : null}
     <line x1=${lap * 1000} x2=${lap * 1000} y1="0" y2="40" stroke="#ffd60a" stroke-width="3" vector-effect="non-scaling-stroke" />
   </svg>`;
+}
+
+/** Timed segments as [x, width] bands on the 0–1000 profile (one that crosses the line is split in two). */
+function timedSegmentBands(r) {
+  r.segmentBands ??= r.segments.filter((s) => s.kind === 'segment').flatMap((s) => {
+    const a = (r.wrap(s.from) / r.length) * 1000, w = ((s.to - s.from) / r.length) * 1000;
+    return a + w <= 1000 ? [[a, w]] : [[a, 1000 - a], [0, a + w - 1000]];
+  });
+  return r.segmentBands;
 }
 
 function RiderList({ sim, units }) {
@@ -301,6 +327,17 @@ function RiderList({ sim, units }) {
     const me = order.indexOf(p);
     const from = Math.max(0, Math.min(order.length - 8, me - 3));
     rows = order.slice(from, from + 8).map((r, i) => ({ r, place: from + i + 1, gap: (r.d - p.d) / Math.max(3, p.v) }));
+    // Pacers and Mark Potts take no place: shown among the riders round them, without a number.
+    const live = rows.filter((x) => !x.r.finished);
+    if (live.length) {
+      const hi = Math.max(...live.map((x) => x.r.d)) + 15, lo = Math.min(...live.map((x) => x.r.d)) - 15;
+      const extra = sim.riders.filter((r) => r.unplaced && r.d <= hi && r.d >= lo).map((r) => ({ r, place: '', gap: (r.d - p.d) / Math.max(3, p.v) }));
+      if (extra.length) {
+        rows = [...rows.filter((x) => x.r.finished), ...[...live, ...extra].sort((a, b) => b.r.d - a.r.d)];
+        const start = Math.max(0, Math.min(rows.length - 9, rows.findIndex((x) => x.r === p) - 4));
+        rows = rows.slice(start, start + 9);
+      }
+    }
   } else {
     const L = sim.route.length;
     rows = sim.riders.filter((r) => !r.isGhost).map((r) => {
@@ -314,8 +351,8 @@ function RiderList({ sim, units }) {
   return html`<div class="riderlist glass">
     ${rows.map((x) => html`<div class="row ${x.r.isPlayer ? 'me' : ''}">
       ${x.place != null ? html`<span class="place num">${x.place}</span>` : null}
-      <${TierBadge} tier=${x.r.tier} level=${x.r.isPlayer ? P.level(G.profile) : x.r.level} />
-      <span class="name">${x.r.name}</span>
+      <${RiderBadge} rider=${x.r} />
+      <span class="name">${x.r.flames ? '🔥 ' : ''}${x.r.name}</span>
       <span class="gap num">${x.r.isPlayer ? `${(x.r.power / x.r.mass).toFixed(1)} W/kg` : x.place != null ? (x.r.finished ? 'FIN' : `${x.gap > 0 ? '+' : '−'}${Math.abs(x.gap).toFixed(0)}s`) : `${x.rel > 0 ? '+' : '−'}${Format.distance(Math.abs(x.rel), units) === '0.00' ? Math.round(Math.abs(x.rel)) + ' m' : Format.distance(Math.abs(x.rel), units) + ' ' + Format.distanceUnit(units)}`}</span>
     </div>`)}
   </div>`;
@@ -346,6 +383,12 @@ function Toasts() {
 
 function MainMenu({ app, onFreeRide, onRace, onWorkouts, open }) {
   const prof = G.profile;
+  const [pacer, setPacer] = useState(prof.settings.startPacer ?? null);
+  const pick = (w) => {
+    setPacer(w);
+    prof.settings.startPacer = w;
+    scheduleSave(app.api);
+  };
   const york = route('york'), dales = route('dales');
   const u = app.settings.get('units');
   const card = (r, img) => html`<button class="mcard" onClick=${() => onFreeRide(r.id)}>
@@ -363,16 +406,22 @@ function MainMenu({ app, onFreeRide, onRace, onWorkouts, open }) {
       ${card(york, 'york')}
       ${card(dales, 'dales')}
     </div>
+    <div class="pacer-pick">
+      <span class="small muted">Start next to a pacer:</span>
+      <button class=${pacer == null ? 'on' : ''} onClick=${() => pick(null)}>None</button>
+      ${PACERS.map((p) => html`<button class=${pacer === p.watts ? 'on' : ''} style=${{ '--pc': p.color }} onClick=${() => pick(p.watts)} title=${`Start your free ride beside the ${p.watts} W pacer`}>${p.watts} W</button>`)}
+    </div>
     <h3 style="margin:18px 4px 8px">Races</h3>
     <div class="menu-grid three">
       ${RACE_PRESETS.map((rp) => html`<button class="mcard race" onClick=${() => onRace(rp)}>
         <div class="body"><div class="title">🏁 ${rp.name}</div><div class="small muted">${rp.blurb}</div>
-        <div class="small num">${rp.minutes} min · ${rp.field} riders · ${route(rp.world).title}</div></div>
+        <div class="small num">${rp.minutes} min · ${raceFieldSize(rp) + 1} riders · ${route(rp.world).title}</div></div>
       </button>`)}
     </div>
     <div class="menu-row">
       <button class="btn big white" onClick=${onWorkouts}>🎯 Workouts</button>
       <button class="btn big white" onClick=${() => open('garage')}>🚲 Garage</button>
+      <button class="btn big white" onClick=${() => open('segments')}>⏱ Segments</button>
       <button class="btn big white" onClick=${() => open('progress')}>🏆 Progress</button>
       <button class="btn big white" onClick=${() => open('options')}>⚙️ World settings</button>
     </div>
@@ -443,7 +492,7 @@ function ProgressPanel({ app, onClose }) {
       ${r.segments.map((seg) => {
         const pr = prof.prs[r.id]?.[seg.id];
         const medal = prof.medals[r.id]?.[seg.id];
-        return html`<div class="item"><span style="flex:1">${seg.kind === 'kom' ? '▲' : seg.kind === 'zone' ? '⚡' : '🔁'} ${seg.name}</span>
+        return html`<div class="item"><span style="flex:1">${{ kom: '▲', zone: '⚡', segment: '⏱' }[seg.kind] ?? '🔁'} ${seg.name}</span>
           ${seg.medals ? html`<span class="small muted num">🥇 ${Format.shortDuration(seg.medals.gold)} 🥈 ${Format.shortDuration(seg.medals.silver)} 🥉 ${Format.shortDuration(seg.medals.bronze)}</span>` : null}
           <span class="num" style="min-width:90px;text-align:right">${medal ? { gold: '🥇', silver: '🥈', bronze: '🥉' }[medal] : ''} ${pr ? Format.shortDuration(pr.time) : '—'}</span></div>`;
       })}
@@ -504,6 +553,7 @@ function Results({ app, onRideOn, onAgain, onMenu, onFinish }) {
       <div class="card" style="flex:1"><div class="small muted">Place</div><div style="font-size:28px;font-weight:800">${me ? `${ordinal(me)} of ${board.length}` : '—'}</div></div>
       <div class="card" style="flex:1"><div class="small muted">XP earned</div><div style="font-size:28px;font-weight:800" class="yellow">+${G.raceXP}</div></div>
     </div>
+    ${sim.riders.some((r) => r.unplaced && !r.pacer) ? html`<div class="small muted" style="margin:0 2px 8px">${sim.riders.filter((r) => r.unplaced && !r.pacer).map((r) => `🔥 ${r.name}`).join(', ')} rode as a guest at a constant ${sim.riders.find((r) => r.unplaced && !r.pacer).fixedPower} W and takes no place. Pacers take no place either.</div>` : null}
     <table class="leaderboard">
       <thead><tr><th>#</th><th></th><th>Rider</th><th>W/kg</th><th>Time</th><th>Gap</th></tr></thead>
       <tbody>${board.map((b, i) => html`<tr class=${b.rider.isPlayer ? 'me' : ''}>
@@ -573,6 +623,8 @@ export function WorldView({ app, openSensors }) {
     }
     session.worldVisible = true;
     session.updateKeepAwake();
+    const link = worldLink(app, () => holder.current?.parentNode);
+    session.world = link;
     const frame = (t) => {
       raf = requestAnimationFrame(frame);
       try {
@@ -591,7 +643,7 @@ export function WorldView({ app, openSensors }) {
         const events = [];
         while (remaining > 1e-6) {
           const dt = Math.min(0.25, remaining);
-          events.push(...sim.step(dt, { power, cadence: reading?.cadenceRPM ?? null }));
+          events.push(...sim.step(dt, { power, cadence: reading?.cadenceRPM ?? null, heartRate: heartRate.freshHeartRate(now) }));
           remaining -= dt;
         }
         if (power != null) G.rideClock += real * G.timeScale;
@@ -602,11 +654,12 @@ export function WorldView({ app, openSensors }) {
         scene.resize();
         scene.syncRiders(sim);
         const open = panelRef.current;
-        scene.cameraMode = open === 'garage' ? 'side' : open === 'menu' ? 'cinematic' : G.profile.settings.camera;
+        scene.cameraMode = G.shotCamera ?? (open === 'garage' ? 'side' : open === 'menu' ? 'cinematic' : G.profile.settings.camera);
         scene.updateCamera(sim, real);
         scene.updateTokens(sim, real * G.timeScale);
         scene.render();
         G.audio.update(real, sim.player.v, sim.player.cadence);
+        G.lastFrameAt = performance.now();
         updatePlates(sim, scene, plates.current);
         // Auto-close the menu once you start riding.
         // Only the welcome menu shown on arrival closes by itself; a menu you opened stays until you choose.
@@ -666,6 +719,7 @@ export function WorldView({ app, openSensors }) {
       cancelAnimationFrame(raf);
       window.removeEventListener('keydown', onKey);
       G.canvas?.remove();
+      if (session.world === link) session.world = null;
       session.worldVisible = false;
       session.updateKeepAwake();
       scheduleSave(app.api, true);
@@ -729,7 +783,7 @@ export function WorldView({ app, openSensors }) {
   const startFree = (routeId) => {
     G.audio.start();
     G.workout = null;
-    newSim(app, { routeId });
+    newSim(app, { routeId, startPacer: G.profile.settings.startPacer ?? null });
     rebuildIfNeeded();
     setPanel(null);
   };
@@ -771,15 +825,11 @@ export function WorldView({ app, openSensors }) {
     ${sim && panel !== 'menu' ? html`<div class="world-hud">
       <div class="hud-top">
         <div class="hud-left glass">
-          <div class="big-num ${powerColour}"><span class="num">${Format.watts(power)}</span><small>W</small></div>
+          <div class="big-num ${powerColour}"><span class="num">${Format.watts(power)}</span><small>W</small><small class="wkg num">${power == null ? '--' : (power / sim.player.mass).toFixed(1)} W/kg</small></div>
           <div class="hud-grid">
             <div><span class="num">${Format.speedMS(sim.player.v, u)}</span><small>${Format.speedUnit(u)}</small></div>
             <div><span class="num">${Format.rpm(reading?.cadenceRPM)}</span><small>rpm</small></div>
-            ${(() => {
-              const z = liveZone(settings, hr);
-              return html`<div class=${hr == null ? 'muted' : 'red'} title=${z ? `Heart rate zone: ${z.name}` : 'Heart rate'}><span class="num" style=${z?.zone ? { color: z.color } : null}>${hr ?? '--'}</span><small>${z?.zone ? html`bpm <b style=${{ color: z.color }}>Z${z.zone}</b>` : 'bpm'}</small></div>`;
-            })()}
-            <div><span class="num">${power == null ? '--' : (power / sim.player.mass).toFixed(1)}</span><small>W/kg</small></div>
+            <div class="hud-hr ${hr == null ? 'muted' : 'red'}" title="Heart rate"><span class="num">${hr ?? '--'}</span><small>bpm</small><${ZoneBadge} zone=${liveZone(settings, hr)} /></div>
           </div>
           ${sim.player.draft > 0.08 ? html`<div class="draft">🌬 Drafting · ${Math.round(sim.player.draft * 100)}% less drag</div>` : null}
         </div>
@@ -793,6 +843,7 @@ export function WorldView({ app, openSensors }) {
             <span class="num">${Format.distance(Math.max(0, rideDistance), u)} ${Format.distanceUnit(u)}</span>
             <span class="num ${grad > 3 ? 'red' : grad < -3 ? 'cyan' : ''}">${grad >= 0 ? '↗' : '↘'} ${grad.toFixed(1)}%</span>
           </div>`}
+          <${SegmentHud} sim=${sim} units=${u} />
           <${Toasts} />
         </div>
         <div class="hud-right">
@@ -838,6 +889,7 @@ export function WorldView({ app, openSensors }) {
     ${panel === 'menu' ? html`<div class="menu-backdrop"><${MainMenu} app=${app} onFreeRide=${startFree} onRace=${startRace} onWorkouts=${() => setPanel('workouts')} open=${setPanel} />
       ${sim ? html`<button class="btn big white close-menu" onClick=${() => { G.audio.start(); setPanel(null); }}>Ride ${sim.route.title} ▸</button>` : null}</div>` : null}
     ${panel === 'garage' ? html`<${Garage} app=${app} onClose=${() => setPanel(null)} />` : null}
+    ${panel === 'segments' ? html`<${SegmentsPanel} app=${app} profile=${G.profile} routeFor=${route} onClose=${() => setPanel('menu')} />` : null}
     ${panel === 'progress' ? html`<${ProgressPanel} app=${app} onClose=${() => setPanel('menu')} />` : null}
     ${panel === 'options' ? html`<${OptionsPanel} app=${app} onClose=${() => setPanel('menu')} onQuality=${rebuild} />` : null}
     ${panel === 'workouts' ? html`<${WorkoutPicker} app=${app} onChoose=${chooseWorkout} onClose=${() => setPanel('menu')} />` : null}
@@ -850,11 +902,61 @@ export function WorldView({ app, openSensors }) {
   </div>`;
 }
 
+// ---- The ride recording's view of the world -----------------------------------------------------------------
+
+/**
+ * What the ride session reads from the world while it is on screen: the rider's real latitude, longitude and
+ * altitude on the course (null if the world has not drawn a frame lately, e.g. the window is minimised), the
+ * course details saved with the ride, and a picture for the ride's summary and Strava.
+ */
+function worldLink(app, root) {
+  return {
+    position() {
+      const sim = G.sim;
+      if (!sim || G.failure || !(performance.now() - (G.lastFrameAt ?? -1e9) < 2500)) return null;
+      const data = sim.route.world === 'york' ? yorkData : dalesData;
+      if (!data?.origin) return null;
+      return routeLatLon(sim.route, data.origin, sim.player.d, sim.player.lateral ?? 0);
+    },
+    info() {
+      return G.sim ? worldRideInfo(G.sim, { workout: G.workout }) : null;
+    },
+    capture: () => captureRidePicture(app, root()),
+  };
+}
+
+/**
+ * A clean picture of the 3D view: other riders' name tags, the rider list, results, toasts, menus, dialogs and
+ * buttons are hidden (body.world-shot in styles.css), the camera is put behind your rider if it was in first
+ * person, then the main process grabs the world's area of the window. Everything is restored afterwards.
+ */
+async function captureRidePicture(app, root) {
+  if (!G.scene || !G.sim || !root?.isConnected) return null;
+  const frame = () => Promise.race([new Promise((r) => requestAnimationFrame(() => r())), new Promise((r) => setTimeout(r, 250))]);
+  document.body.classList.add('world-shot');
+  if (G.profile?.settings.camera === 'first') {
+    G.shotCamera = 'chase';
+    G.scene.camInit = false;
+  }
+  try {
+    for (let i = 0; i < 3; i++) await frame();
+    const b = root.getBoundingClientRect();
+    return await app.api.app.capturePicture({ x: b.left, y: b.top, width: b.width, height: b.height });
+  } finally {
+    document.body.classList.remove('world-shot');
+    if (G.shotCamera) {
+      G.shotCamera = null;
+      if (G.scene) G.scene.camInit = false;
+    }
+  }
+}
+
 /** Floating name tags over nearby riders, positioned straight from the 3D camera every frame. */
 function updatePlates(sim, scene, el) {
   if (!el) return;
   const L = sim.route.length;
-  const list = sim.riders.filter((r) => !r.isPlayer && !r.hidden).map((r) => {
+  // Pacers carry their own big watts label in 3D (scene.js), so they need no plate.
+  const list = sim.riders.filter((r) => !r.isPlayer && !r.hidden && !r.pacer).map((r) => {
     let rel = r.d - sim.player.d;
     if (sim.mode === 'free') {
       rel = ((rel % L) + L) % L;
@@ -879,7 +981,7 @@ function updatePlates(sim, scene, el) {
     node.style.display = 'block';
     const s = Math.max(0.55, Math.min(1, 14 / Math.max(1, at.distance)));
     node.style.transform = `translate(${at.x}px, ${at.y}px) translate(-50%, -100%) scale(${s.toFixed(2)})`;
-    const text = x.r.isGhost ? `<span class="ghost">👻 Your PR</span>` : `<span class="tb" style="background:${x.r.tier.color}">${x.r.tier.short}<b>${x.r.level}</b></span>${x.r.name}`;
+    const text = x.r.isGhost ? `<span class="ghost">👻 Your PR</span>` : `<span class="tb" style="background:${x.r.tier.color}">${x.r.tier.short}<b>${x.r.level}</b></span>${x.r.flames ? '🔥 ' : ''}${x.r.name}`;
     if (node.dataset.text !== text) {
       node.innerHTML = text;
       node.dataset.text = text;

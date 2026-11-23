@@ -3,15 +3,28 @@ import { useState } from 'preact/hooks';
 import { html, Tile, Confirm } from '../components.js';
 import * as Format from '../../core/format.js';
 import { linkTitle, linkColor, isStreaming } from '../ble/trainer.js';
-import { zoneFor, zoneDecimal, ZONE_COLORS, ZONE_NAMES } from '../../core/hrzones.js';
+import { zoneFor, zoneDecimal, ZONE_COLORS, ZONE_NAMES, DEFAULT_MAX_HR, validMaxHR } from '../../core/hrzones.js';
 
 /** The heart-rate zone for the settings' max HR and zones: {zone 0..5, decimal, color, name}, or null. */
 export function liveZone(settings, hr) {
-  const max = settings.get('maxHeartRate');
+  const set = settings.get('maxHeartRate');
+  const max = validMaxHR(set) ? set : DEFAULT_MAX_HR;
   const pcts = settings.get('hrZonePercents');
   const zone = zoneFor(hr, max, pcts);
   if (zone == null) return null;
   return { zone, decimal: zoneDecimal(hr, max, pcts), color: zone ? ZONE_COLORS[zone - 1] : null, name: zone ? ZONE_NAMES[zone - 1] : 'Below zone 1' };
+}
+
+/**
+ * The heart-rate zone as a badge to sit beside the heart rate: "Z3 Aerobic" in the zone's colour, big enough to
+ * read from the bike. zone: from liveZone (null hides it).
+ */
+export function ZoneBadge({ zone, large = false }) {
+  if (!zone) return null;
+  if (!zone.zone) return html`<span class="zone-badge below ${large ? 'large' : ''}" title="Below heart rate zone 1"><b>Z0</b>Below zone 1</span>`;
+  const c = zone.color;
+  const lum = parseInt(c.slice(1, 3), 16) * 0.3 + parseInt(c.slice(3, 5), 16) * 0.59 + parseInt(c.slice(5, 7), 16) * 0.11;
+  return html`<span class="zone-badge ${large ? 'large' : ''}" style=${{ background: c, color: lum > 120 ? '#000' : '#fff' }} title=${`Heart rate zone ${zone.decimal.toFixed(1)}: ${zone.name}`}><b>Z${zone.zone}</b>${zone.name}</span>`;
 }
 
 export function StatusBar({ app, onClick }) {
@@ -89,13 +102,11 @@ export function RideView({ app, openSensors, openCalibration }) {
         ${trainer.latest?.coasting && power === 0 ? html`<div class="orange small">Coasting</div>` : null}
       </div>
       <div class="center" style="min-width:220px">
-        <div class="row" style="justify-content:center;align-items:baseline;gap:8px">
+        <div class="row" style="justify-content:center;align-items:center;gap:12px">
           <span class="hrnum num ${hr != null ? 'red' : 'muted'}">${hr ?? '--'}</span><span class=${hr != null ? 'red' : 'muted'} style="font-size:28px">♥</span>
+          <${ZoneBadge} zone=${zone} large />
         </div>
-        <div class="cap">${hr == null && heartRate.state.kind === 'idle' ? 'NO HR STRAP' : 'BPM'}</div>
-        ${zone ? html`<div style="margin-top:6px">${zone.zone
-          ? html`<span class="zone-chip num" style=${{ background: zone.color }}>ZONE ${zone.decimal.toFixed(1)}</span> <span class="small muted">${zone.name}</span>`
-          : html`<span class="small muted">Below zone 1</span>`}</div>` : null}
+        <div class="cap">${hr == null && heartRate.state.kind === 'idle' ? 'NO HR STRAP' : zone?.zone ? `BPM · ZONE ${zone.decimal.toFixed(1)}` : 'BPM'}</div>
       </div>
     </div>
     <div class="tiles" style="grid-template-columns:repeat(4,1fr)">

@@ -504,14 +504,17 @@ export class StravaClient {
     this.store.delete(StravaClient.tokenKey);
   }
 
-  /** Uploads a FIT file flagged as an indoor trainer ride. `externalID` makes retries idempotent. */
-  async upload(fit, name, description, externalID) {
+  /**
+   * Uploads a FIT file. `externalID` makes retries idempotent. A plain ride is flagged as an indoor trainer
+   * ride; a virtual ride (Spindown World, with a GPS track) is not, so Strava shows its map like a Zwift ride.
+   */
+  async upload(fit, name, description, externalID, { virtual = false } = {}) {
     const token = await this.validAccessToken();
     const form = new MultipartForm();
     form.add('data_type', 'fit');
     form.add('name', name);
     if (description) form.add('description', description);
-    form.add('trainer', '1');
+    form.add('trainer', virtual ? '0' : '1');
     form.add('commute', '0');
     form.add('external_id', externalID);
     form.addFile('file', `${externalID}.fit`, 'application/octet-stream', fit);
@@ -531,6 +534,10 @@ export class StravaClient {
     return StravaClient.interpretUpload(res.status, res.text);
   }
 
+  /**
+   * Upload status. `photoTargets` (not part of the saved state) lists any pre-signed photo upload targets
+   * Strava offered in the undocumented `photo_metadata` field, which it fills in only for partner apps.
+   */
   static interpretUpload(status, text) {
     if (status === 401 || status === 403) throw reauth(`Strava refused the upload (HTTP ${status}).`);
     if (status === 429) throw rateLimited();
@@ -541,11 +548,48 @@ export class StravaClient {
       if (json.error.toLowerCase().includes('duplicate')) return { status: 'duplicate', activityID: StravaClient.activityIDInDuplicateMessage(json.error) };
       throw rejected(`Strava rejected the file: ${json.error}`);
     }
+    const photos = StravaClient.photoTargets(json.photo_metadata);
+    const withPhotos = (o) => (photos.length ? { ...o, photoTargets: photos } : o);
     const activity = idString(json.activity_id);
-    if (activity) return { status: 'uploaded', activityID: activity };
+    if (activity) return withPhotos({ status: 'uploaded', activityID: activity });
     const ref = typeof json.id_str === 'string' ? json.id_str : idString(json.id);
     if (!ref) throw invalid('upload response without id');
-    return { status: 'processing', ref };
+    return withPhotos({ status: 'processing', ref });
+  }
+
+  /**
+   * Pre-signed photo targets from `photo_metadata`: entries with method PUT, a JPEG Content-Type header and an
+   * https uri (the same test stravalib's upload_photo uses). Returns [] when there are none.
+   */
+  static photoTargets(meta) {
+    const list = Array.isArray(meta) ? meta : meta && typeof meta === 'object' ? [meta] : [];
+    return list
+      .filter((m) => m && typeof m === 'object' && typeof m.uri === 'string' && /^https:\/\//.test(m.uri))
+      .filter((m) => String(m.method ?? 'PUT').toUpperCase() === 'PUT')
+      .filter((m) => m.header && typeof m.header === 'object' && String(m.header['Content-Type'] ?? '').toLowerCase() === 'image/jpeg')
+      .map((m) => ({ uri: m.uri, header: Object.fromEntries(Object.entries(m.header).filter(([, v]) => typeof v === 'string')) }));
+  }
+
+  /** PUTs a JPEG to a pre-signed target from photoTargets. The URL is pre-signed, so no Strava token is sent. */
+  async uploadPhoto(target, jpeg) {
+    const res = await this.transport.send({ url: target.uri, method: 'PUT', headers: { ...target.header }, body: jpeg, timeoutMs: 120000 });
+    if (!(res.status >= 200 && res.status < 300)) throw httpError(res.status, snippet(res.text));
+  }
+
+  /** Sets an activity's sport type, e.g. 'VirtualRide' (the upload API cannot). */
+  async setSportType(activityID, sportType) {
+    const token = await this.validAccessToken();
+    const res = await this.transport.send({
+      url: `${STRAVA_API}/activities/${activityID}`,
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sport_type: sportType }),
+      timeoutMs: 30000,
+    });
+    if (res.status === 401 || res.status === 403) throw reauth(`Strava refused to update the activity (HTTP ${res.status}).`);
+    if (res.status === 429) throw rateLimited();
+    if (!(res.status >= 200 && res.status < 300)) throw httpError(res.status, parseJSON(res.text)?.message ?? snippet(res.text));
+    return parseJSON(res.text)?.sport_type ?? sportType;
   }
 
   /** Strava reports e.g. "file.fit duplicate of <a href='/activities/123456'>Morning Ride</a>". */

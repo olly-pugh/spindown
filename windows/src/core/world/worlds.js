@@ -4,6 +4,7 @@
 import { Route } from './route.js';
 import { riderParams, stepSpeed, steadySpeed } from './physics.js';
 import { HeightGrid } from './heightgrid.js';
+import { BIKES, WHEELS } from './content.js';
 
 // ---- Yorkshire Dales: Malham ---------------------------------------------------------------------
 //
@@ -88,6 +89,25 @@ export function makeDales(data) {
     for (let k = 0; k < 400; k += 20) s += Math.abs(route.gradient(d + k));
     if (s < flattest) [flattest, trap] = [s, d];
   }
+  // Timed segments: each one a few minutes for a steady rider (about 190 W, 80 kg, on the starter bike).
+  // The climb is the steepest bit of Cove Road that fits in about four minutes at that pace, past the Cove.
+  const ramp = steepestWithin(route, foot, top, SEGMENT_TARGET.climbSeconds);
+  // The top of Malham Rakes: where the road starts its steep drop off the moor after Street Gate.
+  const gateAt = streetGate?.at ?? rakes.from + 80;
+  let rakesTop = rakes.from + 0.5 * (rakes.to - rakes.from);
+  for (let d = gateAt + 200; d < rakes.to - 400; d += 10) {
+    if (route.elevation(d) - route.elevation(d + 200) > 16) {
+      rakesTop = d;
+      break;
+    }
+  }
+  const bridge = street('New Bridge')?.from ?? L - 40;
+  const timed = [
+    { id: 'cove-ramp', name: 'Cove Road Ramp', kind: 'segment', from: ramp.from, to: ramp.to, about: 'The steepest part of Cove Road, past the Cove' },
+    { id: 'tarn-road', name: 'Moor Road to Malham Tarn', kind: 'segment', from: top, to: tarn?.at ?? henside.to - 200, about: 'From the top of Cove Road across the moor to the tarn' },
+    { id: 'street-gate', name: 'Street Gate to the Rakes', kind: 'segment', from: gateAt, to: rakesTop, about: 'From Street Gate to the top of Malham Rakes' },
+    { id: 'rakes', name: 'Down Malham Rakes', kind: 'segment', from: rakesTop, to: bridge, about: 'The descent off the moor into Malham' },
+  ];
   return withCourse(route, {
     world: 'dales',
     title: 'Yorkshire Dales',
@@ -101,6 +121,7 @@ export function makeDales(data) {
       { id: 'village-sprint', name: 'Malham Village Sprint', kind: 'zone', from: 20, to: Math.min(340, komFrom - 40) },
       { id: 'cove', name: 'Cove Road', kind: 'kom', from: komFrom, to: komTo },
       { id: 'moor-trap', name: 'Malham Moor Speed Trap', kind: 'zone', from: trap, to: trap + 400 },
+      ...timed,
     ],
   });
 }
@@ -143,6 +164,20 @@ export function makeYork(data) {
     { at: near(data.landmarks?.skeldergateBridge), name: 'Skeldergate Bridge', text: 'Skeldergate Bridge' },
     { at: near(data.landmarks?.cliffordsTower), name: "Clifford's Tower", text: "Clifford's Tower up on its mound" },
   ].filter((m) => m.at != null);
+  // Timed segments between York's bars (the gates in the walls), placed from where the real streets meet.
+  const runs = streetRuns(route, data.roads ?? [], data.route.streets ?? []);
+  const startOf = (n, fb) => runs.find((r) => r.n === n)?.from ?? fb;
+  const endOf = (n, fb) => runs.find((r) => r.n === n)?.to ?? fb;
+  const monkBar = endOf("St. Maurice's Road", 0.958 * L);
+  const boothamBar = endOf('Gillygate', 0.11 * L);
+  const micklegateBar = endOf('Queen Street', 0.358 * L);
+  const tower = near(data.landmarks?.cliffordsTower) ?? 0.553 * L;
+  const timed = [
+    { id: 'monk-bootham', name: 'Monk Bar to Bootham Bar', kind: 'segment', from: monkBar, to: L + boothamBar, about: "Lord Mayor's Walk and Gillygate, under the walls by the Minster" },
+    { id: 'lendal-micklegate', name: 'Lendal Bridge to Micklegate Bar', kind: 'segment', from: startOf('Lendal Bridge', 0.19 * L), to: micklegateBar, about: 'Over the Ouse and up Station Road to the walls' },
+    { id: 'micklegate-tower', name: "Micklegate Bar to Clifford's Tower", kind: 'segment', from: micklegateBar, to: tower + 100, about: "Down Nunnery Lane and over Skeldergate Bridge to the castle" },
+    { id: 'fishergate-monk', name: 'Fishergate Bar to Monk Bar', kind: 'segment', from: startOf('Paragon Street', 0.618 * L), to: monkBar, about: 'Foss Islands Road round to Monk Bar' },
+  ];
   return withCourse(route, {
     world: 'york',
     title: 'York',
@@ -154,6 +189,7 @@ export function makeYork(data) {
       { id: 'walls-sprint', name: 'City Walls Sprint', kind: 'zone', from: 0.12 * L, to: 0.12 * L + 400 },
       { id: 'ouse-sprint', name: 'Ouse Speed Trap', kind: 'zone', from: 0.45 * L, to: 0.45 * L + 350 },
       { id: 'tower-sprint', name: 'Tower Dash', kind: 'zone', from: 0.72 * L, to: 0.72 * L + 300 },
+      ...timed,
     ],
   });
 }
@@ -166,7 +202,8 @@ function withCourse(route, course) {
   route.title = course.title;
   route.blurb = course.blurb;
   route.landmarks = course.landmarks;
-  route.segments = [{ id: 'lap', name: `${course.title} lap`, kind: 'lap', from: 0, to: L }, ...course.segments.map((s) => ({ ...s, ...medalThresholds(route, s) }))];
+  route.segments = [{ id: 'lap', name: `${course.title} lap`, kind: 'lap', from: 0, to: L }, ...course.segments.map((s) => ({ ...s, ...(s.kind === 'segment' ? {} : medalThresholds(route, s)) }))]
+    .map((s) => ({ ...s, length: s.to - s.from, grade: (route.elevation(s.to) - route.elevation(s.from)) / (s.to - s.from) }));
   route.zones = route.segments.filter((s) => s.kind === 'zone' || s.kind === 'kom');
   route.checkpoints = [];
   for (let d = 500; d < L - 100; d += 500) route.checkpoints.push(d);
@@ -195,7 +232,82 @@ function medalThresholds(route, seg) {
     }
     medals[medal] = Math.round(t * 10) / 10;
   }
-  return { medals, length: seg.to - seg.from };
+  return { medals };
+}
+
+// ---- Timed segments ---------------------------------------------------------------------------------
+
+/** The rider the timed segments are sized for: steady ~190 W, 80 kg, on the starter bike and wheels. */
+export const SEGMENT_TARGET = { power: 190, mass: 80, maxSeconds: 300, climbSeconds: 240 };
+
+/** Physics parameters for the segment reference rider (or another weight). */
+export function referenceParams(mass = SEGMENT_TARGET.mass) {
+  return riderParams({ riderMass: mass, bike: BIKES[0], wheels: WHEELS[0] });
+}
+
+/** Seconds to ride from `from` to `to` at a steady power, by the game's own physics (arriving at speed). */
+export function rideTime(route, from, to, power = SEGMENT_TARGET.power, p = referenceParams(), dt = 0.1) {
+  let v = steadySpeed(power, route.gradient(from - 30), p), d = from, t = 0;
+  while (d < to && t < 7200) {
+    v = stepSpeed(v, power, route.gradient(d), dt, p);
+    const step = v * dt;
+    if (d + step >= to) return t + (to - d) / Math.max(0.01, v);
+    d += step;
+    t += dt;
+  }
+  return t;
+}
+
+/**
+ * The stretch between `lo` and `hi` that gains the most height while taking no more than `seconds` at the
+ * reference pace (worked out from steady speeds on 10 m cells, which is close to riding it).
+ */
+function steepestWithin(route, lo, hi, seconds) {
+  const p = referenceParams();
+  const cell = 10;
+  const n = Math.max(1, Math.floor((hi - lo) / cell));
+  const cost = [];
+  for (let i = 0; i < n; i++) cost.push(cell / Math.max(0.3, steadySpeed(SEGMENT_TARGET.power, route.gradient(lo + (i + 0.5) * cell), p)));
+  let best = { from: lo, to: Math.min(hi, lo + 400), gain: -Infinity };
+  let j = 0, t = 0;
+  for (let i = 0; i < n; i++) {
+    while (j < n && t + cost[j] <= seconds) t += cost[j++];
+    const from = lo + i * cell, to = lo + j * cell;
+    const gain = route.elevation(to) - route.elevation(from);
+    if (to - from >= 200 && gain > best.gain) best = { from, to, gain };
+    t -= cost[i];
+    if (j === i) j++;
+    if (t < 0) t = 0;
+  }
+  return best;
+}
+
+/**
+ * Where each named street runs along the route: [{n, from, to}] in order, from the OpenStreetMap roads
+ * (each route point takes the name of the nearest listed street within 12 m).
+ */
+function streetRuns(route, roads, names) {
+  const wanted = new Set(names);
+  const segs = [];
+  for (const road of roads) {
+    if (!wanted.has(road.n)) continue;
+    for (let i = 0; i + 3 < road.p.length; i += 2) segs.push([road.p[i], -road.p[i + 1], road.p[i + 2], -road.p[i + 3], road.n]);
+  }
+  const runs = [];
+  for (let d = 0; d < route.length; d += 10) {
+    const p = route.rawPoint(d);
+    let name = null, bd = 12;
+    for (const [ax, az, bx, bz, n] of segs) {
+      const dx = bx - ax, dz = bz - az;
+      const t = Math.max(0, Math.min(1, ((p.x - ax) * dx + (p.z - az) * dz) / (dx * dx + dz * dz || 1)));
+      const dd = Math.hypot(p.x - ax - t * dx, p.z - az - t * dz);
+      if (dd < bd) [bd, name] = [dd, n];
+    }
+    const last = runs[runs.length - 1];
+    if (last && last.n === name) last.to = d + 10;
+    else runs.push({ n: name, from: d, to: d + 10 });
+  }
+  return runs.filter((r) => r.n);
 }
 
 /** Medal for a time through a zone, or null. */

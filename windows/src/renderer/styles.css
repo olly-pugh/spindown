@@ -173,6 +173,10 @@ input[type="text"], input[type="password"] { user-select: text; }
 .zone-bar { display: grid; grid-template-columns: 150px 1fr 70px 46px; gap: 10px; align-items: center; padding: 5px 0; }
 .zone-bar .track { height: 14px; background: rgba(255, 255, 255, 0.08); border-radius: 999px; overflow: hidden; }
 .zone-bar .track > div { height: 100%; border-radius: 999px; }
+.zone-badge { display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 11px 3px 9px; border-radius: 999px; font-size: clamp(14px, 2.1vh, 18px); font-weight: 750; line-height: 1.15; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.35); }
+.zone-badge b { font-size: 1.3em; font-weight: 900; letter-spacing: 0.01em; }
+.zone-badge.below { background: #48484a; color: #fff; }
+.zone-badge.large { font-size: clamp(16px, 3vh, 26px); padding: 5px 16px 5px 13px; }
 .zone-chip { display: inline-block; padding: 2px 10px; border-radius: 999px; color: #000; font-weight: 750; font-size: 15px; letter-spacing: 0.02em; }
 .stepper { display: inline-flex; align-items: center; gap: 6px; }
 .stepper button { width: 36px; height: 34px; border-radius: 9px; border: none; background: var(--panel-strong); color: var(--text); font-size: 20px; cursor: pointer; }
@@ -220,6 +224,13 @@ canvas.chart { width: 100%; display: block; }
 .big-num.green span { color: var(--green); } .big-num.orange span { color: var(--orange); } .big-num.cyan span { color: var(--cyan); }
 .hud-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px; margin-top: 6px; font-size: clamp(18px, 3vh, 26px); font-weight: 750; }
 .hud-grid .red span { color: var(--red); }
+.hud-grid .hud-hr { grid-column: span 2; display: flex; align-items: center; gap: 2px; }
+.hud-grid .hud-hr .zone-badge { margin-left: 10px; }
+.big-num small.wkg { font-size: clamp(15px, 2.4vh, 20px); color: #fff; font-weight: 750; margin-left: 12px; }
+.pacer-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 4px 0; }
+.pacer-pick button { border: 2px solid var(--pc, #636366); background: rgba(0,0,0,0.35); color: var(--pc, #fff); border-radius: 999px; padding: 3px 10px; font-weight: 750; font-size: 13px; cursor: pointer; }
+.pacer-pick button.on { background: var(--pc, #636366); color: #000; }
+.tier.pace { font-size: 10px; letter-spacing: 0.06em; padding: 1px 7px; color: #000; }
 .draft { margin-top: 6px; font-size: 13px; font-weight: 700; color: var(--cyan); }
 .hud-centre { display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; }
 .mid-box { display: flex; gap: 22px; padding: 8px 18px; font-size: clamp(18px, 3vh, 24px); font-weight: 750; }
@@ -308,3 +319,20 @@ table.leaderboard { width: 100%; border-collapse: collapse; font-size: 14px; }
 .device-btn { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: inherit; font: inherit; font-size: 17px; cursor: pointer; margin-bottom: 8px; text-align: left; }
 .device-btn:hover { background: var(--panel-strong); }
 .checklist { margin: 0; padding-left: 22px; line-height: 1.7; font-size: 17px; }
+
+/* Taking a World ride's picture: nothing that names another rider, and no menus, dialogs or buttons. */
+body.world-shot .plates,
+body.world-shot .riderlist,
+body.world-shot .toasts,
+body.world-shot .grid-call,
+body.world-shot .countdown,
+body.world-shot .powerups,
+body.world-shot .bottom-right,
+body.world-shot .close-menu,
+body.world-shot .menu-backdrop,
+body.world-shot .side-panel,
+body.world-shot .overlay { display: none !important; }
+
+/* A World ride's picture in its summary. */
+.ride-picture { width: 100%; border-radius: 10px; display: block; background: #000; }
+.ride-picture-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
