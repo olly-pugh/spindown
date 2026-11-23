@@ -193,6 +193,34 @@ export function groundTextures() {
   return { grass, moor, rock };
 }
 
+const PAINT_GLSL = `
+        // Beyond the modelled city: gardens, parks, woods, yards, streets, railways, hedges and water from the map.
+        float outside = smoothstep(0.0, 25.0, -rectEdge(pd, cityRect));
+        // Inside the modelled city the land use still tones the ground between its buildings (yards, car parks).
+        float outsideL = mix(0.7, 1.0, outside);
+        vec2 luv = rectUv(pd, landRect);
+        if (luv.x > 0.0 && luv.y > 0.0 && luv.x < 1.0 && luv.y < 1.0) {
+          vec4 lu = texture2D(landMap, luv);
+          float ind = min(lu.r, lu.g), wat = min(lu.g, lu.b);
+          float res = lu.r - ind, grn = lu.g - ind - wat, wood = lu.b - wat;
+          vec4 ln = texture2D(lineMap, rectUv(pd, lineRect));
+          float n3 = tph(floor(pd / 3.0)), n9 = tph(floor(pd / 9.0) + 3.7);
+          vec3 lawn = vec3(0.075, 0.12, 0.035) * (0.8 + 0.4 * n9);
+          vec3 paving = vec3(0.13, 0.128, 0.12) * (0.85 + 0.3 * n3);
+          vec3 garden = mix(lawn, paving, step(0.7, n3) * 0.8);
+          col = mix(col, garden, res * 0.75 * outsideL);
+          col = mix(col, vec3(0.105, 0.105, 0.1) * (0.75 + 0.5 * n9), ind * 0.85 * outsideL);
+          col = mix(col, vec3(0.07, 0.13, 0.035) * (0.9 + 0.2 * n9), grn * 0.6 * outsideL);
+          col = mix(col, vec3(0.035, 0.06, 0.02), wood * 0.75 * outsideL);
+          float pave = smoothstep(0.2, 0.5, ln.r), carr = smoothstep(0.62, 0.95, ln.r);
+          col = mix(col, vec3(0.16, 0.158, 0.15), pave * outside);
+          col = mix(col, vec3(0.075, 0.075, 0.08), carr * outside);
+          col = mix(col, vec3(0.15, 0.13, 0.11), ln.g * outside);
+          col = mix(col, vec3(0.03, 0.055, 0.02), ln.b * 0.9 * outside);
+          paintWater = smoothstep(0.35, 0.75, wat) * outside;
+          col = mix(col, vec3(0.025, 0.04, 0.045), paintWater);
+        }`;
+
 /**
  * The terrain material: aerial imagery as the base colour (graded to sit with the sun lighting), detail
  * textures near the camera, limestone on steep faces and rock ground, wall lines painted in the distance.
@@ -217,7 +245,14 @@ export function terrainMaterial(opts, extra = {}) {
     rockMap: { value: tex.rock },
     grade: { value: new THREE.Vector4(opts.saturation ?? 0.6, opts.gamma ?? 0.8, opts.gain ?? 2.25, 0) },
     tint: { value: new THREE.Vector3(...(opts.tint ?? [1.42, 1.08, 0.56])) },
+    // Painted ground beyond a modelled city (outskirts.js): land use and lines textures, and the city's rect.
+    landMap: { value: opts.paint?.landuse.texture ?? blank },
+    landRect: { value: rectVec(opts.paint?.landuse.rect ?? opts.near.rect) },
+    lineMap: { value: opts.paint?.lines.texture ?? blank },
+    lineRect: { value: rectVec(opts.paint?.lines.rect ?? opts.near.rect) },
+    cityRect: { value: rectVec(opts.paint?.city ?? { x0: 0, y0: 0, x1: 0, y1: 0 }) },
   };
+  const PAINT = !!opts.paint;
   m.userData.uniforms = uniforms;
   m.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
@@ -233,8 +268,9 @@ export function terrainMaterial(opts, extra = {}) {
         vTerrainNormal = normalize(mat3(modelMatrix) * objectNormal);`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
-        uniform sampler2D nearMap, farMap, wallMap, grassMap, moorMap, rockMap;
-        uniform vec4 nearRect, farRect, wallRect, grade;
+        uniform sampler2D nearMap, farMap, wallMap, grassMap, moorMap, rockMap, landMap, lineMap;
+        uniform vec4 nearRect, farRect, wallRect, grade, landRect, lineRect, cityRect;
+        float tph(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         uniform vec3 tint;
         varying vec3 vTerrainPos;
         varying vec3 vTerrainDetail;
@@ -250,6 +286,8 @@ export function terrainMaterial(opts, extra = {}) {
         float lum = dot(sat, vec3(0.2126, 0.7152, 0.0722));
         sat = mix(vec3(lum), sat, grade.x);
         sat = pow(max(sat, vec3(0.0)), vec3(grade.y)) * grade.z * tint;
+        // A soft knee: bright roofs and concrete in the imagery stay a light grey instead of glaring cream.
+        sat = min(sat, vec3(0.28) + max(sat - vec3(0.28), vec3(0.0)) * 0.3);
         float dist = distance(cameraPosition, vTerrainPos);
         float nearK = 1.0 - smoothstep(35.0, 170.0, dist);
         float slope = 1.0 - clamp(vTerrainNormal.y, 0.0, 1.0);
@@ -286,10 +324,20 @@ export function terrainMaterial(opts, extra = {}) {
         // The dry-stone wall network, painted where the 3D walls are too far away to draw.
         float wl = texture2D(wallMap, rectUv(pd, wallRect)).r * smoothstep(0.0, 50.0, rectEdge(pd, wallRect));
         col = mix(col, col * 0.62 + vec3(0.02), wl * smoothstep(150.0, 600.0, dist));
+        float paintWater = 0.0;
+        ${PAINT ? PAINT_GLSL : ''}
         diffuseColor.rgb *= col;
       `);
   };
-  m.customProgramCacheKey = () => 'terrain-imagery-v3';
+  if (PAINT) {
+    const prev = m.onBeforeCompile;
+    m.onBeforeCompile = (shader) => {
+      prev(shader);
+      // Water is smooth: it mirrors the sky.
+      shader.fragmentShader = shader.fragmentShader.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n        roughnessFactor = mix(roughnessFactor, 0.06, paintWater);');
+    };
+  }
+  m.customProgramCacheKey = () => (PAINT ? 'terrain-imagery-v3-paint' : 'terrain-imagery-v3');
   return m;
 }
 

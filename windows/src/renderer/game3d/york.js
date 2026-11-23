@@ -12,6 +12,7 @@ import { RouteField } from '../../core/world/field.js';
 import { rng, hash2 } from '../../core/world/noise.js';
 import { HeightGrid } from '../../core/world/heightgrid.js';
 import { terrainMaterial, imageryTexture } from './ground.js';
+import { Outskirts } from './outskirts.js';
 import yorkNearUrl from './data/york-near.jpg';
 import yorkFarUrl from './data/york-far.jpg';
 
@@ -206,9 +207,12 @@ export function buildYork(route, data, q) {
     groundGeo.setAttribute('uv1', new THREE.BufferAttribute(uv1, 2));
     groundGeo.setAttribute('detail', new THREE.BufferAttribute(new Float32Array(p.count * 3), 3));
   }
+  // The suburbs, streets and fields beyond the modelled city (outskirts.js), painted into the ground here.
+  const outskirts = im && data.outskirts ? new Outskirts(data, q) : null;
   const imageryOpts = im && {
     near: { texture: imageryTexture(yorkNearUrl), rect: im.near },
     far: { texture: imageryTexture(yorkFarUrl), rect: im.far },
+    paint: outskirts?.paint,
   };
   const ground = new THREE.Mesh(groundGeo, imageryOpts
     ? terrainMaterial({ ...imageryOpts, detailMap: T.yardTexture(), saturation: 0.7, tint: [1.12, 1.0, 0.8] }, { alphaMap: mask, alphaTest: 0.5, roughness: 1 })
@@ -243,7 +247,7 @@ export function buildYork(route, data, q) {
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('detail', new THREE.BufferAttribute(new Float32Array(n * n * 3), 3));
     g.setIndex(idx);
-    const vale = new THREE.Mesh(g, terrainMaterial({ ...imageryOpts, saturation: 0.95, tint: [1.12, 1.0, 0.78] }));
+    const vale = new THREE.Mesh(g, terrainMaterial({ ...imageryOpts, saturation: 1.25, tint: [1.06, 1.0, 0.68] }));
     vale.receiveShadow = true;
     vale.userData.relaxNormals = true;
     flat.add(vale);
@@ -717,9 +721,11 @@ export function buildYork(route, data, q) {
 
   layOnRelief(flat, D);
   group.add(flat);
+  if (outskirts) group.add(outskirts.build((x, z) => Y0 + D(x, z)));
 
-  const update = (t) => {
+  const update = (t, camera) => {
     waterNormal.offset.set(t * 0.012, t * 0.02);
+    outskirts?.update(camera, Y0);
   };
   /** A little more haze distance so the Vale of York reads around the city from the aerial cameras. */
   const atmosphere = (view) => {
