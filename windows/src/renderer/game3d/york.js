@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import * as C from './common.js';
 import * as T from './textures.js';
+import * as B from './buildings.js'; // [buildings-pass]
 import { RouteField } from '../../core/world/field.js';
 import { rng, hash2 } from '../../core/world/noise.js';
 
@@ -260,29 +261,18 @@ export function buildYork(route, data, q) {
   group.add(receiving(new THREE.Mesh(C.mergeAll(paves), std({ map: T.pavingTexture(), roughness: 0.95, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }))));
 
   // ---- Buildings ----
-  const KINDS = ['brick', 'brick2', 'render', 'stone', 'shop', 'timber', 'church', 'office'];
-  const walls = Object.fromEntries(KINDS.map((k) => [k, []]));
-  const roofs = { slate: [], pantile: [], flat: [], lead: [] };
-  const plainBrick = [];
+  // [buildings-pass] Footprints go to buildings.js, which works out terraces, party walls and street fronts and
+  // builds each house with real openings, roofs along the street and chimneys on the party walls.
   const crenels = [];
   const ring = W(data.route.points);
-  const paints = {
-    brick: ['#ffffff', '#f6ece4', '#fff0e2', '#ebe0d6', '#fff7ec', '#e9dacd', '#f2e4da'],
-    brick2: ['#ffffff', '#f3e9e4', '#ffeee6', '#e8dcd6', '#f6f0ea'],
-    shop: ['#ffffff', '#f6ece4', '#fff0e2', '#ece2d8'],
-    render: ['#ffffff', '#fbf3dc', '#f7e4d6', '#e4efe6', '#e1e9f2', '#f6e8c0', '#efd9d4', '#f0eaf3', '#f9efe4', '#dfe8dc'],
-    stone: ['#ffffff', '#f7f0e0', '#eee5cf'],
-    timber: ['#ffffff', '#fbf4e4', '#f6ecd6'],
-    church: ['#ffffff', '#f4ecd8'],
-    office: ['#ffffff', '#f0e8de', '#e8e2da', '#f4ece0'],
-  };
   // Where buildings stand (3 m cells), so street trees are not planted through a shop window.
   const occupied = new Set();
   const occKey = (x, z) => `${Math.floor(x / 3)},${Math.floor(z / 3)}`;
+  const cityList = [];
   let built = 0;
   for (const b of data.buildings) {
     if (b.k === 'cathedral' || b.n === "Clifford's Tower") continue;
-    const ringB = W(b.p);
+    let ringB = W(b.p);
     if (ringB.length > 6 && Math.hypot(ringB[0] - ringB[ringB.length - 2], ringB[1] - ringB[ringB.length - 1]) < 0.01) ringB.length -= 2;
     let cx = 0, cz = 0;
     const n = ringB.length / 2;
@@ -297,101 +287,33 @@ export function buildYork(route, data, q) {
     let tooClose = false;
     for (let i = 0; i < ringB.length && !tooClose; i += 2) if (field.query(ringB[i], ringB[i + 1], tmp).distance < ROAD_HALF + 2.9) tooClose = true;
     if (!tooClose && field.query(cx, cz, tmp).distance < ROAD_HALF + 2.9) tooClose = true;
-    if (tooClose) continue;
+    if (tooClose) {
+      // [buildings-pass] A house fronting the pavement is set back to the pavement line rather than dropped.
+      const fitted = B.pushBehind(ringB, (x, z) => {
+        field.query(x, z, tmp);
+        const p = route.position(tmp.along);
+        return { distance: tmp.distance, x: p.x, z: p.z };
+      }, ROAD_HALF + 3.0, 4.5);
+      if (!fitted) continue;
+      ringB = fitted;
+    }
     for (let i = 0; i < ringB.length; i += 2) {
       const j = (i + 2) % ringB.length;
       const len = Math.hypot(ringB[j] - ringB[i], ringB[j + 1] - ringB[i + 1]);
       for (let t = 0; t <= len; t += 2) occupied.add(occKey(ringB[i] + ((ringB[j] - ringB[i]) * t) / (len || 1), ringB[i + 1] + ((ringB[j + 1] - ringB[i + 1]) * t) / (len || 1)));
     }
-    const h = Math.max(4.5, b.h);
-    const hsh = hash2(Math.round(cx), Math.round(cz), 4);
-    const hsh2 = hash2(Math.round(cz), Math.round(cx), 9);
-    const hsh3 = hash2(Math.round(cx * 2), Math.round(cz * 2), 14);
-    const inside = pointInPolygon(cx, cz, ring); // within the ring road: the old city
-    const obb = orientedRect(ringB);
-    const footprint = Math.abs(signedArea(ringB));
-    let facade;
-    if (b.k === 'church') facade = 'church';
-    else if (b.k === 'castle') facade = 'stone';
-    else if (b.k !== 'house' && (footprint > 900 || h >= 17)) facade = hsh < 0.45 ? 'office' : hsh < 0.75 ? 'brick2' : hsh < 0.9 ? 'brick' : 'stone';
-    else if (inside && hsh2 < 0.17 && h < 11 && footprint < 240) facade = 'timber';
-    else if (b.k === 'commercial' || (inside && hsh2 < 0.5)) facade = hsh < 0.6 ? 'shop' : hsh < 0.82 ? 'brick' : 'render';
-    else facade = hsh < 0.46 ? 'brick' : hsh < 0.74 ? 'brick2' : hsh < 0.93 ? 'render' : 'stone';
-    const tintCol = paints[facade][Math.floor(hsh2 * 997) % paints[facade].length];
-    // Anything roughly rectangular and not too deep gets a pitched roof along its length: houses, and whole terraces.
-    const pitched = b.k !== 'castle' && h < 20 && obb.short > 3 && obb.short < (b.k === 'church' ? 24 : 17) && obb.long < 160 && footprint > obb.area * 0.55;
-    // Flat roofs sit a little below the wall head, which then reads as a parapet.
-    walls[facade].push(C.facadeRing(ringB, Y0 - 0.1, h + 0.1, tintCol));
-    if (pitched) {
-      const church = b.k === 'church';
-      const rh = church ? Math.min(7, obb.short * 0.5) : Math.min(4.4, obb.short * 0.42);
-      const brick = facade === 'brick' || facade === 'brick2' || facade === 'shop';
-      const hip = !brick || hsh3 < 0.3;
-      const gableTint = facade === 'brick2' ? '#b79a90' : tintCol;
-      const roofKind = church ? (hsh < 0.5 ? 'lead' : 'slate') : (inside ? hsh3 < 0.62 : hsh3 < 0.42) ? 'pantile' : 'slate';
-      const [ax, az] = obb.axis;
-      const { slopes, gables } = C.roofPrism({ cx: obb.centre[0], cz: obb.centre[1], ax, az, la: obb.long / 2, lb: obb.short / 2, y: Y0 + h, rh, hip, gableTint });
-      roofs[roofKind].push(slopes);
-      if (gables) plainBrick.push(gables);
-      if (!church && hsh2 > 0.2) {
-        const R = hip ? Math.max(0, obb.long / 2 - (obb.short / 2) * 0.85) : obb.long / 2;
-        for (const s of obb.long > 11 ? [-1, 1] : [hsh > 0.5 ? 1 : -1]) {
-          const off = Math.max(0, R - 0.6) * s;
-          plainBrick.push(C.chimney(obb.centre[0] + ax * off, Y0 + h + rh + 0.3, obb.centre[1] + az * off, Math.atan2(-ax, -az), brick ? gableTint : '#e6d6c8'));
-        }
-      }
-    } else if (b.k !== 'castle' && h < 22 && n <= 40) {
-      // Big or awkward footprints (whole blocks, L-shapes, courtyards): slopes rising from every wall to a
-      // smaller flat top, which reads as the jumble of hipped roofs such a block really has.
-      const k = Math.max(0.4, 1 - 5.5 / Math.max(6, obb.short));
-      const rise = Math.min(3.6, obb.short * 0.2);
-      const kind = (inside ? hsh3 < 0.55 : hsh3 < 0.35) ? 'pantile' : 'slate';
-      const top = [];
-      for (let i = 0; i < ringB.length; i += 2) top.push(cx + (ringB[i] - cx) * k, cz + (ringB[i + 1] - cz) * k);
-      const pos = [], uv = [];
-      for (let i = 0; i < ringB.length; i += 2) {
-        const j = (i + 2) % ringB.length;
-        const len = Math.hypot(ringB[j] - ringB[i], ringB[j + 1] - ringB[i + 1]);
-        if (len < 0.05) continue;
-        const sl = Math.hypot(rise, Math.hypot(top[i] - ringB[i], top[i + 1] - ringB[i + 1]));
-        const y0 = Y0 + h - 0.05, y1 = Y0 + h + rise;
-        pos.push(ringB[i], y0, ringB[i + 1], ringB[j], y0, ringB[j + 1], top[j], y1, top[j + 1], ringB[i], y0, ringB[i + 1], top[j], y1, top[j + 1], top[i], y1, top[i + 1]);
-        const inset = (len * (1 - k)) / 2;
-        uv.push(0, 0, len / 2.4, 0, (len - inset) / 2.4, sl / 2.4, 0, 0, (len - inset) / 2.4, sl / 2.4, inset / 2.4, sl / 2.4);
-      }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-      g.computeVertexNormals();
-      roofs[kind].push(g);
-      const cap = shapeGeometry(top, Y0 + h + rise, 2.4);
-      if (cap) roofs.flat.push(cap);
-    } else {
-      const cap = shapeGeometry(ringB, Y0 + h - (b.k === 'castle' ? 0.9 : 0.45), 2.4);
-      if (cap) roofs.flat.push(cap);
-    }
-    if (b.k === 'castle') {
-      for (let i = 0; i < ringB.length; i += 2) {
-        const j = (i + 2) % ringB.length;
-        const len = Math.hypot(ringB[j] - ringB[i], ringB[j + 1] - ringB[i + 1]);
-        for (let t = 0.6; t < len; t += 2.2) {
-          const f = t / len;
-          crenels.push({ x: ringB[i] + (ringB[j] - ringB[i]) * f, z: ringB[i + 1] + (ringB[j + 1] - ringB[i + 1]) * f, y: Y0 + h, rot: Math.atan2(ringB[j] - ringB[i], ringB[j + 1] - ringB[i + 1]) });
-        }
-      }
-    }
+    cityList.push({ ring: ringB, h: b.h, k: b.k, n: b.n });
     built++;
   }
   group.userData.buildingCount = built;
-  for (const [k, list] of Object.entries(walls)) if (list.length) group.add(shadowy(new THREE.Mesh(C.mergeAll(list, { colour: true }), std({ map: T.facadeTexture(k), vertexColors: true, roughness: 0.9 }))));
-  if (plainBrick.length) group.add(shadowy(new THREE.Mesh(C.mergeAll(plainBrick, { colour: true }), std({ map: T.brickTexture(), vertexColors: true, roughness: 0.9, side: THREE.DoubleSide }))));
-  const roofMats = {
-    slate: std({ map: T.roofTexture('slate'), roughness: 0.75, side: THREE.DoubleSide }),
-    pantile: std({ map: T.roofTexture('pantile'), roughness: 0.85, side: THREE.DoubleSide }),
-    lead: std({ map: T.roofTexture('lead'), roughness: 0.6, metalness: 0.15, side: THREE.DoubleSide }),
-    flat: std({ map: T.roofTexture('slate'), color: '#b9bcc0', roughness: 0.9 }),
-  };
-  for (const [k, list] of Object.entries(roofs)) if (list.length) group.add(shadowy(new THREE.Mesh(C.mergeAll(list), roofMats[k])));
+  {
+    const roadsForFronts = data.roads.map((rd) => {
+      const kind = rd.k === 'pedestrian' ? 'cobbles' : rd.k === 'footway' || rd.k === 'cycleway' ? 'paving' : 'asphalt';
+      return { p: W(rd.p), w: kind === 'asphalt' ? Math.max(3.2, rd.w * 1.5) : Math.max(2, rd.w), weight: kind === 'asphalt' ? 1 : kind === 'cobbles' ? 0.9 : 0.35 };
+    });
+    const city = B.cityBuildings(cityList, { q, y: Y0, roads: roadsForFronts, roadHalf: ROAD_HALF, routeDistance: (x, z) => field.query(x, z, tmp).distance, inside: (x, z) => pointInPolygon(x, z, ring) });
+    group.add(city.group);
+  }
 
   // ---- City walls on their ramparts (cut where the route passes through) ----
   let ccx = 0, ccz = 0;

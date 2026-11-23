@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { crowd } from './crowd.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as T from './textures.js';
+import { villageBuildings } from './buildings.js';
 import { rng, hash2 } from '../../core/world/noise.js';
 
 /** A colour from a CSS string, in the renderer's linear working space (for vertex and instance colours). */
@@ -601,48 +602,13 @@ export function chimney(x, y, z, rot, stackTint = '#ffffff') {
 }
 
 /**
- * A row of village buildings. items: [{x, y, z, rot, w (frontage along the street), d (depth), h, kind
- * (facade kind), roof: 'slate'|'pantile'|'stone', tint?, hip?, chimney?}]. The ridge runs along the street.
- * Returns a group of merged meshes (walls per facade kind, roofs per roof kind, gables and chimneys).
+ * Village buildings and field barns. items: [{x, y, z, rot, w (frontage along the street), d (depth), h, kind
+ * ('cottage'|'render'|'barn'), roof: 'slate'|'pantile'|'stone', tint?, chimney?, storey?, footprint? (the true
+ * outline, flat world [x, z, ...])}]. Built by buildings.js (real openings, stone surrounds, quoins, coped gables,
+ * gable stacks, stone-slate roofs); returns a Group of chunked meshes.
  */
-export function buildings(items, { shadows = true, gableTexture = null } = {}) {
-  const byWall = new Map(), byRoof = new Map(), plain = [];
-  for (const b of items) {
-    const ax = -Math.sin(b.rot), az = -Math.cos(b.rot), bx = -az, bz = ax;
-    const la = b.w / 2, lb = b.d / 2;
-    const ring = [];
-    for (const [u, v] of [[-la, -lb], [la, -lb], [la, lb], [-la, lb]]) ring.push(b.x + ax * u + bx * v, b.z + az * u + bz * v);
-    const walls = facadeRing(ring, b.y - 0.6, b.h + 0.6, b.tint ?? '#ffffff', { storey: b.storey ?? 2.8 });
-    (byWall.get(b.kind) ?? byWall.set(b.kind, []).get(b.kind)).push(walls);
-    const rh = Math.min(3.4, b.d * 0.4);
-    const { slopes, gables } = roofPrism({ cx: b.x, cz: b.z, ax, az, la, lb, y: b.y + b.h, rh, hip: !!b.hip, gableTint: b.gableTint ?? '#ffffff' });
-    (byRoof.get(b.roof) ?? byRoof.set(b.roof, []).get(b.roof)).push(slopes);
-    if (gables) plain.push(gables);
-    if (b.chimney !== false) {
-      const off = la - 0.5;
-      for (const s of b.w > 8 ? [-1, 1] : [1]) plain.push(chimney(b.x + ax * off * s, b.y + b.h + rh + 0.35, b.z + az * off * s, Math.atan2(-bz, bx), b.gableTint ?? '#ffffff'));
-    }
-  }
-  const group = new THREE.Group();
-  for (const [kind, list] of byWall) {
-    const mesh = new THREE.Mesh(mergeAll(list, { colour: true }), new THREE.MeshStandardMaterial({ map: T.facadeTexture(kind), vertexColors: true, roughness: 0.92 }));
-    mesh.castShadow = shadows;
-    mesh.receiveShadow = true;
-    group.add(mesh);
-  }
-  for (const [kind, list] of byRoof) {
-    const mesh = new THREE.Mesh(mergeAll(list), new THREE.MeshStandardMaterial({ map: T.roofTexture(kind), roughness: 0.85, side: THREE.DoubleSide }));
-    mesh.castShadow = shadows;
-    mesh.receiveShadow = true;
-    group.add(mesh);
-  }
-  if (plain.length) {
-    const mesh = new THREE.Mesh(mergeAll(plain, { colour: true }), new THREE.MeshStandardMaterial({ map: gableTexture ?? T.stoneWallTexture({ tone: 'rubble' }), vertexColors: true, roughness: 0.92, side: THREE.DoubleSide }));
-    mesh.castShadow = shadows;
-    mesh.receiveShadow = true;
-    group.add(mesh);
-  }
-  return group;
+export function buildings(items, { shadows = true } = {}) {
+  return villageBuildings(items, { shadows }).group;
 }
 
 /** Lamp posts: Victorian cast-iron columns with a glazed lantern, instanced in chunks. */
