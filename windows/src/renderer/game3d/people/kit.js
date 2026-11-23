@@ -177,8 +177,9 @@ export function kitMaterial(kit, skin, landmarks, { beard = 0, hair = '#3a2718' 
           float cuff = band(sleeveEnd - 0.05, sleeveEnd, armT) * onArm;
           // Jersey coverage: torso (not legs, not head) or sleeve.
           float torso = (1.0 - onLeg) * (1.0 - onArm) * (1.0 - aboveCollar);
-          float jersey = max(torso * jerseyTorso, sleeve);
-          float shorts = max(torso * (1.0 - jerseyTorso), onLeg * shortsLeg);
+          // Complementary masks add up to one across the seams (a max() would dip there and dent the bump).
+          float jersey = clamp(torso * jerseyTorso + sleeve, 0.0, 1.0);
+          float shorts = clamp(torso * (1.0 - jerseyTorso) + onLeg * shortsLeg, 0.0, 1.0);
           // ---- Jersey pattern ----
           float u = clamp((p.y - hemY) / (uNeck.y - hemY), 0.0, 1.0);   // waist 0 .. collar 1
           vec3 jc = mix(uBody, uSleeve, onArm);
@@ -232,10 +233,20 @@ export function kitMaterial(kit, skin, landmarks, { beard = 0, hair = '#3a2718' 
           kitHeight += 0.0008 * (gripper * onLeg + cuff + collar);
           kitHeight -= 0.0006 * pocketEdge * torso;
           kitHeight -= 0.0004 * zip;
-          float folds = front * (1.0 - onArm) * jerseyTorso * smoothstep(0.0, 0.06, u) * (1.0 - smoothstep(0.25, 0.45, u));
+          // Bump masks fade over centimetres (a crisp mask would draw a bright line where it cuts the bump).
+          float softFront = smoothstep(0.04, -0.04, p.z), softArm = smoothstep(0.25, 0.75, armW);
+          float softJersey = smoothstep(hemY, hemY + 0.03, p.y);
+          float folds = softFront * (1.0 - softArm) * softJersey * smoothstep(0.0, 0.06, u) * (1.0 - smoothstep(0.25, 0.45, u));
           kitHeight += 0.0009 * folds * sin(p.y * 160.0 + sin(p.x * 30.0) * 1.5);
-          float lowerBack = (1.0 - front) * jerseyTorso * (1.0 - smoothstep(0.1, 0.3, u)) * (1.0 - onArm);
+          float lowerBack = (1.0 - softFront) * softJersey * (1.0 - smoothstep(0.1, 0.3, u)) * (1.0 - softArm);
           kitHeight += 0.0006 * lowerBack * sin(p.y * 210.0 + p.x * 20.0);
+          // Knit: a fine rib in the fabric, faded out before it is too small to draw (no shimmer at distance).
+          {
+            float k1 = p.y * 1900.0 + sin(p.x * 900.0) * 0.6, k2 = (p.x + p.z) * 1900.0;
+            float fade = 1.0 - smoothstep(0.25, 0.6, max(fwidth(k1), fwidth(k2)) / 6.2832);
+            float knit = sin(k1) * 0.6 + sin(k2) * 0.4;
+            kitHeight += 0.000045 * knit * fade * isKit * (1.0 - sockM * 0.5);
+          }
           return col;
         }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
@@ -260,6 +271,6 @@ export function kitMaterial(kit, skin, landmarks, { beard = 0, hair = '#3a2718' 
           totalEmissiveRadiance += diffuseColor.rgb * kitSheen * fres * 0.18;
         }`);
   };
-  m.customProgramCacheKey = () => 'spindown-kit-v2';
+  m.customProgramCacheKey = () => 'spindown-kit-v3';
   return m;
 }
