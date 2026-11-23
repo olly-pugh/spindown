@@ -15,6 +15,7 @@ import { WorldSim, RACE_PRESETS } from '../../core/world/sim.js';
 import * as P from '../../core/world/progression.js';
 import { ITEMS, ACHIEVEMENTS, CHALLENGES, POWERUPS, TIERS, MAX_LEVEL } from '../../core/world/content.js';
 import { riderParams, steadySpeed } from '../../core/world/physics.js';
+import { SegmentHud, SegmentsPanel, noteSegmentEvent, resetSegmentHud } from './segments.js';
 import yorkData from '../game3d/data/york.json';
 import dalesData from '../game3d/data/dales.json';
 
@@ -116,6 +117,7 @@ function newSim(app, { routeId, mode = 'free', race = null }) {
   G.startD = G.sim.player.d;
   G.rideClock = 0;
   G.raceXP = 0;
+  resetSegmentHud();
   G.profile.lastRoute = routeId;
   for (const e of P.noteRideDay(G.profile)) handleEvent(app, e);
   scheduleSave(app.api);
@@ -129,6 +131,7 @@ function handleEvent(app, e) {
   if (G.eventLog.length > 600) G.eventLog.splice(0, 100);
   const u = app.settings.get('units');
   const a = G.audio;
+  const segmentHud = noteSegmentEvent(app, e); // timed segments and the KOM have their own cards (segments.js)
   switch (e.type) {
     case 'banner': toast('banner', e.text, '', 3.5); break;
     case 'pickup': toast('pickup', `${e.powerup.icon} ${e.powerup.name}`, 'Press Space or click to use', 3); a.chime(); break;
@@ -143,9 +146,13 @@ function handleEvent(app, e) {
     }
     case 'xp': if (G.sim?.mode === 'race') G.raceXP += e.amount; break;
     case 'segment-start':
-      if (e.segment.kind !== 'lap') toast('segment', `${e.segment.kind === 'kom' ? '▲' : '⚡'} ${e.segment.name}`, e.pr ? `PR ${Format.shortDuration(e.pr)} · gold ${Format.shortDuration(e.segment.medals.gold)}` : `Gold under ${Format.shortDuration(e.segment.medals.gold)}`, 3.5);
+      if (e.segment.kind !== 'lap' && !segmentHud) toast('segment', `${e.segment.kind === 'kom' ? '▲' : '⚡'} ${e.segment.name}`, e.pr ? `PR ${Format.shortDuration(e.pr)} · gold ${Format.shortDuration(e.segment.medals.gold)}` : `Gold under ${Format.shortDuration(e.segment.medals.gold)}`, 3.5);
       break;
     case 'segment-end': {
+      if (segmentHud) {
+        if (e.medal || e.result?.isPR) a.chime();
+        break;
+      }
       const medal = e.medal ? { gold: '🥇', silver: '🥈', bronze: '🥉' }[e.medal] : '';
       const pr = e.improved && e.previous != null ? ` · new PR (−${(e.previous - e.time).toFixed(1)} s)` : e.previous != null ? ` · PR ${Format.shortDuration(e.previous)}` : '';
       const speed = e.speed ? ` · ${Format.speedMS(e.speed, u)} ${Format.speedUnit(u)}` : '';
@@ -373,6 +380,7 @@ function MainMenu({ app, onFreeRide, onRace, onWorkouts, open }) {
     <div class="menu-row">
       <button class="btn big white" onClick=${onWorkouts}>🎯 Workouts</button>
       <button class="btn big white" onClick=${() => open('garage')}>🚲 Garage</button>
+      <button class="btn big white" onClick=${() => open('segments')}>⏱ Segments</button>
       <button class="btn big white" onClick=${() => open('progress')}>🏆 Progress</button>
       <button class="btn big white" onClick=${() => open('options')}>⚙️ World settings</button>
     </div>
@@ -591,7 +599,7 @@ export function WorldView({ app, openSensors }) {
         const events = [];
         while (remaining > 1e-6) {
           const dt = Math.min(0.25, remaining);
-          events.push(...sim.step(dt, { power, cadence: reading?.cadenceRPM ?? null }));
+          events.push(...sim.step(dt, { power, cadence: reading?.cadenceRPM ?? null, heartRate: heartRate.freshHeartRate(now) }));
           remaining -= dt;
         }
         if (power != null) G.rideClock += real * G.timeScale;
@@ -793,6 +801,7 @@ export function WorldView({ app, openSensors }) {
             <span class="num">${Format.distance(Math.max(0, rideDistance), u)} ${Format.distanceUnit(u)}</span>
             <span class="num ${grad > 3 ? 'red' : grad < -3 ? 'cyan' : ''}">${grad >= 0 ? '↗' : '↘'} ${grad.toFixed(1)}%</span>
           </div>`}
+          <${SegmentHud} sim=${sim} units=${u} />
           <${Toasts} />
         </div>
         <div class="hud-right">
@@ -838,6 +847,7 @@ export function WorldView({ app, openSensors }) {
     ${panel === 'menu' ? html`<div class="menu-backdrop"><${MainMenu} app=${app} onFreeRide=${startFree} onRace=${startRace} onWorkouts=${() => setPanel('workouts')} open=${setPanel} />
       ${sim ? html`<button class="btn big white close-menu" onClick=${() => { G.audio.start(); setPanel(null); }}>Ride ${sim.route.title} ▸</button>` : null}</div>` : null}
     ${panel === 'garage' ? html`<${Garage} app=${app} onClose=${() => setPanel(null)} />` : null}
+    ${panel === 'segments' ? html`<${SegmentsPanel} app=${app} profile=${G.profile} routeFor=${route} onClose=${() => setPanel('menu')} />` : null}
     ${panel === 'progress' ? html`<${ProgressPanel} app=${app} onClose=${() => setPanel('menu')} />` : null}
     ${panel === 'options' ? html`<${OptionsPanel} app=${app} onClose=${() => setPanel('menu')} onQuality=${rebuild} />` : null}
     ${panel === 'workouts' ? html`<${WorkoutPicker} app=${app} onChoose=${chooseWorkout} onClose=${() => setPanel('menu')} />` : null}

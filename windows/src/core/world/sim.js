@@ -6,6 +6,7 @@ import { TIERS, tierFor, POWERUPS, BOT_FIRST, BOT_LAST, JERSEYS, HELMETS, BIKES,
 import { rng, valueNoise } from './noise.js';
 import { medalFor } from './worlds.js';
 import * as P from './progression.js';
+import * as E from './efforts.js';
 
 export const BIKE_LENGTH = 1.75;
 /** Free-ride bot strength relative to the player's W/kg, by the bot's tier (rookie … pro). */
@@ -66,8 +67,10 @@ export class WorldSim {
     this.ftp = ftp;
     this.events = [];
     P.syncCourse(profile, route.id, route.version);
+    E.syncSegments(profile, route);
     this.spots = route.powerupSpots.map((at, i) => ({ at, lateral: [-1.2, 0, 1.2][i % 3] }));
-    this.segmentState = new Map(); // segment id -> entry time
+    this.segmentState = new Map(); // segment id -> the attempt in progress (see startAttempt)
+    this.lastPlayerD = null;
     this.lapStart = null; // sim time when the player last crossed the line
     this.lapSamples = [];
     this.sampleClock = 0;
@@ -105,6 +108,7 @@ export class WorldSim {
       this.lapStart = 0;
       this.lapStartDistance = this.L;
       this.lapSamples = [0];
+      this.startAttempt(route.segments[0], 0, this.player.d);
     }
   }
 
@@ -540,13 +544,25 @@ export class WorldSim {
       if (b.wasAhead && !ahead && Math.abs(rel) < 20 && riding) this.events.push(...P.recordOvertake(this.profile));
       b.wasAhead = ahead;
     }
+    // Segment attempts in progress: a jump along the road (not ridden) voids them; otherwise add this step.
+    const jumped = this.lastPlayerD != null && Math.abs(prevD - this.lastPlayerD) > 0.5;
+    this.lastPlayerD = p.d;
+    if (jumped) {
+      for (const att of this.segmentState.values()) this.events.push({ type: 'segment-void', segment: att.seg, reason: 'jump' });
+      this.segmentState.clear();
+    }
+    for (const att of this.segmentState.values()) this.trackAttempt(att, dt, hasPower, input);
     if (!(p.moved > 0)) return;
     const a = ((prevD % L) + L) % L, b = ((p.d % L) + L) % L;
     const crossed = (x) => (a <= b ? x > a && x <= b : x > a || x <= b);
+    // How far past x the rider is, and so when x was crossed (linear within the step).
+    const past = (x) => (((b - x) % L) + L) % L;
+    const when = (x) => this.time - dt * Math.min(1, past(x) / p.moved);
 
     // The lap line.
     if (b < a) {
       if (this.lapStart != null && this.mode === 'free') this.finishLap();
+      this.startAttempt(this.route.segments[0], when(0), p.d - past(0));
       this.lapStart = this.time - (b / Math.max(0.1, p.v));
       this.lapStartDistance = p.d - b + L;
       this.lapSamples = [b];
@@ -561,21 +577,28 @@ export class WorldSim {
       }
     }
 
-    // Segments (zones, climbs).
+    // Segments (zones, climbs, timed segments): finish any whose end was crossed, then start any entered.
     for (const seg of this.route.segments) {
       if (seg.kind === 'lap') continue;
       const from = ((seg.from % L) + L) % L, to = ((seg.to % L) + L) % L;
-      if (crossed(from)) {
-        this.segmentState.set(seg.id, this.time);
-        this.events.push({ type: 'segment-start', segment: seg, pr: this.profile.prs[this.route.id]?.[seg.id]?.time ?? null });
-      }
       if (crossed(to) && this.segmentState.has(seg.id)) {
-        const time = this.time - this.segmentState.get(seg.id);
+        const att = this.segmentState.get(seg.id);
         this.segmentState.delete(seg.id);
-        const medal = medalFor(seg, time);
-        const { events, previous, improved } = P.recordSegment(this.profile, this.route.id, seg, time);
-        this.events.push({ type: 'segment-end', segment: seg, time, medal, previous, improved, speed: (seg.to - seg.from) / time }, ...events);
-        this.events.push(...P.recordMedal(this.profile, this.route.id, seg, medal, this.route.zones));
+        const done = this.finishAttempt(att, when(to), p.d - past(to));
+        if (!done) {
+          this.events.push({ type: 'segment-void', segment: seg, reason: 'incomplete' });
+        } else {
+          const { time } = done;
+          const medal = medalFor(seg, time);
+          const { events, previous, improved } = P.recordSegment(this.profile, this.route.id, seg, time);
+          const result = E.recordAttempt(this.profile, this.route.id, seg, { ...done, world: this.route.world });
+          this.events.push({ type: 'segment-end', segment: seg, time, medal, previous, improved, speed: (seg.to - seg.from) / time, result }, ...events);
+          this.events.push(...P.recordMedal(this.profile, this.route.id, seg, medal, this.route.zones));
+        }
+      }
+      if (crossed(from)) {
+        this.startAttempt(seg, when(from), p.d - past(from));
+        this.events.push({ type: 'segment-start', segment: seg, pr: E.prFor(this.profile, this.route.id, seg)?.time ?? null });
       }
     }
 
@@ -601,16 +624,90 @@ export class WorldSim {
   finishLap() {
     const time = this.time - this.lapStart;
     const lap = this.route.segments[0];
+    // The lap counts only when it was ridden all the way round from the line (no jumps).
+    const att = this.segmentState.get(lap.id);
+    this.segmentState.delete(lap.id);
+    const done = att && this.finishAttempt(att, this.time, att.d0 + this.L);
+    if (!done) return;
     const ghost = this.profile.ghosts?.[this.route.id];
     const beatGhost = ghost && time < ghost.time;
     const { events, previous, improved } = P.recordSegment(this.profile, this.route.id, lap, time);
-    this.events.push({ type: 'segment-end', segment: lap, time, previous, improved }, ...events);
+    const result = E.recordAttempt(this.profile, this.route.id, lap, { ...done, time, world: this.route.world });
+    this.events.push({ type: 'segment-end', segment: lap, time, previous, improved, result }, ...events);
     if (beatGhost) this.events.push(...P.grant(this.profile, 'ghost'));
     if (!ghost || time < ghost.time) {
       this.lapSamples.push(this.L);
       (this.profile.ghosts ??= {})[this.route.id] = { time, samples: this.lapSamples.map((x) => Math.round(x * 10) / 10) };
     }
     this.events.push(...P.grant(this.profile, this.route.world === 'york' ? 'york-lap' : 'dales-lap'));
+  }
+
+  // ---- Segment attempts ----------------------------------------------------------------------------
+
+  /** Starts timing a segment entered at sim time t0, at the player's (unwrapped) distance d0. */
+  startAttempt(seg, t0, d0) {
+    this.segmentState.set(seg.id, { seg, t0, d0, elapsed: 0, energy: 0, powerTime: 0, hrSum: 0, hrTime: 0, splits: [] });
+  }
+
+  /** Adds one step to an attempt in progress: power, heart rate, and the time at each 5% of the distance. */
+  trackAttempt(att, dt, hasPower, input) {
+    const p = this.player;
+    att.elapsed += dt;
+    if (hasPower) {
+      att.energy += p.power * dt;
+      att.powerTime += dt;
+    }
+    const hr = input.heartRate;
+    if (Number.isFinite(hr) && hr > 30 && hr < 250) {
+      att.hrSum += hr * dt;
+      att.hrTime += dt;
+    }
+    const len = att.seg.to - att.seg.from;
+    while (att.splits.length < E.SPLITS) {
+      const mark = att.d0 + (len * (att.splits.length + 1)) / E.SPLITS;
+      if (p.d < mark) break;
+      const t = p.moved > 0 ? this.time - dt * Math.min(1, (p.d - mark) / p.moved) : this.time;
+      att.splits.push(Math.max(0, t - att.t0));
+    }
+  }
+
+  /**
+   * Ends an attempt left at sim time t1, at distance d1. Returns {time, power, hr, splits}, or null when it
+   * does not count: not ridden the whole way from the start (a jump or skip), or mostly without power data.
+   */
+  finishAttempt(att, t1, d1) {
+    const len = att.seg.to - att.seg.from;
+    const time = t1 - att.t0;
+    if (!(time > 0) || Math.abs(d1 - att.d0 - len) > Math.max(5, len * 0.02)) return null;
+    if (att.powerTime < 0.8 * att.elapsed) return null;
+    const power = att.powerTime > 0 ? att.energy / att.powerTime : null;
+    const hr = att.hrTime >= 0.5 * att.elapsed && att.hrTime > 0 ? att.hrSum / att.hrTime : null;
+    return { time, power, hr, splits: att.splits.length === E.SPLITS ? att.splits : null };
+  }
+
+  /**
+   * For the HUD: segments in progress (elapsed time, how far through, live delta against your PR) and the
+   * next one to start within `lookahead` metres, of the given kinds (zone, kom, segment; never the lap).
+   */
+  segmentStatus(lookahead = 300, kinds = ['zone', 'kom', 'segment']) {
+    const p = this.player, L = this.L, pos = this.route.wrap(p.d);
+    const active = [];
+    for (const att of this.segmentState.values()) {
+      if (!kinds.includes(att.seg.kind)) continue;
+      const len = att.seg.to - att.seg.from;
+      const fraction = Math.max(0, Math.min(1, (p.d - att.d0) / len));
+      const elapsed = Math.max(0, this.time - att.t0);
+      const pr = E.prFor(this.profile, this.route.id, att.seg);
+      const delta = pr && fraction > 0.02 ? elapsed - E.prTimeAt(pr, fraction) : null;
+      active.push({ segment: att.seg, elapsed, fraction, delta, pr, remaining: Math.max(0, len - (p.d - att.d0)) });
+    }
+    let upcoming = null;
+    for (const seg of this.route.segments) {
+      if (!kinds.includes(seg.kind) || this.segmentState.has(seg.id)) continue;
+      const ahead = (((seg.from - pos) % L) + L) % L;
+      if (ahead <= lookahead && (!upcoming || ahead < upcoming.distance)) upcoming = { segment: seg, distance: ahead, pr: E.prFor(this.profile, this.route.id, seg) };
+    }
+    return { active, upcoming };
   }
 
   // ---- Race ----------------------------------------------------------------------------------------

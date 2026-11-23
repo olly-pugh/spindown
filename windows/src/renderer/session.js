@@ -22,6 +22,8 @@ export class RideSession {
     this.timer = null;
     this.powerWindow = [];
     this.worldVisible = false;
+    /** Segment efforts ridden in World during this ride ({name, time, power, hr, …}), saved with the ride. */
+    this.segmentEfforts = [];
   }
 
   get startDate() {
@@ -89,6 +91,7 @@ export class RideSession {
       this.api.journal.append(Journal.header(id, start, this.equipment), true);
       this.rideID = id;
       this.recorder = new RideRecorder(start);
+      this.segmentEfforts = [];
       this.lastRecordedSecond = 0;
       this.lastError = null;
       this.setPhase('recording');
@@ -145,6 +148,7 @@ export class RideSession {
       recovered: false,
       uploads: Object.fromEntries(this.settings.autoUploadDestinations.map((d) => [d, { status: 'pending' }])),
     };
+    if (this.segmentEfforts.length) record.segments = this.segmentEfforts.slice();
     try {
       await this.api.journal.save(record, r.track, !!this.settings.get('captureRawPackets'));
       this.reset();
@@ -170,6 +174,7 @@ export class RideSession {
     this.timer = null;
     this.recorder = null;
     this.rideID = null;
+    this.segmentEfforts = [];
     this.setPhase('idle');
   }
 

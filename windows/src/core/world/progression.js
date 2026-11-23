@@ -1,6 +1,7 @@
 // The rider's game profile: XP, level, unlocked and equipped kit, achievements, challenges, PRs and ghosts.
 // A plain JSON object, saved by the main process as game.json. Everything here is pure and unit tested.
 import { ITEMS, ACHIEVEMENTS, CHALLENGES, levelFor, xpForLevel, MAX_LEVEL } from './content.js';
+import { migrateEfforts } from './efforts.js';
 
 export const PROFILE_VERSION = 1;
 
@@ -13,6 +14,7 @@ export function newProfile() {
     challenges: { active: [], done: 0 },
     stats: { distance: 0, time: 0, climb: 0, races: 0, wins: 0, podiums: 0, powerupsUsed: 0, draftTime: 0, maxSpeed: 0, medals: 0, overtakes: 0, rideDays: [] },
     prs: {}, // routeId -> segmentId -> {time, date}
+    efforts: {}, // routeId -> segmentId -> {sig, attempts, best}: every attempt (see efforts.js)
     medals: {}, // routeId -> zoneId -> 'bronze'|'silver'|'gold' (best)
     ghosts: {}, // routeId -> {time, samples: [distance at each second]}
     courses: {}, // routeId -> course version the PRs, medals and ghost above were set on
@@ -37,6 +39,7 @@ export function migrateProfile(raw) {
     else p.stats[k] = num(raw.stats?.[k], 0);
   }
   if (raw.prs && typeof raw.prs === 'object') p.prs = raw.prs;
+  migrateEfforts(p, raw);
   if (raw.medals && typeof raw.medals === 'object') p.medals = raw.medals;
   if (raw.ghosts && typeof raw.ghosts === 'object') p.ghosts = raw.ghosts;
   if (raw.courses && typeof raw.courses === 'object') p.courses = { ...raw.courses };
@@ -228,13 +231,14 @@ export function recordRace(p, place, field) {
 
 /**
  * When a course is rebuilt (a new version), PRs, medals and the ghost set on the old one no longer mean
- * anything: clear them for that route once. Courses without a version are left alone.
+ * anything: clear them (and the segment history) for that route once. Courses without a version are left alone.
  */
 export function syncCourse(p, routeId, version) {
   if (!version) return;
   p.courses ??= {};
   if (p.courses[routeId] === version) return;
   delete p.prs[routeId];
+  if (p.efforts) delete p.efforts[routeId];
   delete p.medals[routeId];
   delete p.ghosts[routeId];
   p.courses[routeId] = version;

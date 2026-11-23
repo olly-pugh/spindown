@@ -6,6 +6,7 @@ import { Destinations, destinationName, describeUpload } from '../../core/record
 import { GarminConnectClient, StravaClient } from '../../core/services.js';
 import { ExportFormats } from '../../core/fit.js';
 import { timeInZones, zoneBounds, ZONE_COLORS, ZONE_NAMES } from '../../core/hrzones.js';
+import { RideSegments } from './segments.js';
 
 function TimeInZones({ track, settings }) {
   const max = settings.get('maxHeartRate');
@@ -155,6 +156,8 @@ export function RideDetail({ app, rideID, compact }) {
     </${Section}>` : null}
 
     <${TimeInZones} track=${track} settings=${settings} />
+
+    <${RideSegments} app=${app} record=${record} />
 
     <${Section} title="Uploads" footer=${record.uploads?.garmin && record.uploads?.strava ? 'If Garmin Connect is linked to Strava, Garmin also forwards this ride there; uploading to both may create a duplicate.' : null}>
       <div class="list">
