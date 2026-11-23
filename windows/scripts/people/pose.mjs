@@ -228,11 +228,9 @@ export function cyclingPose(skel, fit) {
     }
     // Thumb: swing it forward along the hood and curl it in.
     skel.solve();
-    const thumbBase = B[`finger1-1.${s}`];
     const tAim = norm(add(scale(hf, 1), add(scale(hn, fit.thumbDown), [0, -0.0, 0])));
     aimPoint(skel, `finger1-2.${s}`, B[`finger1-3.${s}`].pos, add(B[`finger1-2.${s}`].pos, scale(tAim, 0.03)));
     curl(skel, `finger1-3.${s}`, axis, fit.thumb);
-    void thumbBase;
     skel.solve();
     out.hands[s] = { wrist: B[`wrist.${s}`].pos, knuckle: B[`finger3-1.${s}`].pos, elbow: B[`lowerarm01.${s}`].pos, shoulder: B[`upperarm01.${s}`].pos, grip };
   }

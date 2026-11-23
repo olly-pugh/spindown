@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readObj, readFitting, fitCoords } from './mh.mjs';
-import { Skeleton, toGame, fittedWeights, V3, M3 } from './skeleton.mjs';
+import { Skeleton, toGame, fittedWeights, V3 } from './skeleton.mjs';
 import { standingPose } from './pose.mjs';
 import { vertexNormals } from './meshkit.mjs';
 import { simplify, compactMesh } from './simplify.mjs';
@@ -478,4 +478,3 @@ function finish({ P, PB, N, NB, UV, PT, IDX }) {
     index: n > 65535 ? Uint32Array.from(IDX) : Uint16Array.from(IDX),
   };
 }
-void M3;
