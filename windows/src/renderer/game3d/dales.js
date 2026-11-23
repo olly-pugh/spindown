@@ -306,8 +306,8 @@ export function buildDales(route, q) {
       }
     }
   }
-  group.add(C.linear([...roadWalls, ...fieldWalls], 'wall', { shadows: q.shadows }));
-  group.add(C.linear(hedges, 'hedge', { shadows: q.shadows }));
+  group.add(C.linear([...roadWalls, ...fieldWalls], 'wall', { shadows: q.shadows, q }));
+  group.add(C.linear(hedges, 'hedge', { shadows: q.shadows, q }));
   group.add(gateMesh(gates, q));
 
   // ---- Trees: boundary trees, woods, riverside ----
@@ -339,7 +339,7 @@ export function buildDales(route, q) {
     const p = route.position(at, (r() < 0.5 ? -1 : 1) * (12 + r() * radius));
     if (r() < 0.5) tryTree(p.x, p.z, route.elevation(at) > 205 && r() < 0.5 ? 'conifer' : 'broad', 0.7 + r() * 0.8);
   }
-  group.add(C.trees(placements.slice(0, q.maxTrees), { shadows: q.shadows }));
+  group.add(C.trees(placements.slice(0, q.maxTrees), { shadows: q.shadows, q }));
 
   // ---- Sheep: flocks in the fields ----
   const sheep = [];
@@ -419,21 +419,9 @@ function sheepMesh(list) {
   return C.chunked(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }), items, { shadows: true, maxDistance: 420, chunk: 150 });
 }
 
-/** Wooden five-bar field gates hung between stone gateposts. */
-function gateMesh(list, q) {
-  const wood = '#9a8468', post = '#a39b89';
-  const parts = [];
-  for (const s of [-1, 1]) parts.push(C.tint(new THREE.BoxGeometry(0.3, 1.45, 0.3).translate(0, 0.62, s * 1.85), post));
-  for (let k = 0; k < 5; k++) parts.push(C.tint(new THREE.BoxGeometry(0.05, 0.09, 3.4).translate(0, 0.22 + k * 0.23, 0), wood));
-  for (const s of [-1, 1]) parts.push(C.tint(new THREE.BoxGeometry(0.07, 1.12, 0.09).translate(0, 0.66, s * 1.66), wood));
-  parts.push(C.tint(new THREE.BoxGeometry(0.045, 0.08, 3.5).rotateX(0.28).translate(0, 0.68, 0), wood));
-  const geo = C.mergeAll(parts, { colour: true, uv: false });
-  const qq = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-  const items = list.map((g) => {
-    qq.setFromAxisAngle(up, g.rot);
-    return { matrix: new THREE.Matrix4().compose(new THREE.Vector3(g.x, g.y, g.z), qq, new THREE.Vector3(1, 1, 1)) };
-  });
-  return C.chunked(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }), items, { shadows: q.shadows, maxDistance: 350, chunk: 200 });
+/** Field gates: now hung by C.linear() itself in the gateways it finds between wall ends (boundaries.js). */
+function gateMesh() {
+  return new THREE.Group();
 }
 
 function buildVillage(route, heightAt, q, course) {

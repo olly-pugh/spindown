@@ -584,7 +584,7 @@ export function buildYork(route, data, q) {
     if (blocked(p.x, p.z, 3) || nearWall(p.x, p.z) || inWater(p.x, p.z)) continue;
     streetTrees.push({ x: p.x, z: p.z, y: Y0 + 0.4, kind: 'broad', s: 0.55 + r() * 0.2, rot: r() * 6.3, hue: r() * 0.6 - 0.1, sx: 0.85, sy: 1.25 });
   }
-  group.add(C.trees([...streetTrees, ...treeSpots.slice(0, q.maxTrees)], { shadows: q.shadows, maxDistance: 1200, lod: 200 }));
+  group.add(C.trees([...streetTrees, ...treeSpots.slice(0, q.maxTrees)], { shadows: q.shadows, maxDistance: 1200, lod: 200, q }));
 
   const lamps = [], people = [];
   for (let d = 0; d < route.length; d += 30) {

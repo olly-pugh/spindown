@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { crowd } from './crowd.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as T from './textures.js';
-import { hash2 } from '../../core/world/noise.js';
+import { walls, hedges } from './boundaries.js';
 import { buildTrees } from './vegetation.js';
 
 /** A colour from a CSS string, in the renderer's linear working space (for vertex and instance colours). */
@@ -315,79 +315,14 @@ export function trees(placements, opts = {}) {
 }
 
 /**
- * Field boundaries as continuous extruded strips that follow the ground: segments [{x1,z1,x2,z2,y1,y2}].
- * kind 'wall': a dry-stone wall 1.25 m high, 0.6 m at the foot tapering to 0.34 m under its coping stones.
- * kind 'hedge': a clipped but shaggy hawthorn hedge about 1.6 m high whose height and width wander.
- * Merged into one mesh per chunk.
+ * Field boundaries that follow the ground: segments [{x1,z1,x2,z2,y1,y2}] (joined into lines where they meet).
+ * kind 'wall': a dry-stone wall (pale limestone; opts.tone 'gritstone' for brown gritstone), battered from a
+ * 0.85 m foot to 0.5 m under upright coping stones, with throughstones, stiles, wall heads and gates in the
+ * gateways (see boundaries.js). kind 'hedge': a flailed hawthorn hedge about 1.7 m high whose height and width
+ * wander, with a ragged leafy outline. opts: {shadows, maxDistance, chunk, q (quality preset)}.
  */
-export function linear(segments, kind, { shadows = true, maxDistance = 700, chunk = 200 } = {}) {
-  const cells = new Map();
-  const wall = kind === 'wall';
-  const cellFor = (x, z) => {
-    const key = `${Math.floor(x / chunk)},${Math.floor(z / chunk)}`;
-    let c = cells.get(key);
-    if (!c) cells.set(key, (c = { pos: [], nrm: [], uv: [], col: [], idx: [] }));
-    return c;
-  };
-  // Cross-sections as [offset, height, normalX (across), normalY, v, shade].
-  const wallProfile = [[-0.3, -0.2, -1, 0.12, 0, 0.8], [-0.17, 1.25, -1, 0.12, 1, 1], [-0.17, 1.25, 0, 1, 0.9, 1.05], [0.17, 1.25, 0, 1, 0.97, 1.05], [0.17, 1.25, 1, 0.12, 1, 1], [0.3, -0.2, 1, 0.12, 0, 0.8]];
-  const hedgeProfile = [[-0.62, -0.2, -1, 0.05, 0, 0.5], [-0.72, 0.75, -1, 0.25, 0.3, 0.8], [-0.42, 1.5, -0.6, 0.8, 0.55, 1.05], [0.42, 1.5, 0.6, 0.8, 0.8, 1.1], [0.72, 0.75, 1, 0.25, 1.05, 0.85], [0.62, -0.2, 1, 0.05, 1.35, 0.5]];
-  const profile = wall ? wallProfile : hedgeProfile;
-  const green = colour('#648f47');
-  for (const sg of segments) {
-    const dx = sg.x2 - sg.x1, dz = sg.z2 - sg.z1;
-    const len = Math.hypot(dx, dz);
-    if (len < 0.05) continue;
-    const ax = -dz / len, az = dx / len; // across
-    const c = cellFor((sg.x1 + sg.x2) / 2, (sg.z1 + sg.z2) / 2);
-    const base = c.pos.length / 3;
-    // U runs along the wall from a position hash so neighbouring segments line up closely enough.
-    const u0 = (sg.x1 * 0.37 + sg.z1 * 0.61) / (wall ? 2.6 : 2.5), u1 = u0 + len / (wall ? 2.6 : 2.5);
-    const ends = [[sg.x1, sg.y1, sg.z1, u0], [sg.x2, sg.y2, sg.z2, u1]];
-    for (let e = 0; e < 2; e++) {
-      const [x, y, z, u] = ends[e];
-      // Hedges wander in height and width; the wobble depends only on the point, so segment ends meet.
-      const hs = wall ? 1 : 0.85 + 0.45 * hash2(Math.round(x * 3), Math.round(z * 3), 31);
-      const ws = wall ? 1 : 0.85 + 0.4 * hash2(Math.round(z * 3), Math.round(x * 3), 32);
-      const tone = wall ? 1 : 0.85 + 0.3 * hash2(Math.round(x), Math.round(z), 33);
-      for (const [o, h, nx, ny, v, sh] of profile) {
-        c.pos.push(x + ax * o * ws, y + h * (h > 0 ? hs : 1), z + az * o * ws);
-        const l = Math.hypot(nx, ny);
-        c.nrm.push((ax * nx) / l, ny / l, (az * nx) / l);
-        c.uv.push(u, v);
-        if (wall) c.col.push(sh, sh, sh);
-        else c.col.push(green.r * sh * tone, green.g * sh * tone, green.b * sh * (2 - tone));
-      }
-    }
-    const n = profile.length;
-    for (let j = 0; j < n - 1; j++) {
-      if (wall && j % 2 === 1) continue; // the wall profile lists each face's two edges separately
-      const a = base + j, b = base + j + 1, a2 = base + n + j, b2 = base + n + j + 1;
-      c.idx.push(a, b, a2, b, b2, a2);
-    }
-  }
-  const mat = wall
-    ? new THREE.MeshStandardMaterial({ map: T.stoneWallTexture(), vertexColors: true, roughness: 0.95, side: THREE.DoubleSide })
-    : new THREE.MeshStandardMaterial({ map: T.leafTexture('oak'), vertexColors: true, roughness: 0.95, side: THREE.DoubleSide });
-  const group = new THREE.Group();
-  for (const c of cells.values()) {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(c.pos, 3));
-    g.setAttribute('normal', new THREE.Float32BufferAttribute(c.nrm, 3));
-    g.setAttribute('uv', new THREE.Float32BufferAttribute(c.uv, 2));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(c.col, 3));
-    g.setIndex(c.idx);
-    g.computeBoundingSphere();
-    const mesh = new THREE.Mesh(g, mat);
-    mesh.castShadow = shadows;
-    mesh.receiveShadow = true;
-    mesh.userData.centre = g.boundingSphere.center.clone();
-    mesh.userData.radius = g.boundingSphere.radius;
-    mesh.userData.maxDistance = maxDistance;
-    mesh.userData.minDistance = 0;
-    group.add(mesh);
-  }
-  return group;
+export function linear(segments, kind, opts = {}) {
+  return kind === 'wall' ? walls(segments, opts) : hedges(segments, opts);
 }
 
 /**

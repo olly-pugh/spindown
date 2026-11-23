@@ -300,10 +300,12 @@ function drawLeaf(g, x, y, ang, len, kind, col, r, { width = 1 } = {}) {
   LEAF[kind](g);
   g.closePath();
   // Darker at the stalk, lighter towards the tip and one edge, so each leaf reads as curved and lit.
-  const grd = g.createLinearGradient(-0.3, -0.05, 0.3, -0.95);
-  grd.addColorStop(0, shadeHex(col, 0.74));
-  grd.addColorStop(1, shadeHex(col, 1.1));
-  g.fillStyle = grd;
+  if (len > 12) {
+    const grd = g.createLinearGradient(-0.3, -0.05, 0.3, -0.95);
+    grd.addColorStop(0, shadeHex(col, 0.74));
+    grd.addColorStop(1, shadeHex(col, 1.1));
+    g.fillStyle = grd;
+  } else g.fillStyle = col;
   g.fill();
   if (len > 16) {
     g.beginPath();
@@ -651,6 +653,67 @@ export function leafAtlas(size = 1024) {
       return [(i % 4) * S, Math.floor(i / 4) * S];
     };
     return { texture, canvas: c, size, cellSize: S, rect, px };
+  });
+}
+
+// ---- Hedges ------------------------------------------------------------------------------------------
+
+/**
+ * Hawthorn hedge textures, tiling along the hedge:
+ *  - body: dense small leaves over dark gaps, 2 m × 2 m, opaque, with a normal map for its lumpiness;
+ *  - fringe: the same foliage dense at the bottom, breaking up into sprigs and single leaves towards a ragged
+ *    top (alpha), 2 m along × 0.6 m, for the fins that soften the hedge's outline.
+ */
+export function hedgeTextures() {
+  return once('hedge', () => {
+    const colours = ['#3c5d29', '#466a31', '#34521f', '#527438', '#5a7b3c', '#3f5f2b'];
+    const leafAt = (g, x, y, a, len, r, light = 0, H = 0) => {
+      const col = jitter(colours[Math.floor(r() * colours.length)], r, 0.12, light);
+      // Copies across the edges so the tile wraps (vertically too when H is given).
+      const xs = x < 20 ? [x, x + 512] : x > 492 ? [x, x - 512] : [x];
+      const ys = !H ? [y] : y < 20 ? [y, y + H] : y > H - 20 ? [y, y - H] : [y];
+      for (const px of xs) for (const py of ys) drawLeaf(g, px, py, a, len, 'hawthorn', col, r);
+    };
+    // Body.
+    const [bc, bg] = canvas2d(512, 512);
+    bg.fillStyle = '#23321a';
+    bg.fillRect(0, 0, 512, 512);
+    const rb = rng(71);
+    for (let i = 0; i < 4200; i++) {
+      const x = rb() * 512, y = rb() * 512;
+      const shade = rb();
+      // Deeper leaves (drawn first) darker, so the surface reads as layered.
+      const light = i < 1500 ? -0.25 : shade < 0.15 ? -0.15 : shade > 0.85 ? 0.14 : 0.04;
+      leafAt(bg, x, y, rb() * TAU, 9 + rb() * 7, rb, light, 512);
+    }
+    // Fringe.
+    const [fc, fg] = canvas2d(512, 160);
+    const rf = rng(72);
+    for (let i = 0; i < 1500; i++) {
+      // Dense low down, thinning upwards; sprigs reach the top.
+      const y = 160 - Math.pow(rf(), 1.8) * 150;
+      const x = rf() * 512;
+      leafAt(fg, x, y, (rf() - 0.5) * 2.4, 8 + rf() * 6, rf, y > 110 ? -0.2 : 0);
+    }
+    for (let i = 0; i < 26; i++) {
+      // Sprigs: a thin twig with a few leaves, poking up out of the top.
+      const x0 = rf() * 512, len = 40 + rf() * 70;
+      const pts = twigPath(x0, 160, (rf() - 0.5) * 0.8, len, 4, (rf() - 0.5) * 0.6, rf);
+      for (const ox of [-512, 0, 512]) drawTwig(fg, pts.map((v, k) => (k % 2 ? v : v + ox)), 1.6, 0.7, '#4a4036');
+      for (let k = 0; k < 7; k++) {
+        const [lx, ly, la] = pointAlong(pts, 0.3 + k * 0.1);
+        leafAt(fg, lx, ly, la + (k % 2 ? 1 : -1) * (0.6 + rf() * 0.5), 8 + rf() * 5, rf);
+      }
+    }
+    // The fringe faces the sky more than the body does: drawn darker so the two match once lit.
+    fg.globalCompositeOperation = 'source-atop';
+    fg.fillStyle = 'rgba(0,0,0,0.3)';
+    fg.fillRect(0, 0, 512, 160);
+    fg.globalCompositeOperation = 'source-over';
+    const body = foliageTexture(bc, { threshold: 0, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping });
+    const bodyNormal = normalMapFrom(bc, { strength: 3 });
+    const fringe = foliageTexture(fc, { threshold: 0.5, wrapS: THREE.RepeatWrapping });
+    return { body, bodyNormal, fringe };
   });
 }
 
