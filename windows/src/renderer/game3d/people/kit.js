@@ -150,10 +150,10 @@ export function kitMaterial(kit, skin, landmarks, { beard = 0, hair = '#3a2718' 
             float lips = (1.0 - smoothstep(0.012, 0.03, length(vec2(h.x * 0.9, h.y - 0.072)))) * smoothstep(-0.115, -0.13, h.z);
             float nose = 1.0 - smoothstep(0.012, 0.02, length(vec2(h.x, (h.y - 0.1) * 0.6))) ;
             float m = face * below * jaw * (1.0 - lips) * (1.0 - nose * 0.0);
-            m *= mix(0.55, 1.0, step(0.5, uBeard));               // stubble is lighter than a beard
+            m *= mix(0.78, 1.0, step(0.5, uBeard));               // stubble is lighter than a beard
             float grain = fract(sin(dot(floor(p.xy * 2600.0) + floor(p.z * 2600.0), vec2(12.9898, 78.233))) * 43758.5453);
-            float amt = clamp(m * (0.55 + 0.45 * grain) * min(1.0, uBeard * 1.2), 0.0, 1.0);
-            skinCol = mix(skinCol, skinCol * mix(vec3(1.0), uHairCol * 2.2, 0.85), amt * 0.85);
+            float amt = clamp(m * (0.6 + 0.4 * grain), 0.0, 1.0);
+            skinCol = mix(skinCol, skinCol * mix(vec3(1.0), uHairCol * 2.4, 0.9), amt * mix(0.62, 0.9, step(0.5, uBeard)));
           }
           kitHeight = 0.0;
           kitSheen = 0.0;
@@ -195,7 +195,7 @@ export function kitMaterial(kit, skin, landmarks, { beard = 0, hair = '#3a2718' 
           jc *= 1.0 - 0.18 * flank;
           jc = mix(jc, uAccent, max(collar, cuff));
           // Zip down the front centre, three pockets at the back.
-          float zip = band(-0.0025, 0.0025, p.x) * front * (1.0 - onArm);
+          float zip = band(-0.0025, 0.0025, p.x) * front * (1.0 - onArm) * torso * jerseyTorso;
           jc = mix(jc, jc * 0.35, zip);
           float pocketTop = hemY + 0.13;
           float pocket = (1.0 - front) * band(hemY + 0.01, pocketTop, p.y) * (1.0 - onArm);
@@ -230,7 +230,7 @@ export function kitMaterial(kit, skin, landmarks, { beard = 0, hair = '#3a2718' 
           // Bump: hems stand proud of the skin, seams are grooves, folds ripple across the stomach.
           kitHeight += 0.0012 * isKit;
           kitHeight += 0.0008 * (gripper * onLeg + cuff + collar);
-          kitHeight -= 0.0006 * pocketEdge;
+          kitHeight -= 0.0006 * pocketEdge * torso;
           kitHeight -= 0.0004 * zip;
           float folds = front * (1.0 - onArm) * jerseyTorso * smoothstep(0.0, 0.06, u) * (1.0 - smoothstep(0.25, 0.45, u));
           kitHeight += 0.0009 * folds * sin(p.y * 160.0 + sin(p.x * 30.0) * 1.5);

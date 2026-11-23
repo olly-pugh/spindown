@@ -56,6 +56,7 @@ function hairMaterial(hex, kind) {
   return hairMaterials.get(key);
 }
 const kitMaterials = new Map();
+let lastBeard = 0;
 function kitMat(kit, skin, landmarks, body, hair) {
   // Some men have stubble or a beard (picked from their looks, so a rider keeps his).
   let beard = 0;
@@ -64,6 +65,7 @@ function kitMat(kit, skin, landmarks, body, hair) {
     beard = h < 30 ? 0.35 : h < 45 ? 1 : 0;
   }
   const key = `${kit.jersey.id}|${skin}|${body}|${hair}|${beard}`;
+  lastBeard = beard;
   if (!kitMaterials.has(key)) kitMaterials.set(key, kitMaterial(kit, skin, landmarks, { beard, hair }));
   return kitMaterials.get(key);
 }
@@ -76,13 +78,17 @@ function gearPaint(kit, regions) {
   const darkHelmet = helmet.r + helmet.g + helmet.b < 0.25;
   const shoe = new THREE.Color(darkHelmet ? '#ececea' : '#1b1c1f');
   const accent = new THREE.Color(kit.jersey.accent);
+  // Lenses: smoke, or a mirror in blue, orange-gold, red or green; frames black, white or the accent.
+  const h = [...`${kit.helmet.id}${kit.bike.id}${kit.jersey.id}`].reduce((a, ch) => (a * 33 + ch.charCodeAt(0)) >>> 0, 5);
+  const lens = new THREE.Color(['#0d1a24', '#163a6e', '#8a4a12', '#6e1820', '#0f3d2a', '#0d1a24', '#2a2f36'][h % 7]);
+  const frame = new THREE.Color(['#101010', '#e9e9e6', '#101010', kit.jersey.accent, '#101010'][(h >> 3) % 5]);
   const P = {
     [G.SHOE]: [shoe, [0.38, 0]], [G.SOLE]: [new THREE.Color('#121212'), [0.45, 0.1]], [G.SHOE_ACCENT]: [accent, [0.4, 0]], [G.DIAL]: [new THREE.Color('#1a1a1a'), [0.3, 0.3]],
     [G.CLEAT]: [new THREE.Color('#b51d1d'), [0.5, 0]], [G.HEEL_PAD]: [new THREE.Color('#222224'), [0.6, 0]],
     [G.SHELL]: [helmet, [0.22, 0.02]], [G.SHELL_DARK]: [helmet.clone().multiplyScalar(0.6), [0.3, 0.0]], [G.VENT]: [new THREE.Color('#111112'), [0.7, 0]],
     [G.FOAM]: [new THREE.Color('#2a2b2d'), [0.85, 0]], [G.RIM]: [new THREE.Color('#2a2b2d'), [0.85, 0]], [G.STRAP]: [new THREE.Color('#141414'), [0.7, 0]],
     [G.BUCKLE]: [new THREE.Color('#2b2b2b'), [0.4, 0.2]], [G.PAD]: [new THREE.Color('#202020'), [0.9, 0]],
-    [G.LENS]: [new THREE.Color('#0d1a24'), [0.04, 0.85]], [G.FRAME]: [new THREE.Color('#101010'), [0.35, 0.1]],
+    [G.LENS]: [lens, [0.05, 0.9]], [G.FRAME]: [frame, [0.35, 0.1]],
   };
   return P;
 }
@@ -272,6 +278,7 @@ export class RiderModel {
     const G = assets.geometries;
     const bodyMat = ghost ? ghostMaterial() : kitMat(kit, skin, meta.landmarks, body, hair);
     const gearMat = ghost ? ghostMaterial() : bikeMaterial();
+    this.beard = ghost ? 0 : lastBeard;
     this.near = [make(G['body' + sfx], bodyMat), make(bikeAndGear(kit, 'near', byName, assets, body), gearMat)];
     if (!ghost) this.near.push(make(G['hair' + sfx], hairMaterial(hair, body === 'f' ? 'ponytail' : 'short'), false));
     this.far = [make(G['bodyFar' + sfx], bodyMat), make(bikeAndGear(kit, 'far', byName, assets, body), gearMat)];
