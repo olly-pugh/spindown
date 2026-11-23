@@ -5,7 +5,8 @@ import * as THREE from 'three';
 import { crowd } from './crowd.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as T from './textures.js';
-import { rng, hash2 } from '../../core/world/noise.js';
+import { hash2 } from '../../core/world/noise.js';
+import { buildTrees } from './vegetation.js';
 
 /** A colour from a CSS string, in the renderer's linear working space (for vertex and instance colours). */
 export const colour = (c) => new THREE.Color(c);
@@ -302,104 +303,15 @@ export function arch(route, d, text, { width = 9, colour: bg = '#1d7f46', height
   return g;
 }
 
-/** A lumpy sphere: an icosahedron pushed in and out by smooth noise. */
-function lump(radius, detail, seed, amount = 0.22) {
-  const g = new THREE.IcosahedronGeometry(radius, detail);
-  const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-    const k = 1 + amount * (Math.sin(x * 2.1 / radius + seed) * Math.sin(y * 2.7 / radius + seed * 1.7) + Math.sin(z * 2.3 / radius + seed * 0.6) * 0.7);
-    p.setXYZ(i, x * k, y * k, z * k);
-  }
-  return g;
-}
-
-/** Tree geometry templates: trunks, a full canopy of several lumps and a cheap far stand-in, each for broadleaf and conifer. */
-export function treeTemplates() {
-  const r = rng(77);
-  // Broadleaf: a main dome with smaller lumps around and below it.
-  const centre = new THREE.Vector3(0, 5.4, 0);
-  const blobs = [lump(2.5, 1, 1).scale(1.05, 0.9, 1.05).translate(0, 6.0, 0)];
-  for (let i = 0; i < 4; i++) {
-    const a = (i / 4) * Math.PI * 2 + r() * 0.8;
-    const rad = 1.5 + r() * 0.6;
-    blobs.push(lump(rad, 1, 3 + i * 2.3).scale(1, 0.85, 1).translate(Math.cos(a) * 1.9, 4.5 + r() * 1.2, Math.sin(a) * 1.9));
-  }
-  const soften = (geo, c, low, high, yMin, yMax) => {
-    // Blend each lump's normals towards "outwards from the whole crown" so it lights as one soft mass, and
-    // darken the underside and the inside.
-    const g = geo.index ? geo.toNonIndexed() : geo;
-    const p = g.attributes.position, n = g.attributes.normal;
-    const col = new Float32Array(p.count * 3);
-    const v = new THREE.Vector3(), o = new THREE.Vector3();
-    for (let i = 0; i < p.count; i++) {
-      v.fromBufferAttribute(n, i);
-      o.fromBufferAttribute(p, i).sub(c);
-      const out = o.length();
-      o.normalize();
-      v.lerp(o, 0.6).normalize();
-      n.setXYZ(i, v.x, v.y, v.z);
-      const t = Math.min(1, Math.max(0, (p.getY(i) - yMin) / (yMax - yMin)));
-      const k = (low + (high - low) * t) * (0.8 + 0.2 * Math.min(1, out / 2.6));
-      col[i * 3] = k * (0.92 + 0.08 * t);
-      col[i * 3 + 1] = k;
-      col[i * 3 + 2] = k * (0.8 + 0.1 * (1 - t));
-    }
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    return g;
-  };
-  const canopy = soften(mergeAll(blobs, { uv: true }), centre, 0.5, 1.12, 3.0, 8.2);
-  const farTrunk = new THREE.CylinderGeometry(0.22, 0.34, 3.6, 4, 1, true).translate(0, 1.8, 0);
-  const canopyFar = soften(mergeAll([lump(2.9, 0, 1).scale(1.15, 0.95, 1.15).translate(0, 5.6, 0)], { uv: true }), centre, 0.6, 1.05, 3.0, 8.2);
-  const withTrunk = (crown) => {
-    // The stand-in keeps a stub of trunk (tinted by the crown's colour, so drawn warm to come out brown).
-    const t = tint(farTrunk.clone(), new THREE.Color(1.5, 0.7, 0.9));
-    return mergeAll([crown, t], { colour: true });
-  };
-  // Trunk with two boughs reaching into the crown.
-  const trunk = mergeAll([
-    new THREE.CylinderGeometry(0.2, 0.36, 3.6, 7).translate(0, 1.8, 0),
-    new THREE.CylinderGeometry(0.09, 0.17, 2.6, 5).rotateZ(0.6).translate(-0.75, 4.2, 0),
-    new THREE.CylinderGeometry(0.09, 0.17, 2.4, 5).rotateZ(-0.5).rotateY(0.9).translate(0.55, 4.3, 0.3),
-  ]);
-  shadeY(trunk, 0.75, 1.05);
-  // Conifer: stacked drooping cones.
-  const cones = [];
-  for (let i = 0; i < 4; i++) cones.push(new THREE.ConeGeometry(2.3 - i * 0.5, 3.0, 9, 1, true).translate(0, 2.6 + i * 1.75, 0));
-  const conifer = soften(mergeAll(cones, { uv: true }), new THREE.Vector3(0, 5, 0), 0.5, 1.1, 1.2, 9.4);
-  const coniferFar = soften(mergeAll([new THREE.ConeGeometry(2.3, 8.2, 6, 1, true).translate(0, 5.2, 0)], { uv: true }), new THREE.Vector3(0, 5, 0), 0.55, 1.05, 1.2, 9.4);
-  return { trunk, canopy, canopyFar: withTrunk(canopyFar), conifer, coniferFar: withTrunk(coniferFar) };
-}
-
 /**
- * Instanced trees at the given placements [{x, y, z, s (scale), kind: 'broad'|'conifer', hue, sx, sy, rot}],
- * in chunks: full crowns close by, a single low-poly lump each beyond `lod` metres.
+ * Instanced trees at the given placements [{x, y, z, s (scale), kind: 'broad'|'conifer', species?, hue, sx,
+ * sy, rot}]: real species (oak, ash, sycamore, hawthorn, birch, lime, Scots pine, spruce), each drawn in full
+ * near the camera, lighter further off and as a camera-facing impostor beyond (see vegetation.js). opts:
+ * {shadows, maxDistance, q (the quality preset), setting: 'dales'|'town'}; `lod` is still accepted but the
+ * detail ranges now follow the quality preset.
  */
-export function trees(placements, { shadows = true, maxDistance = 1800, lod = 240 } = {}) {
-  const group = new THREE.Group();
-  const t = treeTemplates();
-  const trunkMat = new THREE.MeshStandardMaterial({ map: T.barkTexture(), vertexColors: true, roughness: 0.95 });
-  const broadMat = new THREE.MeshStandardMaterial({ map: T.leafTexture('oak'), vertexColors: true, roughness: 0.92 });
-  const conMat = new THREE.MeshStandardMaterial({ map: T.leafTexture('conifer'), vertexColors: true, roughness: 0.92 });
-  const q = new THREE.Quaternion(), e = new THREE.Euler();
-  const items = placements.map((p) => {
-    e.set(0, p.rot ?? 0, 0);
-    q.setFromEuler(e);
-    const m = M4().compose(new THREE.Vector3(p.x, p.y - 0.25, p.z), q, new THREE.Vector3(p.s * (p.sx ?? 1), p.s * (p.sy ?? 1), p.s * (p.sx ?? 1)));
-    const c = new THREE.Color();
-    const h = p.hue ?? 0;
-    if (p.kind === 'conifer') c.setHSL(0.36 + h * 0.04, 0.4, 0.14 + h * 0.03);
-    else c.setHSL(0.27 + h * 0.06, 0.5 + h * 0.1, 0.235 + h * 0.05);
-    return { matrix: m, colour: c, kind: p.kind };
-  });
-  const broad = items.filter((i) => i.kind !== 'conifer'), con = items.filter((i) => i.kind === 'conifer');
-  const chunk = 160;
-  group.add(chunked(t.trunk, trunkMat, items.map((i) => ({ matrix: i.matrix })), { chunk, shadows, maxDistance: lod }));
-  group.add(chunked(t.canopy, broadMat, broad, { chunk, shadows, maxDistance: lod }));
-  group.add(chunked(t.conifer, conMat, con, { chunk, shadows, maxDistance: lod }));
-  group.add(chunked(t.canopyFar, broadMat, broad, { chunk, shadows: false, minDistance: lod * 0.82, maxDistance }));
-  group.add(chunked(t.coniferFar, conMat, con, { chunk, shadows: false, minDistance: lod * 0.82, maxDistance }));
-  return group;
+export function trees(placements, opts = {}) {
+  return buildTrees(placements, opts);
 }
 
 /**
