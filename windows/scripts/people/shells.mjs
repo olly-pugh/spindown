@@ -137,7 +137,7 @@ export function helmet(C, R, { aero = false, far = false } = {}) {
       IN[i].push(outer(th, s, aero ? 0.024 : 0.027));
     }
   }
-  const dark = (j) => (j < 1 ? R.SHELL_DARK : R.SHELL);
+  const dark = (j) => (j < 1 && !far ? R.SHELL_DARK : R.SHELL);
   // Outer and inner surfaces, skipping vent cells; each cell gets its own vertices so regions stay crisp.
   for (let i = 0; i < NT; i++) {
     for (let j = 0; j < NS; j++) {

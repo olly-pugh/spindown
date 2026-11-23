@@ -9,23 +9,24 @@ import { Skeleton, toGame, fittedWeights, V3, M3 } from './skeleton.mjs';
 import { standingPose } from './pose.mjs';
 import { vertexNormals } from './meshkit.mjs';
 import { simplify, compactMesh } from './simplify.mjs';
+import { Builder } from './shells.mjs';
 
 /** Parts, as the crowd shader understands them. */
-export const PART = { SKIN: 0, TOP: 1, BOTTOM: 2, HAIR: 3, SHOES: 4, EYES: 5, HAT: 6, FLAG: 7, POLE: 8 };
+export const PART = { SKIN: 0, TOP: 1, BOTTOM: 2, HAIR: 3, SHOES: 4, EYES: 5, HAT: 6, FLAG: 7, POLE: 8, PHONE: 9, CAP: 10, BEANIE: 11, BAG: 12 };
 
 /** The people. age: 'young' | 'mid' | 'old' | 'child'. */
 const VARIANTS = [
   { name: 'lad-tee', gender: 'male', age: 'young', muscle: 0.6, weight: 0.5, outfit: 'male_casualsuit06', hair: 'short02', shoes: 'shoes05', arms: 'cheer', lean: 0.4, skin: 'm' },
-  { name: 'dad-jacket', gender: 'male', age: 'mid', muscle: 0.5, weight: 0.62, outfit: 'male_casualsuit05', hair: 'short04', shoes: 'shoes03', arms: 'clap', lean: -0.5, skin: 'm' },
+  { name: 'dad-jacket', gender: 'male', age: 'mid', muscle: 0.5, weight: 0.62, outfit: 'male_casualsuit05', hair: 'short04', shoes: 'shoes03', arms: 'clap', lean: -0.5, skin: 'm', beanie: true },
   { name: 'farmer', gender: 'male', age: 'old', muscle: 0.45, weight: 0.6, outfit: 'male_worksuit01', hair: 'short04', shoes: 'shoes03', hat: 'fedora01', arms: 'folded', lean: 0.6, skin: 'o', turn: 0.2 },
-  { name: 'man-stripes', gender: 'male', age: 'mid', muscle: 0.45, weight: 0.75, outfit: 'male_casualsuit03', hair: 'short01', shoes: 'shoes01', arms: 'wave', lean: -0.3, skin: 'm' },
+  { name: 'man-stripes', gender: 'male', age: 'mid', muscle: 0.45, weight: 0.75, outfit: 'male_casualsuit03', hair: 'short01', shoes: 'shoes01', arms: 'wave', lean: -0.3, skin: 'm', cap: true },
   { name: 'woman-tee', gender: 'female', age: 'young', muscle: 0.5, weight: 0.45, outfit: 'female_casualsuit01', hair: 'ponytail01', shoes: 'shoes05', arms: 'cheer', lean: 0.5, skin: 'f' },
-  { name: 'woman-blouse', gender: 'female', age: 'old', muscle: 0.4, weight: 0.6, outfit: 'female_elegantsuit01', hair: 'bob02', shoes: 'shoes04', arms: 'clap', lean: -0.4, skin: 'f' },
-  { name: 'woman-sport', gender: 'female', age: 'young', muscle: 0.6, weight: 0.4, outfit: 'female_sportsuit01', hair: 'long01', shoes: 'shoes02', arms: 'phone', lean: 0.3, skin: 'f', turn: -0.15 },
+  { name: 'woman-blouse', gender: 'female', age: 'old', muscle: 0.4, weight: 0.6, outfit: 'female_elegantsuit01', hair: 'bob02', shoes: 'shoes04', arms: 'clap', lean: -0.4, skin: 'f', bag: true },
+  { name: 'woman-sport', gender: 'female', age: 'young', muscle: 0.6, weight: 0.4, outfit: 'female_sportsuit01', hair: 'long01', shoes: 'shoes02', arms: 'phone', lean: 0.3, skin: 'f', turn: -0.15, phone: true },
   { name: 'kid-boy', gender: 'male', age: 'child', muscle: 0.5, weight: 0.5, outfit: 'male_casualsuit04', hair: 'short03', shoes: 'shoes02', arms: 'cheer', lean: 0, skin: 'm' },
   { name: 'kid-girl', gender: 'female', age: 'child', muscle: 0.5, weight: 0.5, outfit: 'female_casualsuit02', hair: 'bob02', shoes: 'shoes05', arms: 'wave', lean: 0.3, skin: 'f' },
-  { name: 'flag-man', gender: 'male', age: 'young', muscle: 0.55, weight: 0.55, outfit: 'male_casualsuit02', hair: 'short02', shoes: 'shoes02', arms: 'flag', flag: true, lean: 0, skin: 'm' },
-  { name: 'woman-jacket', gender: 'female', age: 'mid', muscle: 0.45, weight: 0.55, outfit: 'male_casualsuit05', hair: 'long01', shoes: 'shoes04', arms: 'hips', lean: -0.6, skin: 'f', turn: 0.25 },
+  { name: 'flag-man', gender: 'male', age: 'young', muscle: 0.55, weight: 0.55, outfit: 'male_casualsuit02', hair: 'short02', shoes: 'shoes02', arms: 'flag', flag: true, lean: 0, skin: 'm', cap: true },
+  { name: 'woman-jacket', gender: 'female', age: 'mid', muscle: 0.45, weight: 0.55, outfit: 'male_casualsuit05', hair: 'long01', shoes: 'shoes04', arms: 'hips', lean: -0.6, skin: 'f', turn: 0.25, bag: true, beanie: true },
   { name: 'teen', gender: 'male', age: 'young', muscle: 0.45, weight: 0.38, outfit: 'male_casualsuit04', hair: 'afro01', shoes: 'shoes05', arms: 'down', lean: 0.7, skin: 'm', turn: -0.2 },
 ];
 
@@ -127,7 +128,8 @@ export function buildCrowd(ctx) {
     for (const d of shoe.fit.deleteVerts) deleted.add(d);
     pieces.push({ ...outfit, key: v.outfit, part: 'outfit' });
     pieces.push({ ...shoe, key: v.shoes, part: PART.SHOES });
-    pieces.push({ ...clothes(v.hair), key: v.hair, part: PART.HAIR });
+    const acc = accessories(v, skel);
+    pieces.push({ ...clothes(v.hair), key: v.hair, part: PART.HAIR, trim: acc.covers });
     pieces.push({ ...eyes, key: 'eyes', part: PART.EYES });
     if (v.hat) pieces.push({ ...clothes(v.hat), key: v.hat, part: PART.HAT });
     // Body proxy, minus what the clothes cover.
@@ -175,6 +177,7 @@ export function buildCrowd(ctx) {
       const P = [], PB = [], N = [], NB = [], UV = [], PT = [], IDX = [];
       const posA = frames.A[ia], posB = frames.B[ia];
       const faces = p.obj.faces.filter((f) => {
+        if (p.trim && f.v.some((vi) => p.trim(p.rest[vi * 3], p.rest[vi * 3 + 1], p.rest[vi * 3 + 2]))) return false;
         if (!p.body) return true;
         // Drop body faces whose vertices' main reference vertex is covered by the clothes.
         return !f.v.every((vi) => {
@@ -183,6 +186,21 @@ export function buildCrowd(ctx) {
         });
       });
       const nA = vertexNormals(posA, p.obj.faces), nB = vertexNormals(posB, p.obj.faces);
+      // Garments: whole UV islands are top or bottom (by their average height), so shirt tails stay shirt.
+      let islandTop = null;
+      if (p.part === 'outfit') {
+        const parent = new Int32Array(p.obj.vt.length / 2).map((_, i) => i);
+        const find = (a) => { while (parent[a] !== a) a = parent[a] = parent[parent[a]]; return a; };
+        for (const f of p.obj.faces) for (let k = 1; k < f.t.length; k++) { const a = find(f.t[0]), b = find(f.t[k]); if (a !== b) parent[a] = b; }
+        const sum = new Map();
+        for (const f of p.obj.faces) f.v.forEach((vi, k) => {
+          const r = find(f.t[k]);
+          const e = sum.get(r) ?? [0, 0];
+          e[0] += p.rest[vi * 3 + 1]; e[1]++;
+          sum.set(r, e);
+        });
+        islandTop = (t) => { const e = sum.get(find(t)); return e && e[0] / e[1] > hipY; };
+      }
       const map = new Map();
       for (const f of faces) {
         const ids = f.v.map((vi, k) => {
@@ -199,7 +217,7 @@ export function buildCrowd(ctx) {
           const uv = atlasUV(p.key, t >= 0 ? p.obj.vt[t * 2] : 0.5, t >= 0 ? p.obj.vt[t * 2 + 1] : 0.5);
           UV.push(uv[0], uv[1]);
           let part = p.part;
-          if (part === 'outfit') part = p.rest[vi * 3 + 1] > hipY ? PART.TOP : PART.BOTTOM;
+          if (part === 'outfit') part = (t >= 0 ? islandTop(t) : p.rest[vi * 3 + 1] > hipY) ? PART.TOP : PART.BOTTOM;
           PT.push(part);
           return id;
         });
@@ -215,6 +233,24 @@ export function buildCrowd(ctx) {
       built.push(m);
     };
     pieces.forEach((p, i) => addPiece(p, i));
+    // Accessories: carried by their bone in each key frame.
+    for (const a of acc.list) {
+      const fr = {};
+      for (const frame of ['A', 'B']) {
+        posedFor(frame);
+        fr[frame] = [];
+        for (let i = 0; i < a.b.P.length / 3; i++) {
+          const pt = a.b.p(i);
+          const bone = a.upper && pt[1] > a.split ? a.upper : a.bone;
+          fr[frame].push(...V3.add(skel.carry(bone, pt), shift));
+        }
+      }
+      const faces = [];
+      for (let k = 0; k < a.b.I.length; k += 3) faces.push({ v: [a.b.I[k], a.b.I[k + 1], a.b.I[k + 2]] });
+      const nA = vertexNormals(Float64Array.from(fr.A), faces), nB = vertexNormals(Float64Array.from(fr.B), faces);
+      const grey = [0.875, 1 - 2400 / ATLAS.h];
+      built.push(finish({ P: fr.A, PB: fr.B, N: Array.from(nA), NB: Array.from(nB), UV: Array.from({ length: a.b.P.length / 3 }, () => grey).flat(), PT: Array.from(a.b.R), IDX: a.b.I.slice() }));
+    }
     const near = mergeFinished(built);
     if (flag) {
       const fl = unfinish(near);
@@ -277,6 +313,88 @@ export function buildCrowd(ctx) {
   }
   const atlasLayout = Object.fromEntries(Object.entries(LAYOUT).map(([k, l]) => [k, l]));
   return { meshes, meta: { variants, parts: PART, atlas: ATLAS }, atlasLayout };
+}
+
+/**
+ * Accessories in the rest pose, each with the bone that carries it: a baseball cap or a beanie on the head, a
+ * phone in the right hand, a shoulder bag. Returns [{builder, bone, part}] and a test for hair hidden by a hat.
+ */
+function accessories(v, skel) {
+  const B = skel.bones, out = [];
+  const H = B.head.head, C = [0, H[1] + 0.077, H[2] + 0.002];
+  let covers = null;
+  const dome = (b, rx, ry, rz, cy, rimFront, rimBack, part, nt = 28, ns = 7) => {
+    const P = [];
+    for (let i = 0; i <= nt; i++) {
+      P.push([]);
+      const th = (i / nt) * Math.PI * 2, c = Math.cos(th), sn = Math.sin(th);
+      const rim = rimFront + (rimBack - rimFront) * (1 - c) / 2;
+      const e0 = Math.asin(Math.max(-0.9, Math.min(0.9, (rim - cy) / ry)));
+      for (let j = 0; j <= ns; j++) {
+        const e = e0 + (Math.PI / 2 - e0) * (j / ns);
+        P[i].push(b.v([sn * rx * Math.cos(e), cy + ry * Math.sin(e), C[2] - c * rz * Math.cos(e)], part));
+      }
+    }
+    for (let i = 0; i < nt; i++) for (let j = 0; j < ns; j++) b.quad(P[i][j], P[i][j + 1], P[i + 1][j + 1], P[i + 1][j]);
+    b.orient([0, cy - 0.02, C[2]]);
+  };
+  if (v.cap) {
+    const b = new Builder();
+    dome(b, 0.097, 0.09, 0.11, C[1] + 0.002, C[1] + 0.008, C[1] - 0.016, PART.CAP);
+    // Peak: a curved visor off the front, slightly down.
+    const NU = 10, peak = [];
+    for (let i = 0; i <= NU; i++) {
+      const u = -1 + (2 * i) / NU;
+      const a = u * 1.0;
+      const x0 = Math.sin(a) * 0.096, z0 = C[2] - Math.cos(a) * 0.109;
+      const len = 0.075 * Math.cos(u * 1.2);
+      peak.push([b.v([x0, C[1] + 0.008, z0], PART.CAP), b.v([x0 * 1.05, C[1] + 0.0 - 0.012 * (1 - u * u), z0 - len], PART.CAP)]);
+    }
+    for (let i = 0; i < NU; i++) {
+      b.quad(peak[i][0], peak[i][1], peak[i + 1][1], peak[i + 1][0]);
+      b.quad(peak[i][0], peak[i + 1][0], peak[i + 1][1], peak[i][1]);
+    }
+    out.push({ b, bone: 'head', part: PART.CAP });
+    covers = (x, y, z) => y > C[1] - 0.012 && (x / 0.12) ** 2 + ((y - C[1]) / 0.12) ** 2 + ((z - C[2]) / 0.13) ** 2 < 1;
+  } else if (v.beanie) {
+    const b = new Builder();
+    dome(b, 0.092, 0.092, 0.104, C[1] + 0.006, C[1] - 0.012, C[1] - 0.03, PART.BEANIE);
+    // Folded cuff: a slightly bigger band round the rim.
+    dome(b, 0.096, 0.03, 0.108, C[1] - 0.005, C[1] - 0.014, C[1] - 0.032, PART.BEANIE, 28, 2);
+    out.push({ b, bone: 'head', part: PART.BEANIE });
+    covers = (x, y, z) => y > C[1] - 0.026 && (x / 0.12) ** 2 + ((y - C[1]) / 0.125) ** 2 + ((z - C[2]) / 0.13) ** 2 < 1;
+  }
+  if (v.phone) {
+    // A phone held up in the right hand, screen to the face.
+    const w = B['wrist.R'].head, k3 = B['finger3-1.R'].head, k2 = B['finger2-1.R'].head, k5 = B['finger5-1.R'].head;
+    const f = V3.norm(V3.sub(k3, w)), across = V3.norm(V3.sub(k5, k2));
+    let n = V3.norm(V3.cross(f, across));
+    if (V3.dot(n, [-1, 0, 0]) < 0) n = V3.scale(n, -1); // palm side faces the body at rest
+    const c = V3.add(V3.add(w, V3.scale(f, 0.07)), V3.scale(n, 0.02));
+    const b = new Builder();
+    const corner = (a, bb, cc) => V3.add(c, V3.add(V3.add(V3.scale(f, a * 0.075), V3.scale(across, bb * 0.036)), V3.scale(n, cc * 0.004)));
+    const ids = [];
+    for (const a of [-1, 1]) for (const bb of [-1, 1]) for (const cc of [-1, 1]) ids.push(b.v(corner(a, bb, cc), PART.PHONE));
+    const box = [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]];
+    for (const q of box) b.quad(ids[q[0]], ids[q[1]], ids[q[2]], ids[q[3]]);
+    b.orient(c);
+    out.push({ b, bone: 'wrist.R', part: PART.PHONE });
+  }
+  if (v.bag) {
+    // Shoulder bag: strap from the left shoulder across the chest to a bag at the right hip.
+    const b = new Builder();
+    const shL = B['clavicle.L'].tail, hipR = B['upperleg01.R'].head;
+    const chestF = B.spine02.head;
+    const strap = [V3.add(shL, [0.0, 0.03, 0.01]), V3.add(chestF, [0.03, 0.06, -0.12]), V3.add(chestF, [0.11, -0.08, -0.1]), V3.add(hipR, [0.07, 0.07, -0.02])];
+    b.tube(strap, 0.007, PART.BAG, 4);
+    const bc = V3.add(hipR, [0.11, 0.0, 0.0]);
+    const ids = [];
+    for (const dx of [-1, 1]) for (const dy of [-1, 1]) for (const dz of [-1, 1]) ids.push(b.v(V3.add(bc, [dx * 0.035, dy * 0.09 + 0.0, dz * 0.12]), PART.BAG));
+    const box = [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]];
+    for (const q of box) b.quad(ids[q[0]], ids[q[1]], ids[q[2]], ids[q[3]]);
+    out.push({ b, bone: 'spine05', part: PART.BAG, upper: 'spine01', split: chestF[1] - 0.12 });
+  }
+  return { list: out, covers };
 }
 
 /** A flag on a pole held between the two hands: pole (dark) and a cloth (atlas flag cell) at the top. */

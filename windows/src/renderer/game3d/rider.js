@@ -56,9 +56,15 @@ function hairMaterial(hex, kind) {
   return hairMaterials.get(key);
 }
 const kitMaterials = new Map();
-function kitMat(kit, skin, landmarks, body) {
-  const key = `${kit.jersey.id}|${skin}|${body}`;
-  if (!kitMaterials.has(key)) kitMaterials.set(key, kitMaterial(kit, skin, landmarks));
+function kitMat(kit, skin, landmarks, body, hair) {
+  // Some men have stubble or a beard (picked from their looks, so a rider keeps his).
+  let beard = 0;
+  if (body === 'm') {
+    const h = [...`${skin}${hair}`].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7) % 100;
+    beard = h < 30 ? 0.35 : h < 45 ? 1 : 0;
+  }
+  const key = `${kit.jersey.id}|${skin}|${body}|${hair}|${beard}`;
+  if (!kitMaterials.has(key)) kitMaterials.set(key, kitMaterial(kit, skin, landmarks, { beard, hair }));
   return kitMaterials.get(key);
 }
 
@@ -73,7 +79,7 @@ function gearPaint(kit, regions) {
   const P = {
     [G.SHOE]: [shoe, [0.38, 0]], [G.SOLE]: [new THREE.Color('#121212'), [0.45, 0.1]], [G.SHOE_ACCENT]: [accent, [0.4, 0]], [G.DIAL]: [new THREE.Color('#1a1a1a'), [0.3, 0.3]],
     [G.CLEAT]: [new THREE.Color('#b51d1d'), [0.5, 0]], [G.HEEL_PAD]: [new THREE.Color('#222224'), [0.6, 0]],
-    [G.SHELL]: [helmet, [0.22, 0.02]], [G.SHELL_DARK]: [helmet.clone().multiplyScalar(0.35), [0.35, 0.0]], [G.VENT]: [new THREE.Color('#111112'), [0.7, 0]],
+    [G.SHELL]: [helmet, [0.22, 0.02]], [G.SHELL_DARK]: [helmet.clone().multiplyScalar(0.6), [0.3, 0.0]], [G.VENT]: [new THREE.Color('#111112'), [0.7, 0]],
     [G.FOAM]: [new THREE.Color('#2a2b2d'), [0.85, 0]], [G.RIM]: [new THREE.Color('#2a2b2d'), [0.85, 0]], [G.STRAP]: [new THREE.Color('#141414'), [0.7, 0]],
     [G.BUCKLE]: [new THREE.Color('#2b2b2b'), [0.4, 0.2]], [G.PAD]: [new THREE.Color('#202020'), [0.9, 0]],
     [G.LENS]: [new THREE.Color('#0d1a24'), [0.04, 0.85]], [G.FRAME]: [new THREE.Color('#101010'), [0.35, 0.1]],
@@ -264,7 +270,7 @@ export class RiderModel {
       return m;
     };
     const G = assets.geometries;
-    const bodyMat = ghost ? ghostMaterial() : kitMat(kit, skin, meta.landmarks, body);
+    const bodyMat = ghost ? ghostMaterial() : kitMat(kit, skin, meta.landmarks, body, hair);
     const gearMat = ghost ? ghostMaterial() : bikeMaterial();
     this.near = [make(G['body' + sfx], bodyMat), make(bikeAndGear(kit, 'near', byName, assets, body), gearMat)];
     if (!ghost) this.near.push(make(G['hair' + sfx], hairMaterial(hair, body === 'f' ? 'ponytail' : 'short'), false));

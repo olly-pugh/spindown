@@ -67,7 +67,7 @@ const toneOf = (hex) => {
 /**
  * Material for the body. kit: {jersey: {body, sleeve, accent, pattern}}, skin: hex, landmarks: from the pack.
  */
-export function kitMaterial(kit, skin, landmarks) {
+export function kitMaterial(kit, skin, landmarks, { beard = 0, hair = '#3a2718' } = {}) {
   const tex = skinTexture(toneOf(skin));
   const L = landmarks;
   const v3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
@@ -88,6 +88,8 @@ export function kitMaterial(kit, skin, landmarks) {
     uShorts: { value: new THREE.Color('#141518') },
     uSock: { value: new THREE.Color('#f1f1ee') },
     uPattern: { value: PATTERNS[J.pattern] ?? 0 },
+    uBeard: { value: beard },
+    uHairCol: { value: new THREE.Color(hair) },
     uShoulder: { value: v3(L.shoulderR) },
     uWrist: { value: v3(L.wristR) },
     uHip: { value: v3(L.hipR) },
@@ -113,7 +115,8 @@ export function kitMaterial(kit, skin, landmarks) {
       .replace('#include <common>', `#include <common>
         uniform sampler2D uSkin, uLogo;
         uniform vec3 uSkinMean, uSkinTone, uBody, uSleeve, uAccent, uLogoCol, uShorts, uSock;
-        uniform float uPattern;
+        uniform float uPattern, uBeard;
+        uniform vec3 uHairCol;
         uniform vec3 uShoulder, uWrist, uHip, uAnkle, uNeck, uWaist;
         varying vec3 vRest;
         varying vec4 vKit;
@@ -137,6 +140,21 @@ export function kitMaterial(kit, skin, landmarks) {
           float front = step(p.z, 0.0);               // the face looks down -z
           vec3 skinCol = texture2D(uSkin, vSkinUv).rgb;
           skinCol *= uSkinTone / max(uSkinMean, vec3(0.02));
+          // Stubble or a beard: jaw, cheeks below the cheekbones, chin and upper lip; not the lips or nose.
+          if (uBeard > 0.01 && headW > 0.5) {
+            vec3 h = p - uNeck;                                   // relative to the base of the neck (rest pose)
+            float ax = abs(h.x);
+            float face = smoothstep(-0.02, -0.07, h.z);           // the front of the head
+            float below = 1.0 - smoothstep(0.095, 0.115, h.y + max(0.0, ax - 0.035) * 0.9);   // under the cheekbones
+            float jaw = smoothstep(0.015, 0.035, h.y);            // above the throat
+            float lips = (1.0 - smoothstep(0.012, 0.03, length(vec2(h.x * 0.9, h.y - 0.072)))) * smoothstep(-0.115, -0.13, h.z);
+            float nose = 1.0 - smoothstep(0.012, 0.02, length(vec2(h.x, (h.y - 0.1) * 0.6))) ;
+            float m = face * below * jaw * (1.0 - lips) * (1.0 - nose * 0.0);
+            m *= mix(0.55, 1.0, step(0.5, uBeard));               // stubble is lighter than a beard
+            float grain = fract(sin(dot(floor(p.xy * 2600.0) + floor(p.z * 2600.0), vec2(12.9898, 78.233))) * 43758.5453);
+            float amt = clamp(m * (0.55 + 0.45 * grain) * min(1.0, uBeard * 1.2), 0.0, 1.0);
+            skinCol = mix(skinCol, skinCol * mix(vec3(1.0), uHairCol * 2.2, 0.85), amt * 0.85);
+          }
           kitHeight = 0.0;
           kitSheen = 0.0;
           kitRough = 0.52;
@@ -158,7 +176,7 @@ export function kitMaterial(kit, skin, landmarks) {
           float sleeve = (1.0 - aastep(sleeveEnd, armT)) * onArm;
           float cuff = band(sleeveEnd - 0.05, sleeveEnd, armT) * onArm;
           // Jersey coverage: torso (not legs, not head) or sleeve.
-          float torso = (1.0 - onLeg) * (1.0 - onArm) * (1.0 - aboveCollar) * (1.0 - aastep(0.5, headW));
+          float torso = (1.0 - onLeg) * (1.0 - onArm) * (1.0 - aboveCollar);
           float jersey = max(torso * jerseyTorso, sleeve);
           float shorts = max(torso * (1.0 - jerseyTorso), onLeg * shortsLeg);
           // ---- Jersey pattern ----
@@ -242,6 +260,6 @@ export function kitMaterial(kit, skin, landmarks) {
           totalEmissiveRadiance += diffuseColor.rgb * kitSheen * fres * 0.18;
         }`);
   };
-  m.customProgramCacheKey = () => 'spindown-kit-v1';
+  m.customProgramCacheKey = () => 'spindown-kit-v2';
   return m;
 }

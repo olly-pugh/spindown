@@ -138,7 +138,7 @@ function crowdMaterial(variant, lod) {
         varying vec3 vFarCol;`)
       .replace('#include <color_vertex>', `#include <color_vertex>
         vPart = part;
-        vTint = part < 0.5 ? iSkin : part < 1.5 ? iTop : part < 2.5 ? iBottom : part < 3.5 ? iHair : vec3(1.0);
+        vTint = part < 0.5 ? iSkin : part < 1.5 ? iTop : part < 2.5 ? iBottom : part < 3.5 ? iHair : part > 9.5 && part < 10.5 ? iTop : part > 10.5 && part < 11.5 ? iBottom : vec3(1.0);
         vTintBottom = iMisc.z;
         ${near ? 'vFarCol = vec3(1.0);' : 'vFarCol = textureLod(uAtlas, uv, 4.0).rgb;'}`);
     sh.fragmentShader = sh.fragmentShader
@@ -157,7 +157,11 @@ function crowdMaterial(variant, lod) {
           else if (vPart < 1.5) t = l / uTopLum * vTint;                               // tops: own colour, folds kept
           else if (vPart < 2.5) t = mix(t, l / uBotLum * vTint, vTintBottom);          // trousers: denim, or a colour
           else if (vPart < 3.5) t = l * vTint * 1.7;                                   // hair
-          else if (vPart > 7.5) t = vec3(0.12);                                        // flag pole
+          else if (vPart > 7.5 && vPart < 8.5) t = vec3(0.12);                         // flag pole
+          else if (vPart > 8.5 && vPart < 9.5) t = vec3(0.025);                        // phone
+          else if (vPart > 9.5 && vPart < 10.5) t = vTint * 0.85;                      // cap, in their colours
+          else if (vPart > 10.5 && vPart < 11.5) t = vTint * 1.15 + 0.02;              // knitted beanie
+          else if (vPart > 11.5) t = vec3(0.075, 0.045, 0.028);                        // leather bag
           diffuseColor.rgb = t;
         }`);
   };
