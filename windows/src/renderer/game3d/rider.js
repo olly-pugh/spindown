@@ -164,6 +164,9 @@ function pedals(bones) {
 
 /** Bike + gear + pedals for a kit and level of detail, cached (kits repeat across riders). */
 const bikeCache = new Map();
+/** Riders further than this (m) from the camera, though in the detailed set, use the middle level. */
+const MID_FROM = 9;
+
 function bikeAndGear(kit, lod, boneIdx, assets, body) {
   const key = `${body}|${lod}|${kit.bike.id}|${kit.bike.color}|${kit.wheels.id}|${kit.helmet.id}|${kit.jersey.accent}`;
   if (bikeCache.has(key)) return bikeCache.get(key);
@@ -171,7 +174,7 @@ function bikeAndGear(kit, lod, boneIdx, assets, body) {
   const B = assets.meta.bodies[body], b = B.suffix;
   const paint = gearPaint(kit, regions);
   const aero = (kit.helmet.aero ?? 1) < 1;
-  const lodS = lod === 'far' ? 'Far' : '';
+  const lodS = lod === 'near' ? '' : 'Far'; // mid and far share the light helmet, glasses and shoes
   const g = (name) => geos[name + lodS + b] ?? geos[name + b];
   const parts = [
     buildBike(kit, { frame: boneIdx.root, rear: boneIdx.rear, front: boneIdx.front, crank: boneIdx.crank }, lod, B.fit),
@@ -308,6 +311,9 @@ export class RiderModel {
     }
     this.near = [nearBody, make(bikeAndGear(kit, 'near', byName, assets, body), gearMat)];
     if (!ghost) this.near.push(make(G['hair' + sfx], hairMaterial(hair, body === 'f' ? 'ponytail' : 'short'), false));
+    this.mid = [make(faceMorphs(G['bodyMid' + sfx] ?? G['body' + sfx]), bodyMat), make(bikeAndGear(kit, 'mid', byName, assets, body), gearMat)];
+    if (!ghost) this.mid.push(make(G['hair' + sfx], hairMaterial(hair, body === 'f' ? 'ponytail' : 'short'), false));
+    if (this.mid[0].morphTargetInfluences && nearBody.morphTargetInfluences) this.mid[0].morphTargetInfluences = nearBody.morphTargetInfluences;
     this.far = [make(G['bodyFar' + sfx], bodyMat), make(bikeAndGear(kit, 'far', byName, assets, body), gearMat)];
     this.detail = null;
     this.setDetail(true);
@@ -320,12 +326,15 @@ export class RiderModel {
     this.setPose(0, 0, 0);
   }
 
-  /** Full detail close to the camera, a light version further away. */
-  setDetail(near) {
-    if (this.detail === near) return;
-    this.detail = near;
-    for (const m of this.near) m.visible = near;
-    for (const m of this.far) m.visible = !near;
+  /**
+   * Full detail close to the camera, a light version further away. near: whether this rider may use the detailed
+   * body at all; distance (m, optional): from it, the middle level is used beyond MID_FROM.
+   */
+  setDetail(near, distance = 0) {
+    const level = !near ? 'far' : distance > MID_FROM ? 'mid' : 'near';
+    if (this.detail === level) return;
+    this.detail = level;
+    for (const k of ['near', 'mid', 'far']) for (const m of this[k]) m.visible = k === level;
   }
 
   /** crank: crank angle (rad), wheel: wheel angle (rad), lean: roll (rad, positive leaning right). */

@@ -19,6 +19,7 @@ import * as FIT from '../../src/renderer/game3d/people/fit.js';
 import { riderGear } from './gear.mjs';
 import { buildCrowd } from './crowd-build.mjs';
 import { VoxelGrid, bakeAO } from './ao.mjs';
+import { simplify, compactMesh } from './simplify.mjs';
 import { buildBike } from '../../src/renderer/game3d/bike.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -273,6 +274,10 @@ function buildRider({ shape = RIDER_SHAPE, body = 'm', proxyFile = 'proxymeshes/
     }
   }
 
+  // Mid: the near body simplified to about a third (for riders 9-28 m away); every attribute rides along.
+  const ms = simplify(near.position, Array.from(near.index), Math.round((near.index.length / 3) * 0.34));
+  const mid = compactMesh(near, ms.index, ms.keep);
+
   // Landmarks in the rest pose for the kit shader.
   const R = (n, k = 'head') => restBones[n][k];
   const landmarks = {
@@ -280,7 +285,7 @@ function buildRider({ shape = RIDER_SHAPE, body = 'm', proxyFile = 'proxymeshes/
     hipR: R('upperleg01.R'), kneeR: R('lowerleg01.R'), ankleR: R('foot.R'),
     neck: R('neck01'), chest: R('spine02'), waist: R('spine04'), pelvis: R('spine05'), headTop: R('head', 'tail'),
   };
-  return { skel, pts, bones, near, far, browMesh, hairMesh, gear, landmarks, posed, rest, proxy, fit: bf };
+  return { skel, pts, bones, near, mid, far, browMesh, hairMesh, gear, landmarks, posed, rest, proxy, fit: bf };
 }
 
 const rider = buildRider();
@@ -296,8 +301,8 @@ const meta = {
 };
 const sfx = (o, x) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k + x, v]));
 const meshes = {
-  body: rider.near, bodyFar: rider.far, hair: rider.hairMesh, ...rider.gear.meshes,
-  ...sfx({ body: riderF.near, bodyFar: riderF.far, hair: riderF.hairMesh, ...riderF.gear.meshes }, 'F'),
+  body: rider.near, bodyMid: rider.mid, bodyFar: rider.far, hair: rider.hairMesh, ...rider.gear.meshes,
+  ...sfx({ body: riderF.near, bodyMid: riderF.mid, bodyFar: riderF.far, hair: riderF.hairMesh, ...riderF.gear.meshes }, 'F'),
 };
 const bin = pack(JSON.parse(JSON.stringify(meta, (k, v) => r6(v))), meshes);
 fs.mkdirSync(OUT, { recursive: true });
@@ -330,6 +335,7 @@ if (DEBUG) {
     fs.writeFileSync(path.join(DEBUG, name + '.json'), JSON.stringify({ position, index, uv, normal, color }));
   };
   dump('rider-near', rider.near);
+  dump('rider-mid', rider.mid);
   dump('riderF-near', riderF.near);
   dump('riderF-hair', riderF.hairMesh);
   for (const [k, m] of Object.entries(riderF.gear.meshes)) dump('gearF-' + k, m);

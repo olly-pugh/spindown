@@ -240,8 +240,8 @@ const boxAt = (w, h, d, at, rx = 0, ry = 0, rz = 0) => {
  * Returns a BufferGeometry with position, normal, uv, color, surf, skinIndex, skinWeight.
  */
 export function buildBike(kit, bones, detail = 'near', fit = null) {
-  const near = detail === 'near';
-  const R = near ? 1 : 0.5; // radial/ring density
+  const near = detail !== 'far'; // the mid bike keeps every part, with fewer segments
+  const R = detail === 'near' ? 1 : detail === 'mid' ? 0.62 : 0.5; // radial/ring density
   const parts = [];
   const add = (g, colour, surf, bone = bones.frame, uv) => parts.push(part(g, colour, surf, bone, uv));
   const frameCol = new THREE.Color(kit.bike.color);
@@ -378,11 +378,11 @@ export function buildBike(kit, bones, detail = 'near', fit = null) {
   const wheel = (at, bone, rear) => {
     const W = [];
     const put = (g, colour, surf, uvKeep) => W.push(part(g.translate(at.x, at.y, at.z), colour, surf, bone, uvKeep ? 'keep' : undefined));
-    const seg = near ? 56 : 18;
+    const seg = detail === 'near' ? 56 : detail === 'mid' ? 30 : 18;
     // Tyre: round section with a sidewall label band (atlas row 3).
     const tyreR = 0.0125, tyreC = FIT.WHEEL_R - tyreR;
     const tyreProf = [];
-    const TP = near ? 12 : 6;
+    const TP = detail === 'near' ? 12 : detail === 'mid' ? 8 : 6;
     for (let k = 0; k <= TP; k++) {
       const a = -Math.PI / 2 + (k / TP) * Math.PI * 2 * 0.999;
       tyreProf.push([tyreC + Math.cos(a) * tyreR * 0.95, Math.sin(a) * tyreR]);

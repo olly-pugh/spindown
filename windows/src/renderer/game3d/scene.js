@@ -198,7 +198,7 @@ export class WorldScene {
       .map((m) => [m, m.root.position.distanceToSquared(cam)])
       .sort((a, b) => a[1] - b[1]);
     const limit = this.qualityName === 'low' ? 0 : this.qualityName === 'high' ? 10 : 6;
-    near.forEach(([m, d2], i) => m.setDetail(i < limit && d2 < 28 * 28));
+    near.forEach(([m, d2], i) => m.setDetail(i < limit && d2 < 28 * 28, Math.sqrt(d2) * (this.qualityName === 'high' ? 0.7 : 1)));
     for (const [id, model] of this.riders) {
       if (!seen.has(id)) {
         this.scene.remove(model.root);
