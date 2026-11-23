@@ -290,6 +290,13 @@ export function buildYork(route, data, q) {
     for (let i = 0; i < pts.length - 2; i += 2) {
       const mx = (pts[i] + pts[i + 2]) / 2, mz = (pts[i + 1] + pts[i + 3]) / 2;
       if (!inWater(mx, mz)) continue;
+      // Not where another street meets or crosses the route: its parapets would stand across the carriageway.
+      let crossesRoute = false;
+      for (let t = 0; t <= 1 && !crossesRoute; t += 0.125) {
+        const x = pts[i] + (pts[i + 2] - pts[i]) * t, z = pts[i + 1] + (pts[i + 3] - pts[i + 1]) * t;
+        if (field.query(x, z, tmp).distance < ROAD_HALF + width / 2 + 2) crossesRoute = true;
+      }
+      if (crossesRoute && rd !== data.routeRoad) continue;
       const sk = C.profileAlong(pts.slice(Math.max(0, i - 2), i + 6), [[-width / 2 - 0.5, Y0 - 1.3], [-width / 2 - 0.5, Y0 + 0.9], [-width / 2 - 0.2, Y0 + 0.9], [-width / 2 - 0.2, Y0 - 0.05], [width / 2 + 0.2, Y0 - 0.05], [width / 2 + 0.2, Y0 + 0.9], [width / 2 + 0.5, Y0 + 0.9], [width / 2 + 0.5, Y0 - 1.3]], { uvLength: 4, uvV: 4 });
       if (sk) skirts.push(sk);
       i += 2;
@@ -381,7 +388,9 @@ export function buildYork(route, data, q) {
   const gates = [];
   const wallRuns = [];
   for (const wl of data.walls) {
-    const pts = W(wl);
+    // Resampled every 2 m, so a wall whose mapped nodes sit either side of the road is still cut where it
+    // crosses it (otherwise one long segment would run straight across the street).
+    const pts = densify(W(wl), 2);
     // Split into runs that stay clear of the route.
     let run = [], clear = [];
     const flush = () => {
@@ -475,6 +484,9 @@ export function buildYork(route, data, q) {
         wb = d;
       }
     }
+    // Only real river crossings get parapets. Elsewhere the road can sit a little above the smoothed relief (at
+    // junctions and on tight bends), and parapets offset round a tight bend fold across the carriageway.
+    if (wa == null) return;
     const paint = bi % 2 === 0 ? ['#ece4c6', '#2f5d8a', '#27507a'] : ['#e6dcc0', '#7a2a2a', '#1f3d2c'];
     for (const s of [-1, 1]) {
       const stone = (from, to) => {
@@ -538,7 +550,9 @@ export function buildYork(route, data, q) {
     if (blocked(p.x, p.z, 3) || nearWall(p.x, p.z) || inWater(p.x, p.z)) continue;
     streetTrees.push({ x: p.x, z: p.z, y: Y0 + 0.4, kind: 'broad', s: 0.55 + r() * 0.2, rot: r() * 6.3, hue: r() * 0.6 - 0.1, sx: 0.85, sy: 1.25, pit: true });
   }
-  flat.add(C.trees([...streetTrees, ...treeSpots.slice(0, q.maxTrees)], { shadows: q.shadows, maxDistance: 1200, lod: 200, q }));
+  // Trees are batched per instance, so they are placed on the relief here rather than laid on it with `flat`.
+  const onRelief = (t) => ({ ...t, y: t.y + D(t.x, t.z) });
+  group.add(C.trees([...streetTrees, ...treeSpots.slice(0, q.maxTrees)].map(onRelief), { shadows: q.shadows, maxDistance: 1200, lod: 200, q }));
 
   const lamps = [], people = [];
   for (let d = 0; d < route.length; d += 30) {
@@ -646,6 +660,20 @@ export function buildYork(route, data, q) {
  * position. York's slopes are a few percent at most, so buildings stay square to the eye and their feet stay
  * on the ground; within ~15 m of the rivers D is zero, so quays, water and bridges keep their heights.
  */
+/** A polyline [x, z, ...] with extra points so no segment is longer than `step` metres. */
+function densify(pts, step) {
+  const out = [];
+  for (let i = 0; i < pts.length; i += 2) {
+    if (i >= 2) {
+      const ax = pts[i - 2], az = pts[i - 1], bx = pts[i], bz = pts[i + 1];
+      const k = Math.ceil(Math.hypot(bx - ax, bz - az) / step);
+      for (let j = 1; j < k; j++) out.push(ax + ((bx - ax) * j) / k, az + ((bz - az) * j) / k);
+    }
+    out.push(pts[i], pts[i + 1]);
+  }
+  return out;
+}
+
 function layOnRelief(root, D) {
   root.updateMatrixWorld(true);
   const seen = new Set();
@@ -663,7 +691,8 @@ function layOnRelief(root, D) {
       if (o.userData.centre) o.userData.centre.copy(o.boundingSphere.center);
       return;
     }
-    if (!o.isMesh || seen.has(o.geometry)) return;
+    // Batched meshes hold many objects in one buffer; their instances are placed on the relief by the caller.
+    if (o.isBatchedMesh || !o.isMesh || seen.has(o.geometry)) return;
     seen.add(o.geometry);
     const p = o.geometry.attributes.position;
     for (let i = 0; i < p.count; i++) {
