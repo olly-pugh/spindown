@@ -15,7 +15,7 @@ import { WorldSim, RACE_PRESETS, raceFieldSize } from '../../core/world/sim.js';
 import * as P from '../../core/world/progression.js';
 import { ITEMS, ACHIEVEMENTS, CHALLENGES, POWERUPS, TIERS, MAX_LEVEL, PACERS } from '../../core/world/content.js';
 import { riderParams, steadySpeed } from '../../core/world/physics.js';
-import { SegmentHud, SegmentsPanel, noteSegmentEvent, resetSegmentHud } from './segments.js';
+import { SegmentBoard, SegmentHud, SegmentsPanel, noteSegmentEvent, resetSegmentHud } from './segments.js';
 import { routeLatLon } from '../../core/world/geo.js';
 import { worldRideInfo } from '../../core/worldride.js';
 import yorkData from '../game3d/data/york.json';
@@ -824,6 +824,7 @@ export function WorldView({ app, openSensors }) {
     <div class="plates" ref=${plates}></div>
     ${sim && panel !== 'menu' ? html`<div class="world-hud">
       <div class="hud-top">
+        <div class="hud-leftcol">
         <div class="hud-left glass">
           <div class="big-num ${powerColour}"><span class="num">${Format.watts(power)}</span><small>W</small><small class="wkg num">${power == null ? '--' : (power / sim.player.mass).toFixed(1)} W/kg</small></div>
           <div class="hud-grid">
@@ -832,6 +833,8 @@ export function WorldView({ app, openSensors }) {
             <div class="hud-hr ${hr == null ? 'muted' : 'red'}" title="Heart rate"><span class="num">${hr ?? '--'}</span><small>bpm</small><${ZoneBadge} zone=${liveZone(settings, hr)} /></div>
           </div>
           ${sim.player.draft > 0.08 ? html`<div class="draft">🌬 Drafting · ${Math.round(sim.player.draft * 100)}% less drag</div>` : null}
+        </div>
+        <${SegmentBoard} sim=${sim} />
         </div>
         <div class="hud-centre">
           ${race ? html`<div class="glass race-box">

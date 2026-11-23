@@ -284,3 +284,51 @@ test('segments: the HUD sees the segment ahead before it starts, then the one in
   assert.ok(a.elapsed > 5 && a.fraction > 0.1 && a.fraction < 0.2);
   assert.equal(a.delta, null, 'no PR yet, so no delta');
 });
+
+test('segment leaderboard: you now against every dated attempt at the same point', () => {
+  const p = { efforts: {} };
+  const seg = { id: 's', name: 'S', kind: 'segment', from: 100, to: 1100 };
+  const even = (t) => Array.from({ length: E.SPLITS }, (_, i) => (t * (i + 1)) / E.SPLITS);
+  // A fast start then fading (splits) on 01/11, even pacing on 05/11 and 10/11, an old one without splits.
+  const fade = Array.from({ length: E.SPLITS }, (_, i) => { const f = (i + 1) / E.SPLITS; return f <= 0.5 ? 80 * f : 40 + 200 * (f - 0.5); });
+  E.recordAttempt(p, 'york', seg, { time: 140, splits: fade }, new Date(2026, 10, 1, 9));
+  E.recordAttempt(p, 'york', seg, { time: 150, splits: even(150) }, new Date(2026, 10, 5, 9));
+  E.recordAttempt(p, 'york', seg, { time: 130, splits: even(130) }, new Date(2026, 10, 10, 9));
+  E.recordAttempt(p, 'york', seg, { time: 160 }, new Date(2026, 10, 12, 9));
+  assert.equal(p.efforts.york.s.attempts[0].splits.length, E.SPLITS, 'every attempt keeps its splits');
+  // Halfway in 60 s: the fader was there in 40, the 130 in 65, the 150 in 75, the 160 (pro rata) in 80.
+  const b = E.segmentBoard(p, 'york', seg, { elapsed: 60, fraction: 0.5 });
+  assert.equal(b.total, 5);
+  assert.equal(b.place, 2);
+  const at = b.rows.map((r) => (r.you ? 'you' : E.dayMonth(r.date, new Date(2026, 10, 20))));
+  assert.deepEqual(at, ['01/11', 'you', '10/11', '05/11', '12/11']);
+  assert.equal(Math.round(b.rows[0].gap), -20);
+  assert.equal(Math.round(b.rows[2].gap), 5);
+  assert.equal(b.rows[1].time, 120, 'your projected time');
+  assert.ok(b.rows.find((r) => r.time === 130).isPR);
+  // Finished in 135: ranked by final time with the new attempt marked as you.
+  const r = E.recordAttempt(p, 'york', seg, { time: 135, splits: even(135) }, new Date(2026, 10, 20, 9));
+  const done = E.segmentBoard(p, 'york', seg, null, r.attempt);
+  assert.equal(done.place, 2);
+  assert.equal(done.rows[1].you, true);
+  assert.equal(done.rows[0].time, 130);
+  // The very first attempt: just you.
+  const q = { efforts: {} };
+  const first = E.segmentBoard(q, 'york', seg, { elapsed: 10, fraction: 0.1 });
+  assert.equal(first.total, 1);
+  assert.equal(first.rows[0].you, true);
+});
+
+test('segment leaderboard: long histories keep the top three and the rows around you', () => {
+  const p = { efforts: {} };
+  const seg = { id: 's', name: 'S', kind: 'segment', from: 0, to: 1000 };
+  for (let i = 0; i < 20; i++) E.recordAttempt(p, 'york', seg, { time: 100 + i * 5 }, new Date(2026, 9, 1 + i, 9));
+  const b = E.segmentBoard(p, 'york', seg, { elapsed: 76, fraction: 0.5 }); // on course for 152: 12th of 21
+  assert.equal(b.total, 21);
+  assert.equal(b.place, 12);
+  const real = b.rows.filter((r) => !r.skipped);
+  assert.ok(real.length <= 8);
+  assert.deepEqual(real.slice(0, 3).map((r) => r.place), [1, 2, 3]);
+  assert.ok(real.some((r) => r.you));
+  assert.ok(b.rows.some((r) => r.skipped));
+});

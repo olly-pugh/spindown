@@ -5,9 +5,10 @@
 //   profile.efforts[routeId][segmentId] = {
 //     sig,              // the segment's geometry when these attempts were ridden ("from:length", metres)
 //     attempts: [...],  // oldest first, the last MAX_ATTEMPTS
-//     best,             // the fastest ever (kept even when it falls out of `attempts`), with splits
+//     best,             // the fastest ever (kept even when it falls out of `attempts`)
 //   }
 //   attempt = { date (ISO), time (s), power (W | null), hr (bpm | null), world, splits? (s at each 5%) }
+// Every attempt keeps its splits, so the live leaderboard can compare you with each one at the same point.
 
 export const MAX_ATTEMPTS = 50;
 export const SPLITS = 20; // splits at every 5% of the distance, for the live delta against your PR
@@ -109,18 +110,13 @@ export function recordAttempt(p, routeId, seg, { time, power = null, hr = null, 
     hr: Number.isFinite(hr) ? Math.round(hr) : null,
     world,
   };
+  if (Array.isArray(splits) && splits.length === SPLITS && splits.every(Number.isFinite)) attempt.splits = splits.map((x) => Math.round(x * 10) / 10);
   const previousBest = e.best ?? null;
   const last = e.attempts[e.attempts.length - 1] ?? null;
   const isPR = !previousBest || attempt.time < previousBest.time;
   e.attempts.push(attempt);
   if (e.attempts.length > MAX_ATTEMPTS) e.attempts.splice(0, e.attempts.length - MAX_ATTEMPTS);
-  if (isPR) {
-    // Only the PR keeps its splits (for the live delta next time); older PRs drop theirs.
-    if (previousBest) delete previousBest.splits;
-    const best = { ...attempt };
-    if (Array.isArray(splits) && splits.length === SPLITS) best.splits = splits.map((x) => Math.round(x * 10) / 10);
-    e.best = best;
-  }
+  if (isPR) e.best = { ...attempt };
   return { attempt, previousBest, last, isPR, count: e.attempts.length };
 }
 
@@ -153,6 +149,49 @@ export function prTimeAt(best, fraction) {
   const i = Math.min(SPLITS - 1, Math.floor(x));
   const a = i === 0 ? 0 : s[i - 1], b = s[i];
   return a + (b - a) * (x - i);
+}
+
+/**
+ * The live leaderboard while riding a segment: you now against every dated attempt at the same point.
+ * `live` is {elapsed, fraction} for the attempt in progress, or null once it is finished (`finished` is then
+ * the stored attempt just ridden, which is in the history and marked as you). Rows are fastest first:
+ * {you, date, time (the attempt's final time; yours is a projection while riding), at (time to this point),
+ * gap (s against you at this point; + is behind you), isPR}. Long histories keep the top 3 and the rows around
+ * you, with `skipped` counts where rows were left out.
+ */
+export function segmentBoard(p, routeId, seg, live, finished = null, maxRows = 8) {
+  const list = attemptList(p, routeId, seg);
+  const f = live ? Math.max(0, Math.min(1, live.fraction)) : 1;
+  const rows = [];
+  for (const a of list) {
+    const you = !!finished && a.date === finished.date && a.time === finished.time;
+    rows.push({ you, date: a.date, time: a.time, at: prTimeAt(a, f), isPR: a.isPR, power: a.power ?? null, hr: a.hr ?? null });
+  }
+  if (live) {
+    const projected = f > 0.05 ? live.elapsed / f : null;
+    rows.push({ you: true, date: null, time: projected, at: live.elapsed, isPR: false, power: null, hr: null });
+  }
+  if (!rows.some((r) => r.you)) return { rows: [], total: 0, place: null };
+  // Before any distance is covered everyone is level: rank by final time, you last among equals.
+  rows.sort((x, y) => (f > 0.02 ? x.at - y.at : 0) || (x.you ? 1 : 0) - (y.you ? 1 : 0) || (x.time ?? Infinity) - (y.time ?? Infinity));
+  const me = rows.findIndex((r) => r.you);
+  const myAt = rows[me].at;
+  rows.forEach((r, i) => { r.place = i + 1; r.gap = r.you ? 0 : r.at - myAt; });
+  const total = rows.length;
+  if (total <= maxRows) return { rows, total, place: me + 1 };
+  const keep = new Set([0, 1, 2]);
+  const around = Math.max(1, Math.floor((maxRows - 3) / 2));
+  for (let i = me - around; i <= me + around; i++) if (i >= 0 && i < total) keep.add(i);
+  for (let i = 3; keep.size < maxRows && i < total; i++) keep.add(i);
+  const out = [];
+  let skipped = 0;
+  rows.forEach((r, i) => {
+    if (!keep.has(i)) { skipped++; return; }
+    if (skipped) out.push({ skipped }); skipped = 0;
+    out.push(r);
+  });
+  if (skipped) out.push({ skipped });
+  return { rows: out, total, place: me + 1 };
 }
 
 // ---- Formatting ------------------------------------------------------------------------------------
