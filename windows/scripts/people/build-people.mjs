@@ -18,6 +18,8 @@ import { assemble, vertexNormals, pack } from './meshkit.mjs';
 import * as FIT from '../../src/renderer/game3d/people/fit.js';
 import { riderGear } from './gear.mjs';
 import { buildCrowd } from './crowd-build.mjs';
+import { VoxelGrid, bakeAO } from './ao.mjs';
+import { buildBike } from '../../src/renderer/game3d/bike.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = path.join(ROOT, 'src/renderer/game3d/people');
@@ -255,6 +257,21 @@ function buildRider({ shape = RIDER_SHAPE, body = 'm', proxyFile = 'proxymeshes/
   const underHelmet = gear.underHelmet; // (x, y, z) => true if hidden by the helmet
   const hairMesh = assemble({ faces: hair.obj.faces, vt: hair.obj.vt, posed: hair.posed, weights: mapWeights(hair.w), keep: (f) => !f.v.every((v) => underHelmet(hair.rest[v * 3], hair.rest[v * 3 + 1], hair.rest[v * 3 + 2])) });
 
+  // Baked ambient occlusion: body, helmet, shoes and the bike (saddle, bars) occlude the body.
+  {
+    const grid = new VoxelGrid([-0.5, 0.0, -1.0], [0.5, 1.8, 0.7], 0.01);
+    grid.addTriangles(near.position, near.index);
+    for (const k of ['helmet', 'shoes']) grid.addTriangles(gear.meshes[k].position, gear.meshes[k].index);
+    const bike = buildBike({ bike: { color: '#888888' }, wheels: { id: 'x', depth: 0.03 }, jersey: { accent: '#ffffff' } }, { frame: 0, rear: 0, front: 0, crank: 0 }, 'near', bf);
+    const bp = bike.attributes.position.array;
+    grid.addTriangles(bp, Uint32Array.from({ length: bp.length / 3 }, (_, i) => i));
+    for (const m of [near, far]) {
+      const nrm = Float32Array.from(m.normal, (x) => x / 127);
+      const ao = bakeAO(grid, m.position, nrm, m.index, { strength: 0.95 });
+      m.ao = Uint8Array.from(ao, (x) => Math.round(Math.max(0, Math.min(1, x)) * 255));
+    }
+  }
+
   // Landmarks in the rest pose for the kit shader.
   const R = (n, k = 'head') => restBones[n][k];
   const landmarks = {
@@ -308,7 +325,7 @@ if (DEBUG) {
     const position = Array.from(m.position), index = Array.from(m.index);
     const uv = m.uv ? Array.from(m.uv, (x) => x / 65535) : undefined;
     const normal = m.normal ? Array.from(m.normal, (x) => x / 127) : undefined;
-    const color = m.region ? Array.from(m.region).flatMap((r) => PAL[r] ?? [1, 0, 1]) : undefined;
+    const color = m.region ? Array.from(m.region).flatMap((r) => PAL[r] ?? [1, 0, 1]) : m.ao ? Array.from(m.ao).flatMap((a) => [a / 255, a / 255, a / 255]) : undefined;
     fs.writeFileSync(path.join(DEBUG, name + '.json'), JSON.stringify({ position, index, uv, normal, color }));
   };
   dump('rider-near', rider.near);

@@ -104,12 +104,15 @@ export function kitMaterial(kit, skin, landmarks, { beard = 0, hair = '#3a2718' 
       .replace('#include <common>', `#include <common>
         attribute vec3 rest;
         attribute vec4 kit;
+        attribute float ao;
+        varying float vAO;
         varying vec3 vRest;
         varying vec4 vKit;
         varying vec2 vSkinUv;`)
       .replace('#include <uv_vertex>', `#include <uv_vertex>
         vRest = rest;
         vKit = kit;
+        vAO = ao;
         vSkinUv = uv;`);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
@@ -121,6 +124,7 @@ export function kitMaterial(kit, skin, landmarks, { beard = 0, hair = '#3a2718' 
         varying vec3 vRest;
         varying vec4 vKit;
         varying vec2 vSkinUv;
+        varying float vAO;
         float kitRough;
         float kitHeight;
         float kitSheen;
@@ -264,6 +268,14 @@ export function kitMaterial(kit, skin, landmarks, { beard = 0, hair = '#3a2718' 
           vec3 grad = sign(det) * (dhx * r1 + dhy * r2);
           normal = normalize(abs(det) * normal - grad * 1.0);
         }`)
+      .replace('#include <aomap_fragment>', `#include <aomap_fragment>
+        {
+          // Baked occlusion: sky and bounce light are kept out of creases; a little of the sun too.
+          float occ = clamp(vAO, 0.0, 1.0);
+          reflectedLight.indirectDiffuse *= occ;
+          reflectedLight.indirectSpecular *= occ * occ;
+          reflectedLight.directDiffuse *= mix(1.0, occ, 0.35);
+        }`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         {
           // Lycra sheen: a soft lift at grazing angles.
@@ -271,6 +283,6 @@ export function kitMaterial(kit, skin, landmarks, { beard = 0, hair = '#3a2718' 
           totalEmissiveRadiance += diffuseColor.rgb * kitSheen * fres * 0.18;
         }`);
   };
-  m.customProgramCacheKey = () => 'spindown-kit-v3';
+  m.customProgramCacheKey = () => 'spindown-kit-v4';
   return m;
 }
