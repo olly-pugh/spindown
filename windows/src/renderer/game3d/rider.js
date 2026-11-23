@@ -205,7 +205,7 @@ function faceMorphs(geo) {
 }
 
 // ---- IK helpers ------------------------------------------------------------------------------------------------
-const _a = V(0, 0, 0), _b = V(0, 0, 0), _c = V(0, 0, 0), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
+const _a = V(0, 0, 0), _b = V(0, 0, 0), _c = V(0, 0, 0);
 /** Two-bone IK: the middle joint for root -> joint -> end of lengths a, b reaching target, bending towards pole. */
 function ikJoint(root, target, a, b, pole, out) {
   const d = _a.copy(target).sub(root);
@@ -400,7 +400,6 @@ const _qp = new THREE.Quaternion(), _qs = new THREE.Quaternion(), _qc = new THRE
 const _qt = new THREE.Quaternion(), _qsh = new THREE.Quaternion(), _qf = new THREE.Quaternion(), _qu = new THREE.Quaternion(), _qfo = new THREE.Quaternion();
 const _sp = V(0, 0, 0), _cp = V(0, 0, 0), _hip = V(0, 0, 0), _knee = V(0, 0, 0), _ankV = V(0, 0, 0), _ank = [0, 0, 0], _pole = V(0, 0, 0), _fwd = V(0, 0, -1);
 const _d1 = V(0, 0, 0), _d2 = V(0, 0, 0), _sh = V(0, 0, 0), _el = V(0, 0, 0), _x = V(1, 0, 0);
-void _q; void _q2;
 
 let blobGeo = null;
 function blobGeometry() {

@@ -7,7 +7,6 @@ import skinMid from './skin-mid.jpg';
 import skinDark from './skin-dark.jpg';
 import hairShort from './hair-short.png';
 import hairPonytail from './hair-ponytail.png';
-import browsPng from './brows.png';
 import { unpack } from './pack.js';
 
 let rider = null;
@@ -32,4 +31,3 @@ function texture(url, { colour = true } = {}) {
 /** Skin textures: light, mid and dark base skins (tinted per rider). */
 export const skinTexture = (tone) => texture(tone === 'dark' ? skinDark : tone === 'mid' ? skinMid : skinLight);
 export const hairTexture = (kind = 'short') => texture(kind === 'ponytail' ? hairPonytail : hairShort, { colour: false });
-export const browTexture = () => texture(browsPng, { colour: false });

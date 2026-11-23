@@ -2,7 +2,7 @@
 
     python3 scripts/people/textures.py <makehuman dir>     (needs Pillow)
 
-Writes JPEG skins and grey+alpha PNGs (hair, eyebrows) into src/renderer/game3d/people/. Development-time only.
+Writes JPEG skins, grey+alpha hair PNGs and the spectators' atlas into src/renderer/game3d/people/. Development-time only.
 """
 import os
 import sys
@@ -127,6 +127,5 @@ skin('young_asian_male/young_lightskinned_male_diffuse3.png', 'skin-mid.jpg')
 skin('young_african_male/young_darkskinned_male_diffuse.png', 'skin-dark.jpg')
 grey_alpha('hair/short02/short02_diffuse.png', 'hair-short.png', 512)
 grey_alpha('hair/ponytail01/ponytail01_diffuse.png', 'hair-ponytail.png', 512)
-grey_alpha('eyebrows/eyebrow001/eyebrow001.png', 'brows.png', 256)
 for f in sorted(os.listdir(OUT)):
     print(f, os.path.getsize(os.path.join(OUT, f)) // 1024, 'KB')
